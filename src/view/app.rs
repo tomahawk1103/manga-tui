@@ -1021,6 +1021,16 @@ where
             || self.is_settings_modal_open
     }
 
+    /// Returns `true` when any global modal or page-level popup overlay is currently open.
+    pub fn is_overlay_open(&self) -> bool {
+        self.is_displaying_modal()
+            || self.search_page.is_filter_open()
+            || self
+                .manga_page
+                .as_ref()
+                .is_some_and(|page| page.is_provider_switcher_open || page.is_list_languages_open)
+    }
+
     pub fn render_pages(&mut self, area: Rect, frame: &mut Frame<'_>) {
         match self.current_tab {
             SelectedPage::Search => self.render_search_page(area, frame),
@@ -1756,11 +1766,13 @@ mod tests {
         // Drain initial GoToHome event
         app.listen_to_event().await;
         assert!(!app.is_help_modal_open);
+        assert!(!app.is_overlay_open());
 
         // Send 'n' through global_event_tx and ensure listen_to_event opens the modal without immediately closing it
         app.global_event_tx.send(Events::Key(KeyCode::Char('n').into())).unwrap();
         app.listen_to_event().await;
         assert!(app.is_help_modal_open);
+        assert!(app.is_overlay_open());
 
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -1777,6 +1789,7 @@ mod tests {
         app.global_event_tx.send(Events::Key(KeyCode::Char('n').into())).unwrap();
         app.listen_to_event().await;
         assert!(!app.is_help_modal_open);
+        assert!(!app.is_overlay_open());
     }
 
     #[tokio::test]

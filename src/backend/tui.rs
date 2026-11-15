@@ -143,7 +143,19 @@ pub async fn run_app<T: MangaProvider>(
 
     let main_event_handle = handle_events(tick_rate, app.global_event_tx.clone());
 
+    let mut was_overlay_open = false;
+    let mut last_tab = app.current_tab;
+
     while app.state == AppState::Runnning {
+        let is_overlay_open = app.is_overlay_open();
+        // Force a full terminal clear when opening/closing overlays or switching tabs so
+        // graphics-protocol cells (which ratatui-image marks as `skip`) don't retain stale modal text.
+        if was_overlay_open != is_overlay_open || app.current_tab != last_tab {
+            terminal.clear()?;
+        }
+        was_overlay_open = is_overlay_open;
+        last_tab = app.current_tab;
+
         terminal.draw(|f| {
             app.render(f.area(), f);
         })?;
