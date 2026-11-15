@@ -266,7 +266,7 @@ impl ConfigParam for DefaultMangaProvider {
     }
 
     fn comments(&self) -> &'static str {
-        "Sets which manga provider will be used when running manga-tui, \n# you can override it by running manga-tui with the -p flag like this: manga-tui -p inmanga"
+        "Sets which manga provider will be used when running manga-tui. At startup, Spanish providers are checked for working search, chapter loading, and reader images; if any check fails, manga-tui tries the other Spanish providers only. English providers are never used as automatic fallbacks. \n# you can override it by running manga-tui with the -p flag like this: manga-tui -p inmanga"
     }
 
     fn values(&self) -> &'static str {
