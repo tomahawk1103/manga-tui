@@ -45,6 +45,160 @@ enum PageState {
     Normal,
 }
 
+/// An item displayed in the 3-column Discovery Hub on the Search page.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DiscoveryItem {
+    pub title: String,
+    pub badge: String,
+    pub tag: String,
+}
+
+impl DiscoveryItem {
+    pub fn new(title: impl Into<String>, badge: impl Into<String>, tag: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            badge: badge.into(),
+            tag: tag.into(),
+        }
+    }
+}
+
+fn default_global_most_read() -> Vec<DiscoveryItem> {
+    vec![
+        DiscoveryItem::new("Berserk", "★ 9.47", "670K lectores"),
+        DiscoveryItem::new("Shingeki no Kyojin", "★ 8.55", "650K lectores"),
+        DiscoveryItem::new("One Piece", "★ 9.22", "610K lectores"),
+        DiscoveryItem::new("Tokyo Ghoul", "★ 8.71", "540K lectores"),
+        DiscoveryItem::new("Solo Leveling", "★ 8.66", "510K lectores"),
+        DiscoveryItem::new("Chainsaw Man", "★ 8.73", "490K lectores"),
+        DiscoveryItem::new("One-Punch Man", "★ 8.75", "450K lectores"),
+        DiscoveryItem::new("Jujutsu Kaisen", "★ 8.50", "430K lectores"),
+        DiscoveryItem::new("Kimetsu no Yaiba", "★ 8.25", "410K lectores"),
+        DiscoveryItem::new("Naruto", "★ 8.08", "400K lectores"),
+        DiscoveryItem::new("Vagabond", "★ 9.25", "390K lectores"),
+        DiscoveryItem::new("Oyasumi Punpun", "★ 9.01", "380K lectores"),
+    ]
+}
+
+fn default_global_top_rated() -> Vec<DiscoveryItem> {
+    vec![
+        DiscoveryItem::new("Berserk", "★ 9.47", "Seinen"),
+        DiscoveryItem::new("Steel Ball Run", "★ 9.30", "Aventura"),
+        DiscoveryItem::new("Vagabond", "★ 9.25", "Histórico"),
+        DiscoveryItem::new("One Piece", "★ 9.22", "Shonen"),
+        DiscoveryItem::new("Monster", "★ 9.16", "Thriller"),
+        DiscoveryItem::new("Slam Dunk", "★ 9.08", "Deportes"),
+        DiscoveryItem::new("Vinland Saga", "★ 9.07", "Épico"),
+        DiscoveryItem::new("Fullmetal Alchemist", "★ 9.03", "Fantasía"),
+        DiscoveryItem::new("Grand Blue", "★ 9.03", "Comedia"),
+        DiscoveryItem::new("Kingdom", "★ 9.00", "Guerra"),
+        DiscoveryItem::new("Omniscient Reader", "★ 8.96", "Manhwa"),
+        DiscoveryItem::new("20th Century Boys", "★ 8.95", "Misterio"),
+    ]
+}
+
+fn build_personal_and_trending_discovery(search_history: &[String]) -> Vec<DiscoveryItem> {
+    let mut items = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    if let Ok(conn) = Database::get_connection() {
+        let db = Database::new(&conn);
+        if let Ok(most_read) = db.get_most_read_user_mangas(5) {
+            for (title, provider, count) in most_read {
+                let key = title.to_lowercase();
+                if seen.insert(key) {
+                    items.push(DiscoveryItem::new(title, format!("📖 {count} caps"), provider.to_string()));
+                }
+            }
+        }
+        if let Ok(favs) = db.get_all_favorite_mangas() {
+            for fav in favs.into_iter().take(4) {
+                let key = fav.title.to_lowercase();
+                if seen.insert(key) {
+                    items.push(DiscoveryItem::new(fav.title, "★ Favorito".to_string(), fav.provider.to_string()));
+                }
+            }
+        }
+    }
+
+    for query in search_history.iter().take(4) {
+        let key = query.to_lowercase();
+        if seen.insert(key) {
+            items.push(DiscoveryItem::new(query.clone(), tr("🕒 Reciente", "🕒 Recent"), tr("Búsqueda", "Search")));
+        }
+    }
+
+    let trending = [
+        ("Dandadan", "🔥 Tendencia", "Acción / Sobrenatural"),
+        ("Sakamoto Days", "🔥 Tendencia", "Acción / Comedia"),
+        ("Kagurabachi", "🔥 Tendencia", "Fantasía Oscura"),
+        ("Blue Lock", "🔥 Tendencia", "Deportes"),
+        ("Sousou no Frieren", "🔥 Tendencia", "Fantasía"),
+        ("Kaiju No. 8", "🔥 Tendencia", "Sci-Fi / Acción"),
+        ("Gachiakuta", "🔥 Tendencia", "Shonen"),
+        ("Hunter x Hunter", "🔥 Clásico", "Aventura"),
+        ("Spy x Family", "🔥 Tendencia", "Comedia"),
+        ("The Climber", "🔥 Recomendado", "Seinen"),
+        ("Homunculus", "🔥 Recomendado", "Psicológico"),
+        ("Real", "🔥 Recomendado", "Drama"),
+    ];
+
+    for (title, badge, tag) in trending {
+        if items.len() >= 12 {
+            break;
+        }
+        if seen.insert(title.to_lowercase()) {
+            items.push(DiscoveryItem::new(title, badge, tag));
+        }
+    }
+
+    items
+}
+
+async fn fetch_jikan_list(url: &str, mode_popular: bool) -> Option<Vec<DiscoveryItem>> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(6))
+        .user_agent("manga-tui/0.10.0")
+        .build()
+        .ok()?;
+
+    let resp = client.get(url).send().await.ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+
+    let json: serde_json::Value = resp.json().await.ok()?;
+    let data = json.get("data")?.as_array()?;
+    let mut out = Vec::with_capacity(data.len());
+
+    for (idx, entry) in data.iter().take(12).enumerate() {
+        let title = entry.get("title")?.as_str()?.trim().to_string();
+        if title.is_empty() {
+            continue;
+        }
+        let score = entry
+            .get("score")
+            .and_then(|v| v.as_f64())
+            .map(|s| format!("★ {s:.2}"))
+            .unwrap_or_else(|| format!("#{}", idx + 1));
+
+        let tag = if mode_popular {
+            let members = entry.get("members").and_then(|v| v.as_u64()).unwrap_or(0);
+            if members >= 1_000 {
+                format!("{}K lectores", members / 1_000)
+            } else {
+                entry.get("type").and_then(|v| v.as_str()).unwrap_or("Manga").to_string()
+            }
+        } else {
+            entry.get("type").and_then(|v| v.as_str()).unwrap_or("Manga").to_string()
+        };
+
+        out.push(DiscoveryItem::new(title, score, tag));
+    }
+
+    if out.is_empty() { None } else { Some(out) }
+}
+
 /// These are events that do not require user input, like mouse or key events
 #[derive(Debug, PartialEq)]
 pub enum SearchPageEvents {
@@ -55,6 +209,10 @@ pub enum SearchPageEvents {
     FailedGoToMangaPage(String),
     /// This is a `Box` because of `[clippy::large_enum_variant](clippy::large_enum_variant)`
     GoToMangaPage(Box<Manga>),
+    LoadGlobalDiscovery {
+        most_read: Vec<DiscoveryItem>,
+        top_rated: Vec<DiscoveryItem>,
+    },
 }
 
 /// These are actions that the user actively via key events or mouse events
@@ -72,6 +230,10 @@ pub enum SearchPageActions {
     PlanToRead,
     ToggleScope,
     ToggleLanguageFilter,
+    DiscoveryLeft,
+    DiscoveryRight,
+    SelectDiscoveryCol(usize),
+    ReturnToDiscovery,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -166,6 +328,14 @@ where
     all_providers_results: Vec<SearchManga>,
     all_providers_unfiltered_results: Vec<SearchManga>,
     manga_area: Rect,
+    pub discovery_most_read: Vec<DiscoveryItem>,
+    pub discovery_top_rated: Vec<DiscoveryItem>,
+    pub discovery_personal: Vec<DiscoveryItem>,
+    pub discovery_col: usize,
+    pub discovery_row: [usize; 3],
+    pub discovery_loaded: bool,
+    pub discovery_live_synced: bool,
+    discovery_cols_area: [Rect; 3],
 }
 
 /// This contains the data the application gets when doing a search
@@ -196,6 +366,11 @@ where
     type Actions = SearchPageActions;
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
+        if !self.discovery_loaded {
+            self.discovery_loaded = true;
+            self.spawn_global_discovery_fetch();
+        }
+
         let search_page_layout = Layout::default()
             .direction(Direction::Vertical)
             .constraints([Constraint::Max(4), Constraint::Fill(1)]);
@@ -219,12 +394,49 @@ where
             },
             SearchPageActions::ScrollUp => self.scroll_up(),
             SearchPageActions::ScrollDown => self.scroll_down(),
-            SearchPageActions::NextPage => self.search_next_page(),
-            SearchPageActions::PreviousPage => self.search_previous_page(),
-            SearchPageActions::SearchMangaPage => self.search_manga_page(),
+            SearchPageActions::NextPage => {
+                if self.state == PageState::Normal {
+                    self.discovery_col = (self.discovery_col + 1) % 3;
+                } else {
+                    self.search_next_page();
+                }
+            },
+            SearchPageActions::PreviousPage => {
+                if self.state == PageState::Normal {
+                    self.discovery_col = (self.discovery_col + 2) % 3;
+                } else {
+                    self.search_previous_page();
+                }
+            },
+            SearchPageActions::SearchMangaPage => {
+                if self.state == PageState::Normal {
+                    self.activate_selected_discovery_item();
+                } else {
+                    self.search_manga_page();
+                }
+            },
             SearchPageActions::PlanToRead => self.plan_to_read(),
             SearchPageActions::ToggleScope => self.toggle_scope(),
             SearchPageActions::ToggleLanguageFilter => self.toggle_language_filter(),
+            SearchPageActions::DiscoveryLeft => {
+                if self.state == PageState::Normal {
+                    self.discovery_col = (self.discovery_col + 2) % 3;
+                }
+            },
+            SearchPageActions::DiscoveryRight => {
+                if self.state == PageState::Normal {
+                    self.discovery_col = (self.discovery_col + 1) % 3;
+                }
+            },
+            SearchPageActions::SelectDiscoveryCol(col) => {
+                if self.state == PageState::Normal && col < 3 {
+                    self.discovery_col = col;
+                }
+            },
+            SearchPageActions::ReturnToDiscovery => {
+                self.clean_up();
+                self.discovery_personal = build_personal_and_trending_discovery(&self.search_history);
+            },
         }
     }
 
@@ -276,6 +488,8 @@ where
             .and_then(|conn| Database::new(&conn).get_recent_searches(30))
             .unwrap_or_default();
 
+        let discovery_personal = build_personal_and_trending_discovery(&search_history);
+
         Self {
             global_event_tx: None,
             local_action_tx: action_tx,
@@ -303,6 +517,14 @@ where
             all_providers_results: Vec::new(),
             all_providers_unfiltered_results: Vec::new(),
             manga_area: Rect::default(),
+            discovery_most_read: default_global_most_read(),
+            discovery_top_rated: default_global_top_rated(),
+            discovery_personal,
+            discovery_col: 0,
+            discovery_row: [0, 0, 0],
+            discovery_loaded: false,
+            discovery_live_synced: false,
+            discovery_cols_area: [Rect::default(); 3],
         }
     }
 
@@ -409,19 +631,50 @@ where
 
         match self.state {
             PageState::Normal => {
+                let sync_badge = if self.discovery_live_synced {
+                    Span::styled(
+                        tr(" 🌐 Ranking Mundial en Vivo ", " 🌐 Live Global Ranking "),
+                        Style::default().fg(Color::Black).bg(Color::Green).bold(),
+                    )
+                } else {
+                    Span::styled(
+                        tr(" ⚡ Ranking Global ", " ⚡ Global Ranking "),
+                        Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+                    )
+                };
+
+                let bottom_help = Line::from(vec![
+                    Span::raw(" "),
+                    Span::styled(" <←/→ | h/w> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+                    Span::styled(tr(" Columna  ", " Column  "), Style::default().fg(Color::Gray)),
+                    Span::styled(" <↑/↓ | j/k> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+                    Span::styled(tr(" Elegir  ", " Select  "), Style::default().fg(Color::Gray)),
+                    Span::styled(" <Enter> ", Style::default().fg(Color::Black).bg(Color::Cyan).bold()),
+                    Span::styled(tr(" Buscar manga  ", " Search manga  "), Style::default().fg(Color::White).bold()),
+                    Span::styled(" <s> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+                    Span::styled(tr(" Escribir ", " Type "), Style::default().fg(Color::Gray)),
+                ]);
+
                 let welcome_block = Block::bordered()
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(Color::Rgb(75, 88, 120)))
-                    .title(Line::from(vec![Span::styled(
-                        tr(" 🧭 Explorador de Mangas ", " 🧭 Manga Explorer "),
-                        Style::default().fg(Color::Cyan).bold(),
-                    )]));
+                    .title(Line::from(vec![
+                        Span::styled(tr(" 🧭 Descubrir Mangas ", " 🧭 Discover Mangas "), Style::default().fg(Color::Cyan).bold()),
+                        sync_badge,
+                    ]))
+                    .title_bottom(bottom_help);
 
                 let inner = welcome_block.inner(area).inner(Margin {
-                    horizontal: 2,
-                    vertical: 1,
+                    horizontal: 1,
+                    vertical: 0,
                 });
                 welcome_block.render(area, buf);
+
+                if inner.width == 0 || inner.height == 0 {
+                    return;
+                }
+
+                let [top_bar_area, columns_area] = Layout::vertical([Constraint::Length(2), Constraint::Fill(1)]).areas(inner);
 
                 let all_providers = [
                     MangaProviders::Mangadex,
@@ -433,10 +686,8 @@ where
                     MangaProviders::Comizy,
                 ];
 
-                let mut provider_spans: Vec<Span<'static>> = vec![Span::styled(
-                    format!("{} ", tr("Proveedores activos:", "Active providers:")),
-                    Style::default().fg(Color::Gray).bold(),
-                )];
+                let mut provider_spans: Vec<Span<'static>> =
+                    vec![Span::styled(format!(" {} ", tr("Fuentes:", "Sources:")), Style::default().fg(Color::Gray).bold())];
                 for prov in all_providers {
                     let health = crate::backend::multi_provider::get_provider_health_status(prov);
                     provider_spans.push(Span::styled(
@@ -446,44 +697,113 @@ where
                     provider_spans.push(Span::raw(" "));
                 }
 
-                let mut lines = vec![
-                    Line::raw(""),
-                    Line::from(vec![Span::styled(
-                        tr(
-                            "🔍 Pulsa <s> para escribir el título de un manga y <Enter> para buscar",
-                            "🔍 Press <s> to type a manga title and <Enter> to search",
-                        ),
-                        Style::default().fg(Color::Cyan).bold(),
-                    )]),
-                    Line::from(vec![Span::styled(
-                        tr(
-                            "Puedes buscar en todos los proveedores a la vez (<Tab/m>) o filtrar por idioma (<l>).",
-                            "You can search across all providers at once (<Tab/m>) or filter by language (<l>).",
-                        ),
-                        Style::default().fg(Color::Gray),
-                    )]),
-                    Line::raw(""),
-                    Line::from(provider_spans),
+                Paragraph::new(vec![Line::from(provider_spans)])
+                    .alignment(Alignment::Center)
+                    .render(top_bar_area, buf);
+
+                let cols: [Rect; 3] =
+                    Layout::horizontal([Constraint::Ratio(1, 3), Constraint::Ratio(1, 3), Constraint::Ratio(1, 3)])
+                        .areas(columns_area);
+
+                self.discovery_cols_area = cols;
+
+                let col_configs = [
+                    (
+                        0usize,
+                        tr(" 🌍 1. Más Leídos del Mundo ", " 🌍 1. Global Most Read "),
+                        Color::Cyan,
+                        &self.discovery_most_read,
+                    ),
+                    (
+                        1usize,
+                        tr(" ⭐ 2. Mejor Valorados / Top ", " ⭐ 2. Highest Rated / Top "),
+                        Color::Yellow,
+                        &self.discovery_top_rated,
+                    ),
+                    (
+                        2usize,
+                        tr(" 🔥 3. Tus Más Leídos & Tendencias ", " 🔥 3. Your Top & Trending "),
+                        Color::Magenta,
+                        &self.discovery_personal,
+                    ),
                 ];
 
-                if !self.search_history.is_empty() {
-                    lines.push(Line::raw(""));
-                    let mut hist_spans: Vec<Span<'static>> = vec![Span::styled(
-                        format!("🕒 {} ", tr("Búsquedas recientes (<s> + <↑/↓>):", "Recent searches (<s> + <↑/↓>):")),
-                        Style::default().fg(Color::Yellow).bold(),
-                    )];
-                    for term in self.search_history.iter().take(6) {
-                        hist_spans
-                            .push(Span::styled(format!(" {term} "), Style::default().fg(Color::Cyan).bg(Color::Rgb(38, 44, 60))));
-                        hist_spans.push(Span::raw(" "));
-                    }
-                    lines.push(Line::from(hist_spans));
-                }
+                for (col_idx, title, accent_color, items) in col_configs {
+                    let is_active_col = self.discovery_col == col_idx;
+                    let border_style = if is_active_col {
+                        Style::default().fg(accent_color).bold()
+                    } else {
+                        Style::default().fg(Color::Rgb(52, 60, 86))
+                    };
+                    let title_style = if is_active_col {
+                        Style::default().fg(Color::Black).bg(accent_color).bold()
+                    } else {
+                        Style::default().fg(accent_color).bold()
+                    };
 
-                Paragraph::new(lines)
-                    .alignment(Alignment::Center)
-                    .wrap(Wrap { trim: true })
-                    .render(inner, buf);
+                    let col_block = Block::bordered()
+                        .border_type(BorderType::Rounded)
+                        .border_style(border_style)
+                        .title(Line::from(vec![Span::styled(title, title_style)]));
+
+                    let col_inner = col_block.inner(cols[col_idx]);
+                    col_block.render(cols[col_idx], buf);
+
+                    if col_inner.width == 0 || col_inner.height == 0 {
+                        continue;
+                    }
+
+                    let selected_row = self.discovery_row[col_idx].min(items.len().saturating_sub(1));
+                    let max_visible = col_inner.height as usize;
+                    let scroll_offset =
+                        if selected_row >= max_visible && max_visible > 0 { selected_row + 1 - max_visible } else { 0 };
+
+                    let mut row_lines = Vec::with_capacity(max_visible);
+                    for (idx, item) in items.iter().enumerate().skip(scroll_offset).take(max_visible) {
+                        let is_selected = is_active_col && idx == selected_row;
+                        let rank_str = format!("{:>2}. ", idx + 1);
+
+                        let (cursor, row_bg, title_fg) = if is_selected {
+                            ("▸ ", Some(Color::Rgb(42, 49, 72)), Color::White)
+                        } else if idx == selected_row {
+                            ("• ", None, Color::White)
+                        } else {
+                            ("  ", None, Color::Gray)
+                        };
+
+                        let base_style = match row_bg {
+                            Some(bg) => Style::default().bg(bg),
+                            None => Style::default(),
+                        };
+
+                        let badge_style = if item.badge.starts_with('★') {
+                            base_style.fg(Color::Yellow).bold()
+                        } else if item.badge.starts_with("📖") {
+                            base_style.fg(Color::Green).bold()
+                        } else if item.badge.starts_with("🕒") {
+                            base_style.fg(Color::Cyan)
+                        } else {
+                            base_style.fg(Color::LightRed).bold()
+                        };
+
+                        row_lines.push(Line::from(vec![
+                            Span::styled(
+                                cursor,
+                                if is_selected { base_style.fg(accent_color).bold() } else { base_style.fg(Color::DarkGray) },
+                            ),
+                            Span::styled(rank_str, base_style.fg(Color::DarkGray)),
+                            Span::styled(
+                                item.title.clone(),
+                                if is_selected { base_style.fg(title_fg).bold() } else { base_style.fg(title_fg) },
+                            ),
+                            Span::styled("  ", base_style),
+                            Span::styled(format!("[{}]", item.badge), badge_style),
+                            Span::styled(format!(" {}", item.tag), base_style.fg(Color::DarkGray)),
+                        ]));
+                    }
+
+                    Paragraph::new(row_lines).render(col_inner, buf);
+                }
             },
             PageState::SearchingMangas => {
                 let block = Block::bordered()
@@ -517,15 +837,22 @@ where
                     .title(Line::from(vec![Span::styled(
                         tr(" 📭 Sin resultados ", " 📭 No results "),
                         Style::default().fg(Color::Yellow).bold(),
-                    )]));
+                    )]))
+                    .title_top(
+                        Line::from(vec![
+                            Span::styled(" <Esc> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+                            Span::styled(tr(" Volver a Descubrir ", " Back to Discover "), Style::default().fg(Color::Gray)),
+                        ])
+                        .right_aligned(),
+                    );
                 let inner = block.inner(area).inner(Margin {
                     horizontal: 2,
                     vertical: 2,
                 });
                 block.render(area, buf);
                 Paragraph::new(tr(
-                    "No se encontraron mangas con ese nombre. Prueba con otro término o cambia el filtro de idioma (<l>) / alcance (<Tab>).",
-                    "No mangas were found. Try another search term or toggle the language filter (<l>) / scope (<Tab>).",
+                    "No se encontraron mangas con ese nombre. Prueba con otro término, cambia el filtro (<l>/<Tab>) o pulsa <Esc> para volver al Ranking Mundial.",
+                    "No mangas were found. Try another search term, toggle filters (<l>/<Tab>), or press <Esc> to return to Global Rankings.",
                 ))
                 .style(Style::default().fg(Color::Gray))
                 .alignment(Alignment::Center)
@@ -538,8 +865,8 @@ where
                     .border_style(Style::default().fg(Color::Red))
                     .title(Span::styled(
                         tr(
-                            " ⚠ Error al buscar mangas, inténtalo de nuevo ",
-                            " ⚠ An error occurred when searching mangas, please try again ",
+                            " ⚠ Error al buscar mangas, inténtalo de nuevo (<Esc> Volver) ",
+                            " ⚠ An error occurred when searching mangas, please try again (<Esc> Back) ",
                         ),
                         *ERROR_STYLE,
                     ));
@@ -555,6 +882,12 @@ where
                     Span::styled(format!("({total_items}) "), Style::default().fg(Color::Yellow).bold()),
                 ]);
 
+                let back_hint = Line::from(vec![
+                    Span::styled(" <Esc> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+                    Span::styled(tr(" 🧭 Top/Recs ", " 🧭 Top/Recs "), Style::default().fg(Color::Gray)),
+                ])
+                .right_aligned();
+
                 let pagination_instructions = Line::from(vec![
                     Span::styled(" ◀ <b> ", Style::default().fg(Color::Cyan).bold()),
                     Span::styled(
@@ -568,6 +901,7 @@ where
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(Color::Cyan))
                     .title_top(list_title)
+                    .title_top(back_hint)
                     .title_bottom(pagination_instructions.alignment(Alignment::Center))
                     .render(manga_list_area, buf);
 
@@ -642,12 +976,70 @@ where
         self.stashed_input = self.search_bar.value().to_string();
     }
 
+    fn current_discovery_col_len(&self) -> usize {
+        match self.discovery_col {
+            0 => self.discovery_most_read.len(),
+            1 => self.discovery_top_rated.len(),
+            _ => self.discovery_personal.len(),
+        }
+    }
+
+    fn activate_selected_discovery_item(&mut self) {
+        let col = self.discovery_col.min(2);
+        let row = self.discovery_row[col];
+        let maybe_title = match col {
+            0 => self.discovery_most_read.get(row).map(|i| i.title.clone()),
+            1 => self.discovery_top_rated.get(row).map(|i| i.title.clone()),
+            _ => self.discovery_personal.get(row).map(|i| i.title.clone()),
+        };
+        if let Some(title) = maybe_title {
+            self.search_with_query_all_providers(&title);
+        }
+    }
+
+    fn spawn_global_discovery_fetch(&self) {
+        let tx = self.local_event_tx.clone();
+        tokio::spawn(async move {
+            let (pop, rated) = tokio::join!(
+                fetch_jikan_list("https://api.jikan.moe/v4/top/manga?filter=bypopularity&limit=12", true),
+                fetch_jikan_list("https://api.jikan.moe/v4/top/manga?limit=12", false)
+            );
+            let most_read = pop.unwrap_or_else(default_global_most_read);
+            let top_rated = rated.unwrap_or_else(default_global_top_rated);
+            tx.send(SearchPageEvents::LoadGlobalDiscovery {
+                most_read,
+                top_rated,
+            })
+            .ok();
+        });
+    }
+
     fn scroll_down(&mut self) {
-        self.mangas_found_list.state.next();
+        if self.state == PageState::Normal {
+            let len = self.current_discovery_col_len();
+            if len > 0 {
+                let col = self.discovery_col.min(2);
+                self.discovery_row[col] = (self.discovery_row[col] + 1) % len;
+            }
+        } else {
+            self.mangas_found_list.state.next();
+        }
     }
 
     fn scroll_up(&mut self) {
-        self.mangas_found_list.state.previous();
+        if self.state == PageState::Normal {
+            let len = self.current_discovery_col_len();
+            if len > 0 {
+                let col = self.discovery_col.min(2);
+                if self.discovery_row[col] == 0 {
+                    self.discovery_row[col] = len - 1;
+                } else {
+                    self.discovery_row[col] -= 1;
+                }
+            }
+        } else {
+            self.mangas_found_list.state.previous();
+        }
     }
 
     fn open_advanced_filters(&mut self) {
@@ -757,6 +1149,26 @@ where
 
                 KeyCode::Char('k') | KeyCode::Up => {
                     self.local_action_tx.send(SearchPageActions::ScrollUp).ok();
+                },
+                KeyCode::Left | KeyCode::Char('h') => {
+                    self.local_action_tx.send(SearchPageActions::DiscoveryLeft).ok();
+                },
+                KeyCode::Right => {
+                    self.local_action_tx.send(SearchPageActions::DiscoveryRight).ok();
+                },
+                KeyCode::Char('1') => {
+                    self.local_action_tx.send(SearchPageActions::SelectDiscoveryCol(0)).ok();
+                },
+                KeyCode::Char('2') => {
+                    self.local_action_tx.send(SearchPageActions::SelectDiscoveryCol(1)).ok();
+                },
+                KeyCode::Char('3') => {
+                    self.local_action_tx.send(SearchPageActions::SelectDiscoveryCol(2)).ok();
+                },
+                KeyCode::Esc | KeyCode::Backspace => {
+                    if self.state != PageState::Normal {
+                        self.local_action_tx.send(SearchPageActions::ReturnToDiscovery).ok();
+                    }
                 },
                 KeyCode::Char('w') => {
                     self.local_action_tx.send(SearchPageActions::NextPage).ok();
@@ -873,7 +1285,20 @@ where
             },
             MouseEventKind::Down(MouseButton::Left) => {
                 let pos = Position::new(mouse_event.column, mouse_event.row);
-                if self.manga_area.contains(pos) {
+                if self.state == PageState::Normal {
+                    for (col_idx, col_rect) in self.discovery_cols_area.iter().enumerate() {
+                        if col_rect.contains(pos) {
+                            self.discovery_col = col_idx;
+                            let inner_y = pos.y.saturating_sub(col_rect.y.saturating_add(1)) as usize;
+                            let col_len = self.current_discovery_col_len();
+                            if inner_y < col_len {
+                                self.discovery_row[col_idx] = inner_y;
+                                self.local_action_tx.send(SearchPageActions::SearchMangaPage).ok();
+                            }
+                            break;
+                        }
+                    }
+                } else if self.manga_area.contains(pos) {
                     self.local_action_tx.send(SearchPageActions::SearchMangaPage).ok();
                 }
             },
@@ -1117,6 +1542,18 @@ where
                 SearchPageEvents::LoadCover(maybe_image, manga_id) => self.load_cover(maybe_image, manga_id),
                 SearchPageEvents::FailedGoToMangaPage(error_message) => self.display_error_message(error_message),
                 SearchPageEvents::GoToMangaPage(manga) => self.go_to_manga_page(*manga),
+                SearchPageEvents::LoadGlobalDiscovery {
+                    most_read,
+                    top_rated,
+                } => {
+                    if !most_read.is_empty() {
+                        self.discovery_most_read = most_read;
+                    }
+                    if !top_rated.is_empty() {
+                        self.discovery_top_rated = top_rated;
+                    }
+                    self.discovery_live_synced = true;
+                },
             }
         }
     }

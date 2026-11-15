@@ -1062,6 +1062,26 @@ impl<'a> Database<'a> {
         rows.collect()
     }
 
+    pub fn get_most_read_user_mangas(&self, limit: u32) -> rusqlite::Result<Vec<(String, MangaProviders, u32)>> {
+        let mut statement = self.connection.prepare(
+            "SELECT mangas.title, mangas.manga_provider, COUNT(chapters.id) AS read_count
+             FROM mangas
+             INNER JOIN chapters ON mangas.id = chapters.manga_id
+             WHERE chapters.is_read = 1
+             GROUP BY mangas.id
+             ORDER BY read_count DESC, mangas.last_read DESC
+             LIMIT ?1",
+        )?;
+        let rows = statement.query_map(params![limit], |row| {
+            let title: String = row.get(0)?;
+            let provider_str: String = row.get(1)?;
+            let read_count: u32 = row.get(2)?;
+            let provider = provider_str.parse::<MangaProviders>().unwrap_or_default();
+            Ok((title, provider, read_count))
+        })?;
+        rows.collect()
+    }
+
     pub fn get_downloaded_chapter_ids(&self, manga_id: &str, provider: MangaProviders) -> rusqlite::Result<Vec<String>> {
         let mut statement = self.connection.prepare(
             "SELECT chapters.id
