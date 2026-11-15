@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use std::time::Duration;
 
+use chrono::Timelike;
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use image::DynamicImage;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
+use ratatui::layout::{Constraint, Flex, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget, Wrap};
@@ -13,6 +14,7 @@ use ratatui_image::picker::Picker;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinSet;
 
+use crate::backend::database::{Database, HomeStats};
 use crate::backend::error_log::{ErrorType, write_to_error_log};
 use crate::backend::manga_provider::{HomePageMangaProvider, PopularManga, RecentlyAddedManga};
 use crate::backend::multi_provider::{ProviderHealthStatus, get_provider_health_status};
@@ -51,6 +53,131 @@ pub enum HomeActions {
     SupportProject,
 }
 
+/// "ANSI Shadow" glyphs used to compose the big `MANGA-TUI` hero logo.
+const LOGO_GLYPHS: [[&str; 6]; 9] = [
+    ["███╗   ███╗", "████╗ ████║", "██╔████╔██║", "██║╚██╔╝██║", "██║ ╚═╝ ██║", "╚═╝     ╚═╝"],
+    [" █████╗ ", "██╔══██╗", "███████║", "██╔══██║", "██║  ██║", "╚═╝  ╚═╝"],
+    ["███╗   ██╗", "████╗  ██║", "██╔██╗ ██║", "██║╚██╗██║", "██║ ╚████║", "╚═╝  ╚═══╝"],
+    [" ██████╗ ", "██╔════╝ ", "██║  ███╗", "██║   ██║", "╚██████╔╝", " ╚═════╝ "],
+    [" █████╗ ", "██╔══██╗", "███████║", "██╔══██║", "██║  ██║", "╚═╝  ╚═╝"],
+    ["      ", "      ", "█████╗", "╚════╝", "      ", "      "],
+    ["████████╗", "╚══██╔══╝", "   ██║   ", "   ██║   ", "   ██║   ", "   ╚═╝   "],
+    ["██╗   ██╗", "██║   ██║", "██║   ██║", "██║   ██║", "╚██████╔╝", " ╚═════╝ "],
+    ["██╗", "██║", "██║", "██║", "██║", "╚═╝"],
+];
+
+/// Height (in rows) of the big hero logo.
+const LOGO_HEIGHT: u16 = 6;
+
+/// Base surface colors for the modern dark theme of the Home page.
+const SURFACE_BORDER: Color = Color::Rgb(58, 64, 92);
+const SURFACE_BORDER_ACCENT: Color = Color::Rgb(78, 118, 190);
+const SURFACE_BORDER_VIOLET: Color = Color::Rgb(112, 84, 178);
+const SURFACE_MUTED: Color = Color::Rgb(128, 136, 168);
+const SURFACE_CHIP: Color = Color::Rgb(34, 38, 58);
+const ACCENT_CYAN: Color = Color::Rgb(0, 210, 255);
+const ACCENT_VIOLET: Color = Color::Rgb(160, 120, 255);
+
+/// Builds the `MANGA-TUI` hero logo, one `String` per row.
+fn build_logo_lines() -> Vec<String> {
+    (0..LOGO_HEIGHT as usize)
+        .map(|row| LOGO_GLYPHS.iter().map(|glyph| glyph[row]).collect::<String>())
+        .collect()
+}
+
+/// Display width (in columns) of the big hero logo.
+fn logo_width() -> u16 {
+    LOGO_GLYPHS.iter().map(|glyph| glyph[0].chars().count() as u16).sum()
+}
+
+/// Cyan → violet → pink horizontal gradient used by the hero logo and wordmark.
+fn gradient_color(index: usize, total: usize) -> Color {
+    const STOPS: [(f32, f32, f32); 3] = [(0.0, 210.0, 255.0), (150.0, 110.0, 255.0), (255.0, 95.0, 200.0)];
+    let t = if total <= 1 { 0.0 } else { index.min(total - 1) as f32 / (total - 1) as f32 };
+    let (from, to, local_t) = if t < 0.5 { (STOPS[0], STOPS[1], t * 2.0) } else { (STOPS[1], STOPS[2], (t - 0.5) * 2.0) };
+    let lerp = |a: f32, b: f32| (a + (b - a) * local_t).round().clamp(0.0, 255.0) as u8;
+    Color::Rgb(lerp(from.0, to.0), lerp(from.1, to.1), lerp(from.2, to.2))
+}
+
+/// Colors every visible character of `text` with the hero gradient.
+fn gradient_line(text: &str, bold: bool) -> Line<'static> {
+    let total = text.chars().count();
+    let spans: Vec<Span<'static>> = text
+        .chars()
+        .enumerate()
+        .map(|(idx, ch)| {
+            let mut style = Style::default().fg(gradient_color(idx, total));
+            if bold {
+                style = style.bold();
+            }
+            Span::styled(ch.to_string(), style)
+        })
+        .collect();
+    Line::from(spans)
+}
+
+/// Returns an icon + greeting for the given local hour (0-23).
+fn greeting_for_hour(hour: u32) -> (&'static str, &'static str) {
+    match hour {
+        5..=11 => ("☕", tr("Buenos días", "Good morning")),
+        12..=19 => ("☀", tr("Buenas tardes", "Good afternoon")),
+        _ => ("🌙", tr("Buenas noches", "Good evening")),
+    }
+}
+
+/// Truncates `text` to at most `max_chars` Unicode scalar values, appending `…` if cut.
+fn truncate_home_text(text: &str, max_chars: usize) -> String {
+    if max_chars == 0 {
+        return String::new();
+    }
+    if text.chars().count() <= max_chars {
+        text.to_string()
+    } else if max_chars == 1 {
+        "…".to_string()
+    } else {
+        let mut out: String = text.chars().take(max_chars - 1).collect();
+        out.push('…');
+        out
+    }
+}
+
+/// Compacts big numbers: `999` → `999`, `1250` → `1.3K`, `2_300_000` → `2.3M`.
+fn format_count(value: u32) -> String {
+    match value {
+        0..=999 => value.to_string(),
+        1_000..=999_999 => format!("{:.1}K", value as f64 / 1_000.0).replace(".0K", "K"),
+        _ => format!("{:.1}M", value as f64 / 1_000_000.0).replace(".0M", "M"),
+    }
+}
+
+/// Which hero header variant fits in the available area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeroMode {
+    /// Big gradient ASCII logo + greeting + stat cards / 2x2 pills.
+    Full,
+    /// Single-line gradient wordmark + greeting + inline stats.
+    Compact,
+}
+
+impl HeroMode {
+    fn for_area(area: Rect) -> Self {
+        if area.height >= 26 && area.width >= logo_width() + 36 { Self::Full } else { Self::Compact }
+    }
+
+    fn height(self) -> u16 {
+        match self {
+            Self::Full => LOGO_HEIGHT + 1,
+            Self::Compact => 2,
+        }
+    }
+}
+
+fn load_home_stats() -> HomeStats {
+    Database::get_connection()
+        .and_then(|conn| Database::new(&conn).get_home_stats())
+        .unwrap_or_default()
+}
+
 pub struct Home<T>
 where
     T: HomePageMangaProvider + Sync + Send,
@@ -70,6 +197,7 @@ where
     manga_provider: Arc<T>,
     popular_mangas_area: Rect,
     recently_added_area: Rect,
+    stats: HomeStats,
 }
 
 impl<T> Component for Home<T>
@@ -79,17 +207,28 @@ where
     type Actions = HomeActions;
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
-        let layout = Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).margin(1);
         let buf = frame.buffer_mut();
+        let area = area.inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
 
-        let [carrousel_popular_mangas_area, latest_updates_area] = layout.areas(area);
+        let hero_mode = HeroMode::for_area(area);
+        let [hero_area, carrousel_popular_mangas_area, latest_updates_area, status_strip_area] = Layout::vertical([
+            Constraint::Length(hero_mode.height()),
+            Constraint::Fill(1),
+            Constraint::Fill(1),
+            Constraint::Length(1),
+        ])
+        .areas(area);
 
         self.popular_mangas_area = carrousel_popular_mangas_area;
         self.recently_added_area = latest_updates_area;
 
+        self.render_hero(hero_area, buf, hero_mode);
         self.render_popular_mangas_carrousel(carrousel_popular_mangas_area, buf);
-
         self.render_recently_added_mangas_area(latest_updates_area, buf);
+        self.render_status_strip(status_strip_area, buf);
     }
 
     fn update(&mut self, action: Self::Actions) {
@@ -152,7 +291,13 @@ where
             manga_provider,
             popular_mangas_area: Rect::default(),
             recently_added_area: Rect::default(),
+            stats: load_home_stats(),
         }
+    }
+
+    /// Reloads the user statistics shown in the hero header (library, chapters read, ...).
+    pub fn refresh_stats(&mut self) {
+        self.stats = load_home_stats();
     }
 
     pub fn with_global_sender(mut self, tx: UnboundedSender<Events>) -> Self {
@@ -166,10 +311,10 @@ where
 
         let mut top_left_spans = vec![Span::styled(
             tr(" 🔥 Títulos Populares ", " 🔥 Popular New Titles "),
-            Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+            Style::default().fg(ACCENT_CYAN).bg(Color::Rgb(20, 42, 64)).bold(),
         )];
         if total > 0 {
-            top_left_spans.push(Span::styled(format!(" [ {current} / {total} ] "), Style::default().fg(Color::Yellow).bold()));
+            top_left_spans.push(Span::styled(format!("  {current}/{total} "), Style::default().fg(SURFACE_MUTED)));
         }
 
         let mut dot_spans = Vec::new();
@@ -179,26 +324,26 @@ where
             let active_dot = self.carrousel_popular_mangas.current_item_visible_index % max_dots;
             for idx in 0..max_dots {
                 if idx == active_dot {
-                    dot_spans.push(Span::styled("● ", Style::default().fg(Color::Cyan).bold()));
+                    dot_spans.push(Span::styled("● ", Style::default().fg(ACCENT_CYAN).bold()));
                 } else {
-                    dot_spans.push(Span::styled("○ ", Style::default().fg(Color::DarkGray)));
+                    dot_spans.push(Span::styled("· ", Style::default().fg(SURFACE_BORDER)));
                 }
             }
         }
 
         let instructions = Line::from(vec![
             Span::raw(" "),
-            Span::styled(" <b> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-            Span::styled(tr(" Anterior  ", " Previous  "), Style::default().fg(Color::Gray)),
-            Span::styled(" <w> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-            Span::styled(tr(" Siguiente  ", " Next  "), Style::default().fg(Color::Gray)),
-            Span::styled(" <r> ", Style::default().fg(Color::Black).bg(Color::Cyan).bold()),
+            Self::key_chip("b"),
+            Span::styled(tr(" Anterior  ", " Previous  "), Style::default().fg(SURFACE_MUTED)),
+            Self::key_chip("w"),
+            Span::styled(tr(" Siguiente  ", " Next  "), Style::default().fg(SURFACE_MUTED)),
+            Span::styled(" r ", Style::default().fg(Color::Black).bg(ACCENT_CYAN).bold()),
             Span::styled(tr(" Leer manga ", " Read manga "), Style::default().fg(Color::White).bold()),
         ]);
 
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(Style::default().fg(SURFACE_BORDER_ACCENT))
             .title(Line::from(top_left_spans))
             .title_bottom(instructions);
 
@@ -250,6 +395,7 @@ where
     }
 
     pub fn init_search(&mut self) {
+        self.refresh_stats();
         self.local_event_tx.send(HomeEvents::SearchPopularNewMangas).ok();
 
         self.local_event_tx.send(HomeEvents::SearchRecentlyAddedMangas).ok();
@@ -411,22 +557,18 @@ where
         open::that("https://github.com/josueBarretogit/manga-tui").ok();
     }
 
-    fn render_recently_added_mangas_area(&mut self, area: Rect, buf: &mut Buffer) {
-        let layout = Layout::horizontal([Constraint::Percentage(28), Constraint::Percentage(72)]);
-        let [app_info_area, recently_added_mangas_area] = layout.areas(area);
-
+    fn render_recently_added_mangas_area(&mut self, recently_added_mangas_area: Rect, buf: &mut Buffer) {
         self.recently_added_area = recently_added_mangas_area;
-        self.render_app_information(app_info_area, buf);
 
         let total = self.carrousel_recently_added.items.len();
         let current = if total == 0 { 0 } else { self.carrousel_recently_added.selected_item_index + 1 };
 
         let mut top_left_spans = vec![Span::styled(
             tr(" ✨ Añadidos Recientemente ", " ✨ Recently Added "),
-            Style::default().fg(Color::Black).bg(Color::Yellow).bold(),
+            Style::default().fg(ACCENT_VIOLET).bg(Color::Rgb(38, 28, 60)).bold(),
         )];
         if total > 0 {
-            top_left_spans.push(Span::styled(format!(" [ {current} / {total} ] "), Style::default().fg(Color::Yellow).bold()));
+            top_left_spans.push(Span::styled(format!("  {current}/{total} "), Style::default().fg(SURFACE_MUTED)));
         }
 
         let mut page_spans = Vec::new();
@@ -436,23 +578,23 @@ where
             let current_page = (self.carrousel_recently_added.selected_item_index / per_page) + 1;
             page_spans.push(Span::styled(
                 format!(" {} {current_page}/{total_pages} ", tr("Pág.", "Page")),
-                Style::default().fg(Color::DarkGray),
+                Style::default().fg(SURFACE_MUTED),
             ));
         }
 
         let instructions = Line::from(vec![
             Span::raw(" "),
-            Span::styled(" <h / ←> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-            Span::styled(tr(" Izquierda  ", " Left  "), Style::default().fg(Color::Gray)),
-            Span::styled(" <l / →> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-            Span::styled(tr(" Derecha  ", " Right  "), Style::default().fg(Color::Gray)),
-            Span::styled(" <Enter> ", Style::default().fg(Color::Black).bg(Color::Yellow).bold()),
+            Self::key_chip("h / ←"),
+            Span::styled(tr(" Izquierda  ", " Left  "), Style::default().fg(SURFACE_MUTED)),
+            Self::key_chip("l / →"),
+            Span::styled(tr(" Derecha  ", " Right  "), Style::default().fg(SURFACE_MUTED)),
+            Span::styled(" Enter ", Style::default().fg(Color::Black).bg(ACCENT_VIOLET).bold()),
             Span::styled(tr(" Abrir ficha ", " Open manga "), Style::default().fg(Color::White).bold()),
         ]);
 
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Yellow))
+            .border_style(Style::default().fg(SURFACE_BORDER_VIOLET))
             .title(Line::from(top_left_spans))
             .title_bottom(instructions);
 
@@ -466,75 +608,216 @@ where
         StatefulWidget::render(self.carrousel_recently_added.clone(), inner_area, buf, &mut self.recently_added_manga_state);
     }
 
-    fn render_app_information(&mut self, area: Rect, buf: &mut Buffer) {
-        let block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(80, 90, 125)))
-            .title(Line::from(vec![Span::styled(
-                format!(" ⚡ manga-tui v{} ", env!("CARGO_PKG_VERSION")),
-                Style::default().fg(Color::Black).bg(Color::Magenta).bold(),
-            )]));
+    fn render_hero(&self, area: Rect, buf: &mut Buffer, mode: HeroMode) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        match mode {
+            HeroMode::Full => self.render_full_hero(area, buf),
+            HeroMode::Compact => self.render_compact_hero(area, buf),
+        }
+    }
 
-        let inner = block.inner(area).inner(Margin {
-            horizontal: 1,
-            vertical: 0,
-        });
-        block.render(area, buf);
+    fn greeting_spans(&self) -> Vec<Span<'static>> {
+        let (icon, greeting) = greeting_for_hour(chrono::Local::now().hour());
+        vec![
+            Span::styled(format!("{icon}  "), Style::default().fg(Color::Rgb(255, 200, 80))),
+            Span::styled(format!("{greeting}, "), Style::default().fg(Color::White).bold()),
+            Span::styled(tr("lector", "reader").to_string(), Style::default().fg(gradient_color(1, 2)).bold()),
+        ]
+    }
 
-        if inner.width == 0 || inner.height == 0 {
+    fn stat_entries(&self, compact_labels: bool) -> [(&'static str, String, &'static str, Color); 4] {
+        if compact_labels {
+            [
+                ("📚", format_count(self.stats.library_mangas), tr("Biblio.", "Lib."), ACCENT_CYAN),
+                ("✔", format_count(self.stats.chapters_read), tr("Leídos", "Read"), Color::Rgb(110, 220, 140)),
+                ("⬇", format_count(self.stats.downloaded_chapters), tr("Desc.", "Down."), ACCENT_VIOLET),
+                ("★", format_count(self.stats.favorites), tr("Favs.", "Favs."), Color::Rgb(255, 200, 80)),
+            ]
+        } else {
+            [
+                ("📚", format_count(self.stats.library_mangas), tr("Biblioteca", "Library"), ACCENT_CYAN),
+                ("✔", format_count(self.stats.chapters_read), tr("Caps. leídos", "Chapters read"), Color::Rgb(110, 220, 140)),
+                ("⬇", format_count(self.stats.downloaded_chapters), tr("Descargas", "Downloads"), ACCENT_VIOLET),
+                ("★", format_count(self.stats.favorites), tr("Favoritos", "Favorites"), Color::Rgb(255, 200, 80)),
+            ]
+        }
+    }
+
+    fn key_chip(key: &str) -> Span<'static> {
+        Span::styled(format!(" {key} "), Style::default().fg(ACCENT_CYAN).bg(SURFACE_CHIP).bold())
+    }
+
+    fn continue_reading_line(&self, max_width: u16) -> Line<'static> {
+        let muted = Style::default().fg(SURFACE_MUTED);
+        match &self.stats.last_read_title {
+            Some(title) => {
+                // Prefix "📖 Continúa con " (17) + suffix "  ·   o  Biblioteca" (~19) = 36 cols overhead
+                let max_title = (max_width as usize).saturating_sub(36).max(8);
+                let display_title = truncate_home_text(title, max_title);
+                Line::from(vec![
+                    Span::styled(tr("📖 Continúa con ", "📖 Continue with "), muted),
+                    Span::styled(display_title, Style::default().fg(Color::White).bold().italic()),
+                    Span::styled("  ·  ", muted),
+                    Self::key_chip("o"),
+                    Span::styled(tr(" Biblioteca", " Library"), muted),
+                ])
+            },
+            None => Line::from(vec![
+                Span::styled(tr("✨ Descubre algo nuevo hoy  ·  ", "✨ Discover something new today  ·  "), muted),
+                Self::key_chip("i"),
+                Span::styled(tr(" Buscar", " Search"), muted),
+            ]),
+        }
+    }
+
+    fn inline_stats_line(&self, compact_labels: bool, numbers_only: bool) -> Line<'static> {
+        let mut spans = Vec::new();
+        for (idx, (icon, value, label, color)) in self.stat_entries(compact_labels).into_iter().enumerate() {
+            if idx > 0 {
+                spans.push(Span::raw(if numbers_only { " " } else { "  " }));
+            }
+            spans.push(Span::styled(format!(" {icon} {value} "), Style::default().fg(color).bg(SURFACE_CHIP).bold()));
+            if !numbers_only {
+                spans.push(Span::styled(format!(" {label}"), Style::default().fg(SURFACE_MUTED)));
+            }
+        }
+        Line::from(spans)
+    }
+
+    fn render_full_hero(&self, area: Rect, buf: &mut Buffer) {
+        let [logo_area, info_area] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1)])
+            .spacing(3)
+            .areas(area);
+
+        // One row of breathing space above the logo.
+        let logo_area = Rect {
+            y: logo_area.y.saturating_add(1),
+            height: logo_area.height.saturating_sub(1),
+            ..logo_area
+        };
+        let logo_lines: Vec<Line<'static>> = build_logo_lines().iter().map(|row| gradient_line(row, false)).collect();
+        Paragraph::new(logo_lines).render(logo_area, buf);
+
+        let [_pad, greeting_area, continue_area, tagline_area, cards_area] = Layout::vertical([
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(1),
+            Constraint::Length(3),
+        ])
+        .areas(info_area);
+
+        Paragraph::new(Line::from(self.greeting_spans())).render(greeting_area, buf);
+        Paragraph::new(self.continue_reading_line(info_area.width)).render(continue_area, buf);
+        Paragraph::new(Line::from(Span::styled(
+            tr("Tu centro de lectura manga en terminal", "Your terminal manga reading hub"),
+            Style::default().fg(Color::Rgb(95, 102, 138)).italic(),
+        )))
+        .render(tagline_area, buf);
+
+        if cards_area.width >= 74 {
+            let card_width = ((cards_area.width.saturating_sub(3)) / 4).min(21);
+            let compact_labels = card_width < 20;
+            let card_areas = Layout::horizontal([Constraint::Length(card_width); 4])
+                .spacing(1)
+                .flex(Flex::Start)
+                .split(cards_area);
+            for ((icon, value, label, color), card_area) in self.stat_entries(compact_labels).into_iter().zip(card_areas.iter()) {
+                let block = Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(SURFACE_BORDER));
+                let inner = block.inner(*card_area);
+                block.render(*card_area, buf);
+                Paragraph::new(Line::from(vec![
+                    Span::styled(format!("{icon} "), Style::default().fg(color)),
+                    Span::styled(value, Style::default().fg(color).bold()),
+                    Span::styled(format!(" {label}"), Style::default().fg(SURFACE_MUTED)),
+                ]))
+                .centered()
+                .render(inner, buf);
+            }
+        } else {
+            // Standard terminals (~112-150 cols): render a 2x2 grid of clean pills so all 4 stats stay legible.
+            let [_gap, row1, row2] =
+                Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).areas(cards_area);
+            let entries = self.stat_entries(cards_area.width < 46);
+            for (pair, row_area) in entries.chunks(2).zip([row1, row2]) {
+                let [left_col, right_col] =
+                    Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(row_area);
+                for ((icon, value, label, color), cell) in pair.iter().zip([left_col, right_col]) {
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(format!(" {icon} {value} "), Style::default().fg(*color).bg(SURFACE_CHIP).bold()),
+                        Span::styled(format!(" {label}"), Style::default().fg(SURFACE_MUTED)),
+                    ]))
+                    .render(cell, buf);
+                }
+            }
+        }
+    }
+
+    fn render_compact_hero(&self, area: Rect, buf: &mut Buffer) {
+        let [top_row, bottom_row] = Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(area);
+
+        let mut left_spans = vec![Span::styled("◆ ", Style::default().fg(gradient_color(0, 2)).bold())];
+        left_spans.extend(gradient_line("manga-tui", true).spans);
+        left_spans.push(Span::styled("   ", Style::default()));
+        left_spans.extend(self.greeting_spans());
+        let left = Line::from(left_spans);
+        let left_width = left.width() as u16;
+        Paragraph::new(left).render(top_row, buf);
+
+        let stats = [self.inline_stats_line(false, false), self.inline_stats_line(true, false), self.inline_stats_line(true, true)]
+            .into_iter()
+            .find(|line| left_width + line.width() as u16 + 2 <= top_row.width);
+
+        if let Some(stats_line) = stats {
+            Paragraph::new(stats_line).right_aligned().render(top_row, buf);
+        }
+
+        Paragraph::new(self.continue_reading_line(bottom_row.width)).render(bottom_row, buf);
+    }
+
+    fn render_status_strip(&self, area: Rect, buf: &mut Buffer) {
+        if area.width == 0 || area.height == 0 {
             return;
         }
 
         let provider_name = self.manga_provider.name();
-        let health = get_provider_health_status(provider_name);
-        let (health_dot, health_style) = match health {
-            ProviderHealthStatus::Healthy => (tr(" ● Online", " ● Online"), Style::default().fg(Color::Green).bold()),
-            ProviderHealthStatus::Degraded => (tr(" ◐ Lento", " ◐ Slow"), Style::default().fg(Color::Yellow).bold()),
-            ProviderHealthStatus::CircuitOpen => (tr(" ⚠ Caído", " ⚠ Down"), Style::default().fg(Color::Red).bold()),
+        let (health_label, health_color) = match get_provider_health_status(provider_name) {
+            ProviderHealthStatus::Healthy => ("● Online", Color::Rgb(110, 220, 140)),
+            ProviderHealthStatus::Degraded => (tr("◐ Lento", "◐ Slow"), Color::Yellow),
+            ProviderHealthStatus::CircuitOpen => (tr("⚠ Caído", "⚠ Down"), Color::LightRed),
         };
 
         let config = MangaTuiConfig::get();
-        let format_pill = Span::styled(
-            format!(" {} ", config.download_type.to_string().to_uppercase()),
-            Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
-        );
-        let lang_pill = Span::styled(
-            format!(" {} ", config.default_language),
-            Style::default().fg(Color::White).bg(Color::Rgb(42, 49, 72)).bold(),
-        );
+        let separator = Span::styled("  │  ", Style::default().fg(SURFACE_BORDER));
+        let muted = Style::default().fg(SURFACE_MUTED);
 
-        let lines = vec![
-            Line::from(vec![
-                Span::styled(tr("📡 Fuente: ", "📡 Source: "), Style::default().fg(Color::Gray)),
-                Span::styled(format!(" {} ", provider_name), Style::default().fg(Color::White).bg(Color::Blue).bold()),
-                Span::styled(health_dot, health_style),
-            ]),
-            Line::from(vec![
-                Span::styled(tr("📦 Config: ", "📦 Config: "), Style::default().fg(Color::Gray)),
-                format_pill,
-                Span::raw(" "),
-                lang_pill,
-            ]),
-            Line::from(Span::styled("──────────────────────────", Style::default().fg(Color::Rgb(50, 56, 78)))),
-            Line::from(vec![
-                Span::styled(" <f> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-                Span::styled(tr(" Ir al Buscador", " Go to Search"), Style::default().fg(Color::White)),
-            ]),
-            Line::from(vec![
-                Span::styled(" <d> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-                Span::styled(tr(" Abrir Biblioteca", " Open Library"), Style::default().fg(Color::White)),
-            ]),
-            Line::from(vec![
-                Span::styled(" <n> ", Style::default().fg(Color::Cyan).bg(Color::DarkGray).bold()),
-                Span::styled(tr(" Guía de controles", " Controls guide"), Style::default().fg(Color::Gray)),
-            ]),
-            Line::from(vec![
-                Span::styled(" <g> ", Style::default().fg(Color::Magenta).bg(Color::DarkGray).bold()),
-                Span::styled(tr(" GitHub del proyecto", " Project GitHub"), Style::default().fg(Color::Gray)),
-            ]),
-        ];
+        let left = Line::from(vec![
+            Span::styled(
+                format!(" ⚡ v{} ", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(Color::Black).bg(gradient_color(1, 2)).bold(),
+            ),
+            Span::raw("  "),
+            Span::styled(tr("📡 Fuente ", "📡 Source "), muted),
+            Span::styled(format!(" {provider_name} "), Style::default().fg(Color::White).bg(SURFACE_CHIP).bold()),
+            Span::styled(format!(" {health_label}"), Style::default().fg(health_color).bold()),
+            separator.clone(),
+            Span::styled(tr("📦 Formato ", "📦 Format "), muted),
+            Span::styled(config.download_type.to_string().to_uppercase(), Style::default().fg(Color::Cyan).bold()),
+            separator,
+            Span::styled(tr("🌐 Idioma ", "🌐 Language "), muted),
+            Span::styled(config.default_language.to_string(), Style::default().fg(Color::Cyan).bold()),
+        ]);
+        let left_width = left.width() as u16;
+        Paragraph::new(left).render(area, buf);
 
-        Paragraph::new(lines).wrap(Wrap { trim: true }).render(inner, buf);
+        let right = Line::from(vec![Self::key_chip("g"), Span::styled(tr(" GitHub ", " GitHub "), muted)]);
+        if left_width + right.width() as u16 + 2 <= area.width {
+            Paragraph::new(right).right_aligned().render(area, buf);
+        }
     }
 
     fn handle_mouse_events(&mut self, mouse_event: MouseEvent) {
@@ -644,5 +927,75 @@ mod tests {
         home.load_recently_added_mangas(Some(vec![RecentlyAddedManga::default()]));
 
         assert!(home.local_event_rx.is_empty());
+    }
+
+    #[test]
+    fn hero_mode_adapts_to_terminal_size() {
+        assert_eq!(HeroMode::for_area(Rect::new(0, 0, 160, 40)), HeroMode::Full);
+        assert_eq!(HeroMode::for_area(Rect::new(0, 0, 118, 27)), HeroMode::Full);
+        assert_eq!(HeroMode::for_area(Rect::new(0, 0, 90, 35)), HeroMode::Compact);
+        assert_eq!(HeroMode::for_area(Rect::new(0, 0, 150, 20)), HeroMode::Compact);
+    }
+
+    #[test]
+    fn logo_lines_and_gradient_have_consistent_dimensions() {
+        let lines = build_logo_lines();
+        let expected_width = logo_width() as usize;
+        assert_eq!(lines.len(), LOGO_HEIGHT as usize);
+        for row in &lines {
+            assert_eq!(row.chars().count(), expected_width);
+        }
+
+        let styled = gradient_line("manga-tui", true);
+        assert_eq!(styled.spans.len(), "manga-tui".chars().count());
+    }
+
+    #[test]
+    fn greeting_count_and_truncate_helpers() {
+        assert_eq!(greeting_for_hour(8).0, "☕");
+        assert_eq!(greeting_for_hour(15).0, "☀");
+        assert_eq!(greeting_for_hour(23).0, "🌙");
+
+        assert_eq!(format_count(0), "0");
+        assert_eq!(format_count(999), "999");
+        assert_eq!(format_count(1_000), "1K");
+        assert_eq!(format_count(1_200), "1.2K");
+        assert_eq!(format_count(2_300_000), "2.3M");
+
+        assert_eq!(truncate_home_text("Berserk", 10), "Berserk");
+        assert_eq!(truncate_home_text("進撃の巨人 ñandú", 5), "進撃の巨…");
+    }
+
+    #[test]
+    fn home_renders_cleanly_across_sizes_with_stats() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut home: Home<MockMangaPageProvider> = Home::new(None, MockMangaPageProvider::new().into());
+        home.stats = HomeStats {
+            library_mangas: 14,
+            chapters_read: 1_240,
+            downloaded_chapters: 38,
+            favorites: 7,
+            last_read_title: Some("Berserk: Golden Age Arc Edition".to_string()),
+        };
+
+        for (width, height) in [(165, 42), (118, 27), (90, 24), (45, 14)] {
+            let backend = TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            let area = Rect::new(0, 0, width, height);
+            terminal
+                .draw(|frame| {
+                    home.render(area, frame);
+                })
+                .unwrap();
+
+            let buf = terminal.backend().buffer();
+            let text: String = buf.content().iter().map(|c| c.symbol()).collect::<Vec<_>>().join("");
+            if width >= 90 {
+                assert!(text.contains("1.2K"), "expected formatted chapters_read in {width}x{height}");
+                assert!(text.contains("Populares") || text.contains("Popular"), "expected popular section in {width}x{height}");
+            }
+        }
     }
 }

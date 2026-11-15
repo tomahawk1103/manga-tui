@@ -19,23 +19,29 @@ pub enum CarrouselState {
     NotFound,
 }
 
+const WIDGET_BORDER: Color = Color::Rgb(58, 64, 92);
+const WIDGET_ACCENT_CYAN: Color = Color::Rgb(0, 210, 255);
+const WIDGET_ACCENT_VIOLET: Color = Color::Rgb(160, 120, 255);
+const WIDGET_CHIP_BG: Color = Color::Rgb(34, 38, 58);
+const WIDGET_MUTED: Color = Color::Rgb(120, 128, 160);
+
 fn status_pill(status: MangaStatus) -> Span<'static> {
     match status {
         MangaStatus::Ongoing => Span::styled(
-            format!(" 🟢 {} ", tr("En emisión", "Ongoing")),
-            Style::default().fg(Color::Green).bg(Color::Rgb(22, 48, 36)).bold(),
+            format!(" ● {} ", tr("En emisión", "Ongoing")),
+            Style::default().fg(Color::Rgb(110, 220, 140)).bg(Color::Rgb(20, 44, 34)).bold(),
         ),
         MangaStatus::Completed => Span::styled(
-            format!(" 🔵 {} ", tr("Finalizado", "Completed")),
-            Style::default().fg(Color::Cyan).bg(Color::Rgb(22, 38, 58)).bold(),
+            format!(" ● {} ", tr("Finalizado", "Completed")),
+            Style::default().fg(WIDGET_ACCENT_CYAN).bg(Color::Rgb(20, 40, 60)).bold(),
         ),
         MangaStatus::Hiatus => Span::styled(
-            format!(" 🟡 {} ", tr("En pausa", "Hiatus")),
-            Style::default().fg(Color::Yellow).bg(Color::Rgb(52, 44, 20)).bold(),
+            format!(" ◐ {} ", tr("En pausa", "Hiatus")),
+            Style::default().fg(Color::Rgb(255, 200, 80)).bg(Color::Rgb(50, 40, 20)).bold(),
         ),
         MangaStatus::Cancelled => Span::styled(
-            format!(" 🟠 {} ", tr("Cancelado", "Cancelled")),
-            Style::default().fg(Color::LightRed).bg(Color::Rgb(52, 26, 26)).bold(),
+            format!(" ✕ {} ", tr("Cancelado", "Cancelled")),
+            Style::default().fg(Color::LightRed).bg(Color::Rgb(52, 24, 28)).bold(),
         ),
     }
 }
@@ -57,7 +63,7 @@ impl CarrouselItemPopularManga {
     fn render_cover(&mut self, area: Rect, buf: &mut Buffer, state: &mut ImageState) {
         let cover_block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(55, 65, 92)));
+            .border_style(Style::default().fg(WIDGET_BORDER));
         let inner = cover_block.inner(area);
         cover_block.render(area, buf);
 
@@ -74,7 +80,7 @@ impl CarrouselItemPopularManga {
             None => {
                 let loader = Throbber::default()
                     .label(tr("Cargando portada...", "Loading cover..."))
-                    .style(Style::default().fg(Color::Yellow))
+                    .style(Style::default().fg(WIDGET_ACCENT_CYAN))
                     .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
                     .use_type(throbber_widgets_tui::WhichUse::Spin);
 
@@ -86,9 +92,9 @@ impl CarrouselItemPopularManga {
     fn render_details(&mut self, area: Rect, buf: &mut Buffer) {
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(70, 82, 115)))
+            .border_style(Style::default().fg(WIDGET_BORDER))
             .title(Line::from(vec![
-                Span::styled(" ✦ ", Style::default().fg(Color::Cyan).bold()),
+                Span::styled(" ✦ ", Style::default().fg(WIDGET_ACCENT_CYAN).bold()),
                 Span::styled(self.manga.title.clone(), Style::default().fg(Color::White).bold()),
                 Span::raw(" "),
             ]));
@@ -112,16 +118,16 @@ impl CarrouselItemPopularManga {
         let mut genre_spans: Vec<Span<'_>> = Vec::new();
         if self.manga.genres.is_empty() {
             genre_spans.push(Span::styled(
-                tr(" 📚 Destacado del catálogo ", " 📚 Featured in catalog "),
-                Style::default().fg(Color::Cyan).bg(Color::Rgb(28, 38, 60)).italic(),
+                tr(" ✦ Destacado del catálogo ", " ✦ Featured in catalog "),
+                Style::default().fg(Color::Rgb(165, 210, 255)).bg(WIDGET_CHIP_BG).italic(),
             ));
         } else {
             for genre in &self.manga.genres {
                 let pill_style = match genre.rating {
-                    Rating::Normal => Style::default().fg(Color::Cyan).bg(Color::Rgb(28, 38, 60)),
-                    Rating::Moderate => Style::default().fg(Color::Black).bg(Color::Yellow).bold(),
-                    Rating::Doujinshi => Style::default().fg(Color::White).bg(Color::Blue).bold(),
-                    Rating::Nsfw => Style::default().fg(Color::White).bg(Color::Red).bold(),
+                    Rating::Normal => Style::default().fg(Color::Rgb(165, 210, 255)).bg(WIDGET_CHIP_BG),
+                    Rating::Moderate => Style::default().fg(Color::Rgb(255, 200, 80)).bg(Color::Rgb(54, 42, 20)).bold(),
+                    Rating::Doujinshi => Style::default().fg(WIDGET_ACCENT_VIOLET).bg(Color::Rgb(38, 30, 62)).bold(),
+                    Rating::Nsfw => Style::default().fg(Color::LightRed).bg(Color::Rgb(54, 24, 30)).bold(),
                 };
                 genre_spans.push(Span::styled(format!(" {} ", genre.title), pill_style));
                 genre_spans.push(Span::raw(" "));
@@ -136,10 +142,10 @@ impl CarrouselItemPopularManga {
                     "Sin sinopsis disponible en la vista rápida — pulsa <r> para abrir la ficha completa del manga.",
                     "No synopsis available in quick view — press <r> to open the full manga page.",
                 ),
-                Style::default().fg(Color::DarkGray).italic(),
+                Style::default().fg(WIDGET_MUTED).italic(),
             ))
         } else {
-            Line::from(Span::styled(self.manga.description.clone(), Style::default().fg(Color::Gray)))
+            Line::from(Span::styled(self.manga.description.clone(), Style::default().fg(Color::Rgb(205, 210, 226))))
         };
 
         Paragraph::new(synopsis).wrap(Wrap { trim: true }).render(description_area, buf);
@@ -172,12 +178,12 @@ impl StatefulWidget for PopularMangaCarrousel {
             CarrouselState::Searching => {
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Rgb(55, 65, 92)));
+                    .border_style(Style::default().fg(WIDGET_BORDER));
                 let inner = block.inner(area);
                 block.render(area, buf);
                 Paragraph::new(Line::from(vec![Span::styled(
                     tr(" ⏳ Buscando mangas populares...", " ⏳ Searching popular mangas..."),
-                    Style::default().fg(Color::Yellow).bold(),
+                    Style::default().fg(WIDGET_ACCENT_CYAN).bold(),
                 )]))
                 .render(inner, buf);
                 state.set_area(cover_area);
@@ -279,7 +285,7 @@ impl CarrouselItemRecentlyAddedManga {
             None => {
                 let loader = Throbber::default()
                     .label(tr("Cargando...", "Loading..."))
-                    .style(Style::default().fg(Color::Yellow))
+                    .style(Style::default().fg(WIDGET_ACCENT_VIOLET))
                     .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
                     .use_type(throbber_widgets_tui::WhichUse::Spin);
 
@@ -333,18 +339,18 @@ impl StatefulWidget for RecentlyAddedCarrousel {
                     let card_block = if is_selected {
                         Block::bordered()
                             .border_type(BorderType::Rounded)
-                            .border_style(Style::default().fg(Color::Yellow).bold())
+                            .border_style(Style::default().fg(WIDGET_ACCENT_VIOLET).bold())
                             .title(Line::from(vec![Span::styled(
                                 format!(" ▸ #{} ", item_index + 1),
-                                Style::default().fg(Color::Black).bg(Color::Yellow).bold(),
+                                Style::default().fg(Color::Black).bg(WIDGET_ACCENT_VIOLET).bold(),
                             )]))
                     } else {
                         Block::bordered()
                             .border_type(BorderType::Rounded)
-                            .border_style(Style::default().fg(Color::Rgb(50, 56, 78)))
+                            .border_style(Style::default().fg(WIDGET_BORDER))
                             .title(Line::from(vec![Span::styled(
                                 format!(" #{} ", item_index + 1),
-                                Style::default().fg(Color::DarkGray),
+                                Style::default().fg(WIDGET_MUTED),
                             )]))
                     };
 
@@ -360,9 +366,9 @@ impl StatefulWidget for RecentlyAddedCarrousel {
                         let [top, bottom] = Layout::vertical(manga_constraints).areas(inner_card);
 
                         let title_style = if is_selected {
-                            Style::default().fg(Color::White).bg(Color::Rgb(42, 49, 72)).bold()
+                            Style::default().fg(Color::White).bg(WIDGET_CHIP_BG).bold()
                         } else {
-                            Style::default().fg(Color::Gray)
+                            Style::default().fg(Color::Rgb(190, 196, 218))
                         };
 
                         if self.can_display_images {
@@ -376,7 +382,7 @@ impl StatefulWidget for RecentlyAddedCarrousel {
                                 .render(top, buf);
                             Paragraph::new(Line::from(Span::styled(
                                 item.manga.description.clone(),
-                                Style::default().fg(Color::DarkGray),
+                                Style::default().fg(WIDGET_MUTED),
                             )))
                             .wrap(Wrap { trim: true })
                             .render(bottom, buf);
@@ -387,12 +393,12 @@ impl StatefulWidget for RecentlyAddedCarrousel {
             CarrouselState::Searching => {
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Rgb(50, 56, 78)));
+                    .border_style(Style::default().fg(WIDGET_BORDER));
                 let inner = block.inner(area);
                 block.render(area, buf);
                 Paragraph::new(Line::from(vec![Span::styled(
                     tr(" ⏳ Buscando mangas recientes...", " ⏳ Searching recent mangas..."),
-                    Style::default().fg(Color::Yellow).bold(),
+                    Style::default().fg(WIDGET_ACCENT_VIOLET).bold(),
                 )]))
                 .render(inner, buf);
 

@@ -176,6 +176,16 @@ pub struct FavoriteMangaRecord {
     pub title: String,
 }
 
+/// User statistics displayed in the Home page hero header.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct HomeStats {
+    pub library_mangas: u32,
+    pub chapters_read: u32,
+    pub downloaded_chapters: u32,
+    pub favorites: u32,
+    pub last_read_title: Option<String>,
+}
+
 /// Arguments for retrieving manga history with filtering and pagination.
 ///
 /// Used with `Database::get_history()` to specify exactly what manga to retrieve.
@@ -1082,6 +1092,47 @@ impl<'a> Database<'a> {
         rows.collect()
     }
 
+    /// Aggregated user statistics shown in the Home page hero header.
+    pub fn get_home_stats(&self) -> rusqlite::Result<HomeStats> {
+        let library_mangas: u32 = self.connection.query_row(
+            "SELECT COUNT(DISTINCT manga_history_union.manga_id)
+             FROM manga_history_union
+             INNER JOIN mangas ON mangas.id = manga_history_union.manga_id
+             WHERE mangas.deleted_at IS NULL",
+            [],
+            |row| row.get(0),
+        )?;
+        let chapters_read: u32 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM chapters WHERE is_read = 1", [], |row| row.get(0))?;
+        let downloaded_chapters: u32 =
+            self.connection
+                .query_row("SELECT COUNT(*) FROM chapters WHERE is_downloaded = 1", [], |row| row.get(0))?;
+        let favorites: u32 = self.connection.query_row("SELECT COUNT(*) FROM favorite_mangas", [], |row| row.get(0))?;
+        let last_read_title: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT mangas.title
+                 FROM mangas
+                 INNER JOIN manga_history_union ON mangas.id = manga_history_union.manga_id
+                 INNER JOIN history_types ON manga_history_union.type_id = history_types.id
+                 WHERE history_types.name = 'ReadingHistory' AND mangas.deleted_at IS NULL
+                 ORDER BY mangas.last_read DESC
+                 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        Ok(HomeStats {
+            library_mangas,
+            chapters_read,
+            downloaded_chapters,
+            favorites,
+            last_read_title,
+        })
+    }
+
     pub fn get_downloaded_chapter_ids(&self, manga_id: &str, provider: MangaProviders) -> rusqlite::Result<Vec<String>> {
         let mut statement = self.connection.prepare(
             "SELECT chapters.id
@@ -1812,6 +1863,59 @@ mod test {
         assert_eq!(all_dismissed_chapters.len(), 3);
         assert!(all_dismissed_chapters.contains(&"chapter-3".to_string()));
         assert!(database.get_dismissed_chapter_ids(&manga_id, MangaProviders::Weebcentral)?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn home_stats_aggregate_library_reading_downloads_and_favorites() -> Result<()> {
+        let connection = Connection::open_in_memory()?;
+        let database = Database::new(&connection);
+        database.setup()?;
+
+        assert_eq!(database.get_home_stats()?, HomeStats::default());
+
+        database.save_history(MangaReadingHistorySave {
+            id: "berserk",
+            title: "Berserk",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "berserk-1",
+                title: "Chapter 1",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangadex,
+        })?;
+        database.save_history(MangaReadingHistorySave {
+            id: "berserk",
+            title: "Berserk",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "berserk-2",
+                title: "Chapter 2",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangadex,
+        })?;
+        database.set_chapter_downloaded(SetChapterDownloaded {
+            id: "vagabond-1",
+            title: "Chapter 1",
+            manga_id: "vagabond",
+            manga_title: "Vagabond",
+            img_url: None,
+            provider: MangaProviders::Mangadex,
+        })?;
+        database.toggle_favorite("berserk", MangaProviders::Mangadex, "Berserk")?;
+        // Ensure deterministic ordering on last_read inside an in-memory fast test.
+        connection.execute("UPDATE mangas SET last_read = '2026-11-15 10:00:00' WHERE id = 'vagabond'", [])?;
+        connection.execute("UPDATE mangas SET last_read = '2026-11-15 12:00:00' WHERE id = 'berserk'", [])?;
+
+        let stats = database.get_home_stats()?;
+        assert_eq!(stats.chapters_read, 3);
+        assert_eq!(stats.downloaded_chapters, 1);
+        assert_eq!(stats.favorites, 1);
+        assert_eq!(stats.library_mangas, 2);
+        assert_eq!(stats.last_read_title.as_deref(), Some("Berserk"));
 
         Ok(())
     }

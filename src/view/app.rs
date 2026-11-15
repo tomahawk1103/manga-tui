@@ -1216,6 +1216,8 @@ where
 
         if self.home_page.require_search() {
             self.home_page.init_search();
+        } else {
+            self.home_page.refresh_stats();
         }
 
         self.current_tab = SelectedPage::Home;
