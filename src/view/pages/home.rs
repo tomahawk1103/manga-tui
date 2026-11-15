@@ -6,19 +6,20 @@ use image::DynamicImage;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
-use ratatui::style::Stylize;
-use ratatui::text::{Line, Span, ToSpan};
-use ratatui::widgets::{Block, List, StatefulWidget, Widget};
-use ratatui_image::Resize;
+use ratatui::style::{Color, Style, Stylize};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget, Wrap};
 use ratatui_image::picker::Picker;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinSet;
 
 use crate::backend::error_log::{ErrorType, write_to_error_log};
 use crate::backend::manga_provider::{HomePageMangaProvider, PopularManga, RecentlyAddedManga};
+use crate::backend::multi_provider::{ProviderHealthStatus, get_provider_health_status};
 use crate::backend::tui::Events;
 use crate::common::ImageState;
-use crate::global::INSTRUCTIONS_STYLE;
+use crate::config::MangaTuiConfig;
+use crate::i18n::tr;
 use crate::view::widgets::Component;
 use crate::view::widgets::home::{CarrouselItemPopularManga, CarrouselState, PopularMangaCarrousel, RecentlyAddedCarrousel};
 
@@ -160,30 +161,53 @@ where
     }
 
     pub fn render_popular_mangas_carrousel(&mut self, area: Rect, buf: &mut Buffer) {
-        let inner = area.inner(Margin {
-            horizontal: 1,
-            vertical: 1,
-        });
+        let total = self.carrousel_popular_mangas.items.len();
+        let current = if total == 0 { 0 } else { self.carrousel_popular_mangas.current_item_visible_index + 1 };
+
+        let mut top_left_spans = vec![Span::styled(
+            tr(" 🔥 Títulos Populares ", " 🔥 Popular New Titles "),
+            Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+        )];
+        if total > 0 {
+            top_left_spans.push(Span::styled(format!(" [ {current} / {total} ] "), Style::default().fg(Color::Yellow).bold()));
+        }
+
+        let mut dot_spans = Vec::new();
+        if total > 0 {
+            dot_spans.push(Span::raw(" "));
+            let max_dots = total.min(15);
+            let active_dot = self.carrousel_popular_mangas.current_item_visible_index % max_dots;
+            for idx in 0..max_dots {
+                if idx == active_dot {
+                    dot_spans.push(Span::styled("● ", Style::default().fg(Color::Cyan).bold()));
+                } else {
+                    dot_spans.push(Span::styled("○ ", Style::default().fg(Color::DarkGray)));
+                }
+            }
+        }
 
         let instructions = Line::from(vec![
-            "Next ".into(),
-            Span::raw("<w>").style(*INSTRUCTIONS_STYLE),
-            " previous ".into(),
-            Span::raw("<b>").style(*INSTRUCTIONS_STYLE),
-            " read ".into(),
-            Span::raw("<r>").style(*INSTRUCTIONS_STYLE),
-            format!(
-                " No.{} Total : {}",
-                self.carrousel_popular_mangas.current_item_visible_index,
-                self.carrousel_popular_mangas.items.len()
-            )
-            .into(),
+            Span::raw(" "),
+            Span::styled(" <b> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+            Span::styled(tr(" Anterior  ", " Previous  "), Style::default().fg(Color::Gray)),
+            Span::styled(" <w> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+            Span::styled(tr(" Siguiente  ", " Next  "), Style::default().fg(Color::Gray)),
+            Span::styled(" <r> ", Style::default().fg(Color::Black).bg(Color::Cyan).bold()),
+            Span::styled(tr(" Leer manga ", " Read manga "), Style::default().fg(Color::White).bold()),
         ]);
 
-        Block::bordered()
-            .title(Line::from(vec!["Popular new titles".bold()]))
-            .title_bottom(instructions)
-            .render(area, buf);
+        let mut block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Cyan))
+            .title(Line::from(top_left_spans))
+            .title_bottom(instructions);
+
+        if !dot_spans.is_empty() {
+            block = block.title_top(Line::from(dot_spans).right_aligned());
+        }
+
+        let inner = block.inner(area);
+        block.render(area, buf);
 
         StatefulWidget::render(self.carrousel_popular_mangas.clone(), inner, buf, &mut self.popular_manga_carrousel_state);
     }
@@ -388,45 +412,129 @@ where
     }
 
     fn render_recently_added_mangas_area(&mut self, area: Rect, buf: &mut Buffer) {
-        let layout = Layout::horizontal([Constraint::Percentage(30), Constraint::Percentage(70)]);
+        let layout = Layout::horizontal([Constraint::Percentage(28), Constraint::Percentage(72)]);
         let [app_info_area, recently_added_mangas_area] = layout.areas(area);
 
+        self.recently_added_area = recently_added_mangas_area;
         self.render_app_information(app_info_area, buf);
 
-        let inner_area = recently_added_mangas_area.inner(Margin {
-            horizontal: 1,
-            vertical: 1,
-        });
+        let total = self.carrousel_recently_added.items.len();
+        let current = if total == 0 { 0 } else { self.carrousel_recently_added.selected_item_index + 1 };
+
+        let mut top_left_spans = vec![Span::styled(
+            tr(" ✨ Añadidos Recientemente ", " ✨ Recently Added "),
+            Style::default().fg(Color::Black).bg(Color::Yellow).bold(),
+        )];
+        if total > 0 {
+            top_left_spans.push(Span::styled(format!(" [ {current} / {total} ] "), Style::default().fg(Color::Yellow).bold()));
+        }
+
+        let mut page_spans = Vec::new();
+        if total > 0 {
+            let per_page = self.carrousel_recently_added.amount_items_per_page.max(1);
+            let total_pages = total.div_ceil(per_page);
+            let current_page = (self.carrousel_recently_added.selected_item_index / per_page) + 1;
+            page_spans.push(Span::styled(
+                format!(" {} {current_page}/{total_pages} ", tr("Pág.", "Page")),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
 
         let instructions = Line::from(vec![
-            "Recently added mangas | ".into(),
-            "Move right ".into(),
-            Span::raw("<l>").style(*INSTRUCTIONS_STYLE),
-            " Move left ".into(),
-            Span::raw(" <h> ").style(*INSTRUCTIONS_STYLE),
-            " Read ".into(),
-            Span::raw("<Enter>").style(*INSTRUCTIONS_STYLE),
+            Span::raw(" "),
+            Span::styled(" <h / ←> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+            Span::styled(tr(" Izquierda  ", " Left  "), Style::default().fg(Color::Gray)),
+            Span::styled(" <l / →> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+            Span::styled(tr(" Derecha  ", " Right  "), Style::default().fg(Color::Gray)),
+            Span::styled(" <Enter> ", Style::default().fg(Color::Black).bg(Color::Yellow).bold()),
+            Span::styled(tr(" Abrir ficha ", " Open manga "), Style::default().fg(Color::White).bold()),
         ]);
 
-        Block::bordered().title(instructions).render(recently_added_mangas_area, buf);
+        let mut block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Yellow))
+            .title(Line::from(top_left_spans))
+            .title_bottom(instructions);
+
+        if !page_spans.is_empty() {
+            block = block.title_top(Line::from(page_spans).right_aligned());
+        }
+
+        let inner_area = block.inner(recently_added_mangas_area);
+        block.render(recently_added_mangas_area, buf);
 
         StatefulWidget::render(self.carrousel_recently_added.clone(), inner_area, buf, &mut self.recently_added_manga_state);
     }
 
     fn render_app_information(&mut self, area: Rect, buf: &mut Buffer) {
-        let layout = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).margin(1).split(area);
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Rgb(80, 90, 125)))
+            .title(Line::from(vec![Span::styled(
+                format!(" ⚡ manga-tui v{} ", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(Color::Black).bg(Color::Magenta).bold(),
+            )]));
 
-        Block::bordered().render(area, buf);
+        let inner = block.inner(area).inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
+        block.render(area, buf);
 
-        Widget::render(
-            List::new([
-                Line::from(vec![format!("Manga-tui V{}", env!("CARGO_PKG_VERSION")).into()]),
-                Line::from(vec![format!("Using: {}", self.manga_provider.name()).into()]),
-                Line::from(vec!["Support this project ".into(), "<g>".to_span().style(*INSTRUCTIONS_STYLE)]),
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        let provider_name = self.manga_provider.name();
+        let health = get_provider_health_status(provider_name);
+        let (health_dot, health_style) = match health {
+            ProviderHealthStatus::Healthy => (tr(" ● Online", " ● Online"), Style::default().fg(Color::Green).bold()),
+            ProviderHealthStatus::Degraded => (tr(" ◐ Lento", " ◐ Slow"), Style::default().fg(Color::Yellow).bold()),
+            ProviderHealthStatus::CircuitOpen => (tr(" ⚠ Caído", " ⚠ Down"), Style::default().fg(Color::Red).bold()),
+        };
+
+        let config = MangaTuiConfig::get();
+        let format_pill = Span::styled(
+            format!(" {} ", config.download_type.to_string().to_uppercase()),
+            Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+        );
+        let lang_pill = Span::styled(
+            format!(" {} ", config.default_language),
+            Style::default().fg(Color::White).bg(Color::Rgb(42, 49, 72)).bold(),
+        );
+
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(tr("📡 Fuente: ", "📡 Source: "), Style::default().fg(Color::Gray)),
+                Span::styled(format!(" {} ", provider_name), Style::default().fg(Color::White).bg(Color::Blue).bold()),
+                Span::styled(health_dot, health_style),
             ]),
-            layout[0],
-            buf,
-        )
+            Line::from(vec![
+                Span::styled(tr("📦 Config: ", "📦 Config: "), Style::default().fg(Color::Gray)),
+                format_pill,
+                Span::raw(" "),
+                lang_pill,
+            ]),
+            Line::from(Span::styled("──────────────────────────", Style::default().fg(Color::Rgb(50, 56, 78)))),
+            Line::from(vec![
+                Span::styled(" <f> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+                Span::styled(tr(" Ir al Buscador", " Go to Search"), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled(" <d> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
+                Span::styled(tr(" Abrir Biblioteca", " Open Library"), Style::default().fg(Color::White)),
+            ]),
+            Line::from(vec![
+                Span::styled(" <n> ", Style::default().fg(Color::Cyan).bg(Color::DarkGray).bold()),
+                Span::styled(tr(" Guía de controles", " Controls guide"), Style::default().fg(Color::Gray)),
+            ]),
+            Line::from(vec![
+                Span::styled(" <g> ", Style::default().fg(Color::Magenta).bg(Color::DarkGray).bold()),
+                Span::styled(tr(" GitHub del proyecto", " Project GitHub"), Style::default().fg(Color::Gray)),
+            ]),
+        ];
+
+        Paragraph::new(lines).wrap(Wrap { trim: true }).render(inner, buf);
     }
 
     fn handle_mouse_events(&mut self, mouse_event: MouseEvent) {
@@ -452,6 +560,15 @@ where
                 if in_popular {
                     self.local_action_tx.send(HomeActions::GoToPopularMangaPage).ok();
                 } else if self.recently_added_area.contains(pos) {
+                    let inner_width = self.recently_added_area.width.saturating_sub(2).max(1);
+                    let rel_x = pos.x.saturating_sub(self.recently_added_area.x.saturating_add(1));
+                    let per_page = self.carrousel_recently_added.amount_items_per_page.max(1);
+                    let col_idx = ((rel_x as usize) * per_page / (inner_width as usize)).min(per_page - 1);
+                    let page_start = (self.carrousel_recently_added.selected_item_index / per_page) * per_page;
+                    let clicked_index = page_start + col_idx;
+                    if clicked_index < self.carrousel_recently_added.items.len() {
+                        self.carrousel_recently_added.selected_item_index = clicked_index;
+                    }
                     self.local_action_tx.send(HomeActions::GoToRecentlyAddedMangaPage).ok();
                 }
             },
