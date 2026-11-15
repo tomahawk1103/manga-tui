@@ -482,12 +482,13 @@ impl Widget for HelpModal {
             Self::section_title(tr("Buscador (Search)", "Search Page")),
             Self::key_line("s", tr("Escribir en barra de búsqueda", "Focus search input")),
             Self::key_line("Enter", tr("Ejecutar búsqueda / Abrir", "Run search / Open")),
-            Self::key_line("j/k/h/l", tr("Moverse por resultados", "Navigate results")),
+            Self::key_line("j / k", tr("Moverse por resultados", "Navigate results")),
             Self::key_line("w / b", tr("Página siguiente / anterior", "Next / previous page")),
-            Self::key_line("p", tr("Alternar Todos / Proveedor actual", "Toggle All / Current provider")),
-            Self::key_line("L", tr("Filtrar idioma (Todos/ES/EN)", "Filter language (All/ES/EN)")),
+            Self::key_line("Tab / m", tr("Alternar Todos / Proveedor actual", "Toggle All / Current provider")),
+            Self::key_line("l", tr("Filtrar idioma (Todos/ES/EN)", "Filter language (All/ES/EN)")),
+            Self::key_line("p", tr("Guardar en Planeado (Plan to read)", "Save to Plan to read")),
             Self::key_line("f", tr("Abrir filtros avanzados", "Open advanced filters")),
-            Self::key_line("r", tr("Abrir ficha del manga", "Open manga page")),
+            Self::key_line("r / Enter", tr("Abrir ficha del manga", "Open manga page")),
         ];
 
         let right_lines = vec![

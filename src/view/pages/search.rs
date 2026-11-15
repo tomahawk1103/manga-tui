@@ -6,10 +6,10 @@ use crossterm::event::{self, KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEv
 use image::DynamicImage;
 use manga_tui::SearchTerm;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Margin, Position, Rect};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Style, Stylize};
-use ratatui::text::{Line, Span, ToSpan};
-use ratatui::widgets::{Block, Clear, Paragraph, StatefulWidget, StatefulWidgetRef, Widget, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Clear, Paragraph, StatefulWidget, StatefulWidgetRef, Widget, Wrap};
 use ratatui_image::Resize;
 use ratatui_image::picker::Picker;
 use throbber_widgets_tui::{Throbber, ThrobberState};
@@ -22,12 +22,14 @@ use tui_widget_list::ListState;
 use crate::backend::database::{Database, MangaPlanToReadSave};
 use crate::backend::error_log::{ErrorType, write_to_error_log};
 use crate::backend::manga_provider::{
-    EventHandler as FilterEventHandler, FiltersHandler, GetMangasResponse, Manga, Pagination, SearchManga, SearchPageProvider,
+    EventHandler as FilterEventHandler, FiltersHandler, GetMangasResponse, Manga, MangaProviders, Pagination, SearchManga,
+    SearchPageProvider,
 };
 use crate::backend::tracker::{MangaTracker, track_manga_plan_to_read};
 use crate::backend::tui::Events;
 use crate::common::ImageState;
 use crate::global::{ERROR_STYLE, INSTRUCTIONS_STYLE};
+use crate::i18n::tr;
 use crate::utils::{centered_rect, render_search_bar};
 use crate::view::widgets::search::*;
 use crate::view::widgets::{Component, StatefulWidgetFrame};
@@ -310,129 +312,263 @@ where
     }
 
     fn render_input_area(&self, area: Rect, frame: &mut Frame<'_>) {
-        let [input_area, information_area] = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
+        let [input_area, information_area] =
+            Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(area);
 
         let input_help = match self.input_mode {
             InputMode::Idle => Line::from(vec![
-                "Press ".into(),
-                "<s>".to_span().style(*INSTRUCTIONS_STYLE),
-                " search ".into(),
-                "<l>".to_span().style(*INSTRUCTIONS_STYLE),
-                " lang ".into(),
-                "<f>".to_span().style(*INSTRUCTIONS_STYLE),
-                " filters".into(),
+                Span::styled(tr(" 🔍 Buscador ", " 🔍 Search "), Style::default().fg(Color::Cyan).bold()),
+                Span::styled("<s> ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(tr("Escribir ", "Type "), Style::default().fg(Color::Gray)),
+                Span::styled("<f> ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(tr("Filtros ", "Filters "), Style::default().fg(Color::Gray)),
             ]),
             InputMode::Typing => Line::from(vec![
-                "Press ".into(),
-                "<Enter>".to_span().style(*INSTRUCTIONS_STYLE),
-                " search ".into(),
-                "<Up>/<Down>".to_span().style(*INSTRUCTIONS_STYLE),
-                " history ".into(),
-                "<Esc>".to_span().style(*INSTRUCTIONS_STYLE),
-                " stop".into(),
+                Span::styled(tr(" ⌨ Escribiendo ", " ⌨ Typing "), Style::default().fg(Color::Black).bg(Color::Yellow).bold()),
+                Span::raw(" "),
+                Span::styled("<Enter> ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(tr("Buscar ", "Search "), Style::default().fg(Color::Gray)),
+                Span::styled("<↑/↓> ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(tr("Historial ", "History "), Style::default().fg(Color::Gray)),
+                Span::styled("<Esc> ", Style::default().fg(Color::Yellow).bold()),
+                Span::styled(tr("Salir ", "Stop "), Style::default().fg(Color::Gray)),
             ]),
         };
 
         render_search_bar(self.input_mode == InputMode::Typing, input_help, &self.search_bar, frame, input_area);
 
         let scope_span = match self.search_scope {
-            SearchScope::AllProviders => Span::styled(" [All Providers] ", Style::default().fg(Color::Yellow).bold()),
-            SearchScope::CurrentProvider => {
-                Span::styled(format!(" [{}] ", self.manga_provider.name()), Style::default().fg(Color::Cyan).bold())
-            },
+            SearchScope::AllProviders => Span::styled(
+                format!(" 🌐 {} ", tr("Todos", "All Providers")),
+                Style::default().fg(Color::Black).bg(Color::Yellow).bold(),
+            ),
+            SearchScope::CurrentProvider => Span::styled(
+                format!(" 🎯 {} ", self.manga_provider.name()),
+                Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+            ),
         };
 
         let lang_span = match self.language_filter {
-            SearchLanguageFilter::All => Span::styled(" [All] ", Style::default().fg(Color::White).bold()),
-            SearchLanguageFilter::Spanish => Span::styled(" [ES 🇪🇸] ", Style::default().fg(Color::Green).bold()),
-            SearchLanguageFilter::English => Span::styled(" [EN 🇬🇧] ", Style::default().fg(Color::Blue).bold()),
+            SearchLanguageFilter::All => Span::styled(
+                format!(" 🌍 {} ", tr("Todos", "All")),
+                Style::default().fg(Color::White).bg(Color::Rgb(55, 62, 82)).bold(),
+            ),
+            SearchLanguageFilter::Spanish => Span::styled(" 🇪🇸 ES ", Style::default().fg(Color::Black).bg(Color::Green).bold()),
+            SearchLanguageFilter::English => Span::styled(" 🇬🇧 EN ", Style::default().fg(Color::White).bg(Color::Blue).bold()),
         };
 
         let mut info_lines = vec![Line::from(vec![
-            "Scope: ".into(),
+            Span::styled(tr("Alcance: ", "Scope: "), Style::default().fg(Color::Gray)),
             scope_span,
-            " (<Tab>/<m>) ".to_span().style(*INSTRUCTIONS_STYLE),
-            "Lang: ".into(),
+            Span::styled(" <Tab/m>  ", Style::default().fg(Color::Cyan).bold()),
+            Span::styled(tr("Idioma: ", "Lang: "), Style::default().fg(Color::Gray)),
             lang_span,
-            " (<l>)".to_span().style(*INSTRUCTIONS_STYLE),
+            Span::styled(" <l>", Style::default().fg(Color::Cyan).bold()),
         ])];
 
         if let Some(idx) = self.history_index {
             info_lines.push(Line::from(vec![
-                "History: ".into(),
+                Span::styled("🕒 ", Style::default().fg(Color::Yellow)),
                 Span::styled(
-                    format!("{}/{} (navigate with <Up>/<Down>)", idx + 1, self.search_history.len()),
-                    Style::default().fg(Color::Yellow),
+                    format!("{}: {}/{} (<↑/↓>)", tr("Historial", "History"), idx + 1, self.search_history.len()),
+                    Style::default().fg(Color::Yellow).bold(),
                 ),
             ]));
         } else if let Some(name) = self.manga_added_to_plan_to_read.as_ref() {
-            info_lines.push(Line::from(Span::styled(format!("Added: {name} to plan to read 📖"), Style::default().underlined())));
+            info_lines.push(Line::from(vec![
+                Span::styled("✔ ", Style::default().fg(Color::Green).bold()),
+                Span::styled(
+                    format!("{}: {name} 📖", tr("Añadido a Planeado", "Added to Plan to read")),
+                    Style::default().fg(Color::Green).bold(),
+                ),
+            ]));
         }
 
-        Paragraph::new(info_lines).wrap(Wrap { trim: true }).render(
-            information_area.inner(Margin {
-                horizontal: 1,
-                vertical: 1,
-            }),
-            frame.buffer_mut(),
-        );
+        let info_block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Rgb(75, 88, 120)))
+            .title(Line::from(vec![Span::styled(
+                tr(" ⚙ Filtros Rápidos ", " ⚙ Quick Filters "),
+                Style::default().fg(Color::Cyan).bold(),
+            )]));
+
+        let inner_info = info_block.inner(information_area).inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
+        info_block.render(information_area, frame.buffer_mut());
+        Paragraph::new(info_lines)
+            .wrap(Wrap { trim: true })
+            .render(inner_info, frame.buffer_mut());
     }
 
     fn render_manga_found_area(&mut self, area: Rect, frame: &mut Frame<'_>) {
         let buf = frame.buffer_mut();
         let [manga_list_area, preview_area] =
-            Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]).areas(area);
+            Layout::horizontal([Constraint::Percentage(42), Constraint::Percentage(58)]).areas(area);
 
         match self.state {
             PageState::Normal => {
-                Block::bordered().render(area, buf);
+                let welcome_block = Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Rgb(75, 88, 120)))
+                    .title(Line::from(vec![Span::styled(
+                        tr(" 🧭 Explorador de Mangas ", " 🧭 Manga Explorer "),
+                        Style::default().fg(Color::Cyan).bold(),
+                    )]));
+
+                let inner = welcome_block.inner(area).inner(Margin {
+                    horizontal: 2,
+                    vertical: 1,
+                });
+                welcome_block.render(area, buf);
+
+                let all_providers = [
+                    MangaProviders::Mangadex,
+                    MangaProviders::Inmanga,
+                    MangaProviders::Mangaoni,
+                    MangaProviders::Leercapitulo,
+                    MangaProviders::Weebcentral,
+                    MangaProviders::Mangapill,
+                    MangaProviders::Comizy,
+                ];
+
+                let mut provider_spans: Vec<Span<'static>> = vec![Span::styled(
+                    format!("{} ", tr("Proveedores activos:", "Active providers:")),
+                    Style::default().fg(Color::Gray).bold(),
+                )];
+                for prov in all_providers {
+                    let health = crate::backend::multi_provider::get_provider_health_status(prov);
+                    provider_spans.push(Span::styled(
+                        format!(" {} {} ", health.indicator(), prov),
+                        Style::default().fg(Color::White).bg(Color::Rgb(42, 48, 66)).bold(),
+                    ));
+                    provider_spans.push(Span::raw(" "));
+                }
+
+                let mut lines = vec![
+                    Line::raw(""),
+                    Line::from(vec![Span::styled(
+                        tr(
+                            "🔍 Pulsa <s> para escribir el título de un manga y <Enter> para buscar",
+                            "🔍 Press <s> to type a manga title and <Enter> to search",
+                        ),
+                        Style::default().fg(Color::Cyan).bold(),
+                    )]),
+                    Line::from(vec![Span::styled(
+                        tr(
+                            "Puedes buscar en todos los proveedores a la vez (<Tab/m>) o filtrar por idioma (<l>).",
+                            "You can search across all providers at once (<Tab/m>) or filter by language (<l>).",
+                        ),
+                        Style::default().fg(Color::Gray),
+                    )]),
+                    Line::raw(""),
+                    Line::from(provider_spans),
+                ];
+
+                if !self.search_history.is_empty() {
+                    lines.push(Line::raw(""));
+                    let mut hist_spans: Vec<Span<'static>> = vec![Span::styled(
+                        format!("🕒 {} ", tr("Búsquedas recientes (<s> + <↑/↓>):", "Recent searches (<s> + <↑/↓>):")),
+                        Style::default().fg(Color::Yellow).bold(),
+                    )];
+                    for term in self.search_history.iter().take(6) {
+                        hist_spans
+                            .push(Span::styled(format!(" {term} "), Style::default().fg(Color::Cyan).bg(Color::Rgb(38, 44, 60))));
+                        hist_spans.push(Span::raw(" "));
+                    }
+                    lines.push(Line::from(hist_spans));
+                }
+
+                Paragraph::new(lines)
+                    .alignment(Alignment::Center)
+                    .wrap(Wrap { trim: true })
+                    .render(inner, buf);
             },
             PageState::SearchingMangas => {
+                let block = Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Yellow))
+                    .title(Line::from(vec![Span::styled(
+                        tr(" ⏳ Buscando... ", " ⏳ Searching... "),
+                        Style::default().fg(Color::Yellow).bold(),
+                    )]));
+                let inner = block.inner(area).inner(Margin {
+                    horizontal: 2,
+                    vertical: 2,
+                });
+                block.render(area, buf);
+
                 let loader = Throbber::default()
-                    .label("Searching mangas")
-                    .style(Style::default().fg(Color::Yellow))
+                    .label(tr(
+                        "Buscando mangas en los proveedores seleccionados...",
+                        "Searching mangas across selected providers...",
+                    ))
+                    .style(Style::default().fg(Color::Yellow).bold())
                     .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
                     .use_type(throbber_widgets_tui::WhichUse::Spin);
 
-                StatefulWidget::render(loader, area, buf, &mut self.loader_state);
+                StatefulWidget::render(loader, inner, buf, &mut self.loader_state);
             },
             PageState::NotFound => {
-                Block::bordered().title("No mangas were found").render(area, buf);
+                let block = Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Yellow))
+                    .title(Line::from(vec![Span::styled(
+                        tr(" 📭 Sin resultados ", " 📭 No results "),
+                        Style::default().fg(Color::Yellow).bold(),
+                    )]));
+                let inner = block.inner(area).inner(Margin {
+                    horizontal: 2,
+                    vertical: 2,
+                });
+                block.render(area, buf);
+                Paragraph::new(tr(
+                    "No se encontraron mangas con ese nombre. Prueba con otro término o cambia el filtro de idioma (<l>) / alcance (<Tab>).",
+                    "No mangas were found. Try another search term or toggle the language filter (<l>) / scope (<Tab>).",
+                ))
+                .style(Style::default().fg(Color::Gray))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true })
+                .render(inner, buf);
             },
             PageState::ErrorOcurredSearchingMangas => {
-                Block::bordered()
-                    .title("An error ocurred when searching mangas, please try again".to_span().style(*ERROR_STYLE))
-                    .render(area, buf);
+                let block = Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Red))
+                    .title(Span::styled(
+                        tr(
+                            " ⚠ Error al buscar mangas, inténtalo de nuevo ",
+                            " ⚠ An error occurred when searching mangas, please try again ",
+                        ),
+                        *ERROR_STYLE,
+                    ));
+                block.render(area, buf);
             },
             PageState::DisplayingMangasFound => {
                 let total_pages = self.mangas_found_list.pagination.get_total_pages();
+                let current_page = self.mangas_found_list.pagination.current_page;
+                let total_items = self.mangas_found_list.pagination.total_items;
 
-                let list_instructions = Line::from(vec![
-                    "Go down ".into(),
-                    Span::raw("<j>").style(*INSTRUCTIONS_STYLE),
-                    " Go up ".into(),
-                    Span::raw("<k>").style(*INSTRUCTIONS_STYLE),
-                    " Plan to read ".into(),
-                    Span::raw("<p>").style(*INSTRUCTIONS_STYLE),
-                    " Read ".into(),
-                    Span::raw("<r>").style(*INSTRUCTIONS_STYLE),
+                let list_title = Line::from(vec![
+                    Span::styled(format!(" 📋 {} ", tr("Resultados", "Results")), Style::default().fg(Color::Cyan).bold()),
+                    Span::styled(format!("({total_items}) "), Style::default().fg(Color::Yellow).bold()),
                 ]);
 
                 let pagination_instructions = Line::from(vec![
-                    format!(
-                        "Page : {} of {}, total : {} ",
-                        self.mangas_found_list.pagination.current_page, total_pages, self.mangas_found_list.pagination.total_items
-                    )
-                    .into(),
-                    "Next ".into(),
-                    Span::raw("<w>").style(*INSTRUCTIONS_STYLE),
-                    " Previous ".into(),
-                    Span::raw("<b>").style(*INSTRUCTIONS_STYLE),
+                    Span::styled(" ◀ <b> ", Style::default().fg(Color::Cyan).bold()),
+                    Span::styled(
+                        format!(" {} {current_page}/{total_pages} ", tr("Pág.", "Page")),
+                        Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+                    ),
+                    Span::styled(" <w> ▶ ", Style::default().fg(Color::Cyan).bold()),
                 ]);
 
                 Block::bordered()
-                    .title_top(list_instructions)
-                    .title_bottom(pagination_instructions)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Cyan))
+                    .title_top(list_title)
+                    .title_bottom(pagination_instructions.alignment(Alignment::Center))
                     .render(manga_list_area, buf);
 
                 let inner_list_area = manga_list_area.inner(Margin {
@@ -482,13 +618,20 @@ where
         Clear.render(popup_area, buf);
 
         let filter_instructions = Line::from(vec![
-            "Close ".into(),
+            " ".into(),
+            tr("Cerrar ", "Close ").into(),
             Span::raw("<f>").style(*INSTRUCTIONS_STYLE),
-            " Reset filters ".into(),
+            " • ".into(),
+            tr("Reiniciar filtros ", "Reset filters ").into(),
             Span::raw("<r>").style(*INSTRUCTIONS_STYLE),
+            " ".into(),
         ]);
 
-        Block::bordered().title(filter_instructions).render(popup_area, buf);
+        Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(Color::Magenta))
+            .title(filter_instructions)
+            .render(popup_area, buf);
 
         self.filter_widget.render(popup_area, frame, &mut self.filter_state);
     }

@@ -770,11 +770,12 @@ where
                 ],
                 SelectedPage::Search => vec![
                     ("s", tr("Buscar", "Search")),
-                    ("j/k/h/l", tr("Mover", "Move")),
+                    ("j/k", tr("Mover", "Move")),
                     ("r", tr("Abrir", "Open")),
+                    ("p", tr("Planear", "Plan")),
                     ("w/b", tr("Pág.", "Page")),
-                    ("p", tr("Proveedor", "Provider")),
-                    ("L", tr("Idioma", "Lang")),
+                    ("Tab", tr("Alcance", "Scope")),
+                    ("l", tr("Idioma", "Lang")),
                     ("f", tr("Filtros", "Filters")),
                 ],
                 SelectedPage::Feed => vec![

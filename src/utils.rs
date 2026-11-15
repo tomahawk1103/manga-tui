@@ -1,9 +1,9 @@
 use chrono::NaiveDate;
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Style};
-use ratatui::text::Line;
-use ratatui::widgets::{Block, Paragraph, Widget};
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, BorderType, Paragraph, Widget};
 use tui_input::Input;
 
 use crate::i18n::tr;
@@ -63,9 +63,24 @@ pub fn centered_rect(r: Rect, percent_x: u16, percent_y: u16) -> Rect {
 }
 
 pub fn render_search_bar(is_typing: bool, input_help: Line<'_>, input: &Input, frame: &mut Frame<'_>, area: Rect) {
-    let style = if is_typing { Style::default().fg(Color::Yellow) } else { Style::default() };
+    let border_style =
+        if is_typing { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Cyan) };
 
-    let input_bar = Paragraph::new(input.value()).block(Block::bordered().title(input_help).border_style(style));
+    let content = if input.value().is_empty() && !is_typing {
+        Line::from(vec![Span::styled(
+            tr(" 🔍 Pulsa <s> para escribir el nombre de un manga...", " 🔍 Press <s> to type a manga title..."),
+            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+        )])
+    } else {
+        Line::from(vec![Span::styled(input.value(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD))])
+    };
+
+    let input_bar = Paragraph::new(content).block(
+        Block::bordered()
+            .border_type(BorderType::Rounded)
+            .title(input_help)
+            .border_style(border_style),
+    );
 
     input_bar.render(area, frame.buffer_mut());
 
