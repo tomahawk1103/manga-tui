@@ -50,6 +50,7 @@ pub enum MangaReaderActions {
     ExitReaderPage,
     GoToFirstPage,
     GoToLastPage,
+    OpenInWebViewer,
 }
 
 #[derive(Clone, Debug)]
@@ -143,7 +144,7 @@ impl LocalChapterSource {
         }
     }
 
-    pub fn load_page(&self, index: usize) -> Result<MangaPanel, Box<dyn std::error::Error + Send + Sync>> {
+    pub fn load_page_bytes(&self, index: usize) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
         use std::io::Read;
         match self {
             LocalChapterSource::Cbz(path) => {
@@ -167,13 +168,7 @@ impl LocalChapterSource {
                 let mut entry_file = archive.by_name(entry_name)?;
                 let mut bytes = Vec::new();
                 entry_file.read_to_end(&mut bytes)?;
-
-                let image_decoded = image::load_from_memory(&bytes)?;
-                let dimensions = image_decoded.dimensions();
-                Ok(MangaPanel {
-                    image_decoded,
-                    dimensions,
-                })
+                Ok(bytes)
             },
             LocalChapterSource::Directory(dir) => {
                 let entries = std::fs::read_dir(dir)?;
@@ -193,14 +188,19 @@ impl LocalChapterSource {
                 image_paths.sort();
                 let page_path = image_paths.get(index).ok_or_else(|| format!("Page index {index} out of bounds"))?;
                 let bytes = std::fs::read(page_path)?;
-                let image_decoded = image::load_from_memory(&bytes)?;
-                let dimensions = image_decoded.dimensions();
-                Ok(MangaPanel {
-                    image_decoded,
-                    dimensions,
-                })
+                Ok(bytes)
             },
         }
+    }
+
+    pub fn load_page(&self, index: usize) -> Result<MangaPanel, Box<dyn std::error::Error + Send + Sync>> {
+        let bytes = self.load_page_bytes(index)?;
+        let image_decoded = image::load_from_memory(&bytes)?;
+        let dimensions = image_decoded.dimensions();
+        Ok(MangaPanel {
+            image_decoded,
+            dimensions,
+        })
     }
 }
 
@@ -393,6 +393,7 @@ where
             MangaReaderActions::ReloadPage => self.reload_page(),
             MangaReaderActions::GoToFirstPage => self.go_to_first_page(),
             MangaReaderActions::GoToLastPage => self.go_to_last_page(),
+            MangaReaderActions::OpenInWebViewer => self.open_in_web_viewer(),
         }
     }
 
@@ -536,6 +537,23 @@ where
 
     fn reload_page(&mut self) {
         self.fetch_page(self.current_page_index());
+    }
+
+    fn open_in_web_viewer(&mut self) {
+        let session = crate::backend::web_viewer::WebViewerSession {
+            manga_id: self.manga_id.clone(),
+            manga_title: self.manga_title.clone(),
+            manga_cover_url: None,
+            provider: self.provider.unwrap_or_else(|| self.api_client.name()),
+            chapter: self.current_chapter.clone(),
+            list_of_chapters: self.list_of_chapters.clone(),
+            local_source: self.local_source.clone(),
+        };
+        tokio::spawn(async move {
+            if let Err(e) = crate::backend::web_viewer::open_chapter_in_browser(session).await {
+                write_to_error_log(ErrorType::String(&e));
+            }
+        });
     }
 
     fn go_to_first_page(&mut self) {
@@ -813,6 +831,7 @@ where
             Line::from(vec![tr("Última pág.: ", "Last page: ").into(), "<G>, <End>".to_span().style(*INSTRUCTIONS_STYLE)]),
             Line::from(vec![tr("Capítulo sig.: ", "Next chapter: ").into(), "<w>".to_span().style(*INSTRUCTIONS_STYLE)]),
             Line::from(vec![tr("Capítulo ant.: ", "Previous chapter: ").into(), "<b>".to_span().style(*INSTRUCTIONS_STYLE)]),
+            Line::from(vec![tr("Visor Web HD: ", "Web Viewer HD: ").into(), "<v>".to_span().style(*INSTRUCTIONS_STYLE)]),
         ];
 
         if show_reload {
@@ -934,6 +953,9 @@ where
             },
             KeyCode::Char('r') => {
                 self.local_action_tx.send(MangaReaderActions::ReloadPage).ok();
+            },
+            KeyCode::Char('v') => {
+                self.local_action_tx.send(MangaReaderActions::OpenInWebViewer).ok();
             },
             KeyCode::Char('m') if !self.auto_bookmark => {
                 self.local_action_tx.send(MangaReaderActions::BookMarkCurrentChapter).ok();
@@ -1110,6 +1132,10 @@ mod test {
         press_key(&mut reader_page, KeyCode::Char('G'));
         let action = reader_page.local_action_rx.recv().await.unwrap();
         assert_eq!(MangaReaderActions::GoToLastPage, action);
+
+        press_key(&mut reader_page, KeyCode::Char('v'));
+        let action = reader_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(MangaReaderActions::OpenInWebViewer, action);
 
         press_key(&mut reader_page, KeyCode::Esc);
         let action = reader_page.local_action_rx.recv().await.unwrap();

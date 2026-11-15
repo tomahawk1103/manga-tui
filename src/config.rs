@@ -19,6 +19,7 @@ use toml::Table;
 
 use crate::backend::manga_provider::{Languages, MangaProviders};
 use crate::cli::Credentials;
+use crate::theme::ThemeVariant;
 
 static CONFIG_FILE_NAME: &str = "config.toml";
 
@@ -321,6 +322,27 @@ impl ConfigParam for UiLanguageParam {
 }
 
 #[derive(Debug, Default)]
+struct ThemeParam;
+
+impl ConfigParam for ThemeParam {
+    fn name(&self) -> &'static str {
+        "theme"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Color theme of the user interface (can also be cycled live with <T>)"
+    }
+
+    fn values(&self) -> &'static str {
+        "tokyo_night, catppuccin, classic"
+    }
+
+    fn defaults(&self) -> &'static str {
+        r#""tokyo_night""#
+    }
+}
+
+#[derive(Debug, Default)]
 struct ImageResizeFilterParam;
 
 impl ConfigParam for ImageResizeFilterParam {
@@ -413,6 +435,7 @@ struct ConfigBuilder<'a> {
 fn config_params() -> Vec<Box<dyn ConfigParam>> {
     vec![
         Box::new(UiLanguageParam),
+        Box::new(ThemeParam),
         Box::new(DownloadTypeParam),
         Box::new(DownloadDirParam),
         Box::new(ImageQualityParam),
@@ -626,6 +649,9 @@ pub struct MangaTuiConfig {
     /// Language of the user interface, spanish by default
     #[serde(default)]
     pub ui_language: UiLanguage,
+    /// Color theme of the user interface, tokyo_night by default
+    #[serde(default)]
+    pub theme: ThemeVariant,
     /// The format to download manga in.
     pub download_type: DownloadType,
     /// Custom directory for downloaded mangas. If empty, the default mangaDownloads directory is used.
@@ -721,6 +747,7 @@ impl Default for MangaTuiConfig {
     fn default() -> Self {
         Self {
             ui_language: UiLanguage::default(),
+            theme: ThemeVariant::default(),
             amount_pages: 5,
             auto_bookmark: true,
             check_new_updates: true,
@@ -741,6 +768,11 @@ impl MangaTuiConfig {
     /// Returns a reference to the global configuration.
     pub fn get() -> &'static Self {
         CONFIG.get_or_init(MangaTuiConfig::default)
+    }
+
+    /// Returns a reference to the global configuration if already initialized.
+    pub fn try_get() -> Option<&'static Self> {
+        CONFIG.get()
     }
 
     /// Reads the configuration from a reader.
@@ -785,6 +817,17 @@ impl MangaTuiConfig {
 
         Some(PathBuf::from(trimmed))
     }
+
+    /// Returns a copy of this configuration with any live in-app Settings overrides applied.
+    pub fn effective(&self) -> Self {
+        let mut copy = self.clone();
+        copy.default_manga_provider = crate::view::widgets::settings::active_default_provider();
+        copy.download_type = crate::view::widgets::settings::active_download_type();
+        copy.default_language = crate::view::widgets::settings::active_chapter_language();
+        copy.ui_language = crate::view::widgets::settings::active_ui_language();
+        copy.theme = crate::theme::current_theme();
+        copy
+    }
 }
 
 /// Builds the config file, creating or updating as needed, and sets the global config.
@@ -807,6 +850,7 @@ pub fn build_config_file() -> Result<(), Box<dyn Error>> {
         },
     };
 
+    crate::view::widgets::settings::init_runtime_settings(&config);
     CONFIG.get_or_init(|| config);
 
     Ok(())

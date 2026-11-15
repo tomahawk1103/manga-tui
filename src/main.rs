@@ -54,70 +54,8 @@ use crate::backend::manga_provider::mangadex::get_cached_filters;
 use crate::backend::manga_provider::mangapill::MangaPillProvider;
 use crate::backend::manga_provider::mangapill::filter_state::MangaPillFiltersProvider;
 use crate::backend::manga_provider::mangapill::filter_widget::MangaPillFilterWidget;
+use crate::backend::multi_provider::spanish_provider_candidates;
 use crate::config::ImageQuality;
-
-fn spanish_provider_candidates(provider: MangaProviders) -> Option<[MangaProviders; 3]> {
-    match provider {
-        MangaProviders::Inmanga => Some([MangaProviders::Inmanga, MangaProviders::Mangaoni, MangaProviders::Leercapitulo]),
-        MangaProviders::Mangaoni => Some([MangaProviders::Mangaoni, MangaProviders::Inmanga, MangaProviders::Leercapitulo]),
-        MangaProviders::Leercapitulo => Some([MangaProviders::Leercapitulo, MangaProviders::Inmanga, MangaProviders::Mangaoni]),
-        _ => None,
-    }
-}
-
-async fn check_provider_capabilities<P>(provider: &P, query: &str, image_quality: ImageQuality) -> Result<(), String>
-where
-    P: SearchPageProvider + MangaPageProvider + GetChapterPages,
-    <P as SearchPageProvider>::InnerState: Default,
-{
-    let search_results = provider
-        .search_mangas(SearchTerm::trimmed(query), <P as SearchPageProvider>::InnerState::default(), Pagination::default())
-        .await
-        .map_err(|error| format!("search failed: {error}"))?;
-    let manga = search_results
-        .mangas
-        .first()
-        .ok_or_else(|| format!("search for '{query}' returned no results"))?;
-    let chapters = provider
-        .get_chapters(&manga.id, ChapterFilters::default(), Pagination::default())
-        .await
-        .map_err(|error| format!("chapter loading failed: {error}"))?;
-
-    let chapter = chapters
-        .chapters
-        .first()
-        .ok_or_else(|| format!("chapter loading returned no chapters for '{}'", manga.title))?;
-    let pages = provider
-        .get_chapter_pages_url_with_extension(&chapter.id, &manga.id, image_quality)
-        .await
-        .map_err(|error| format!("reader page loading failed: {error}"))?;
-    let first_page = pages.first().ok_or_else(|| format!("reader returned no pages for '{}'", manga.title))?;
-    provider
-        .get_image(first_page.url.as_str())
-        .await
-        .map_err(|error| format!("reader image failed to load or decode: {error}"))?;
-
-    Ok(())
-}
-
-async fn check_spanish_provider(
-    provider: MangaProviders,
-    cache_provider: Arc<dyn Cacher>,
-    image_quality: ImageQuality,
-) -> Result<(), String> {
-    match provider {
-        MangaProviders::Inmanga => {
-            check_provider_capabilities(&InmangaProvider::new(cache_provider), "frieren", image_quality).await
-        },
-        MangaProviders::Mangaoni => {
-            check_provider_capabilities(&MangaoniProvider::new(cache_provider), "one piece", image_quality).await
-        },
-        MangaProviders::Leercapitulo => {
-            check_provider_capabilities(&LeercapituloProvider::new(cache_provider), "one piece", image_quality).await
-        },
-        _ => Err(format!("{provider} is not a Spanish provider")),
-    }
-}
 
 #[cfg(test)]
 mod tests {
@@ -151,6 +89,7 @@ mod config;
 mod global;
 mod i18n;
 mod logger;
+mod theme;
 mod utils;
 mod view;
 
@@ -208,11 +147,18 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     if config.check_new_updates
         && let Ok(github_url) = GITHUB_URL.parse()
     {
-        let notifier = ReleaseNotifier::new(github_url);
+        tokio::spawn(async move {
+            struct SilentLogger;
+            impl ILogger for SilentLogger {
+                fn inform(&self, _message: impl AsRef<str>) {}
 
-        if let Err(e) = notifier.check_new_releases(&logger).await {
-            logger.error(e);
-        }
+                fn warn(&self, _warning: impl AsRef<str>) {}
+
+                fn error(&self, _error: Box<dyn std::error::Error>) {}
+            }
+            let notifier = ReleaseNotifier::new(github_url);
+            let _ = notifier.check_new_releases(&SilentLogger).await;
+        });
     }
 
     let anilist_storage = KeyringStorage::new();
@@ -256,79 +202,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let cache_provider: Arc<dyn Cacher> = InMemoryCache::init(8);
 
-    let requested_provider = if let Some(pro) = manga_provider_cli { pro } else { config.default_manga_provider };
-    let provider = if let Some(candidates) = spanish_provider_candidates(requested_provider) {
-        let mut available_provider = None;
-
-        for candidate in candidates {
-            match tokio::time::timeout(
-                Duration::from_secs(15),
-                check_spanish_provider(candidate, Arc::clone(&cache_provider), config.image_quality),
-            )
-            .await
-            {
-                Ok(Ok(())) => {
-                    logger.inform(format!("{candidate} search, chapters, and reader images are available"));
-                    available_provider = Some(candidate);
-                    break;
-                },
-                Ok(Err(error)) => {
-                    logger.warn(format!(
-                        "{candidate} failed its search, chapter, or reader check ({error}); trying the next Spanish provider"
-                    ));
-                },
-                Err(_) => {
-                    logger
-                        .warn(format!("{candidate} search, chapter, or reader check timed out; trying the next Spanish provider"));
-                },
-            }
-        }
-
-        match available_provider {
-            Some(provider) => {
-                if provider != requested_provider {
-                    logger.inform(format!("{requested_provider} is unavailable; switching to Spanish provider {provider}"));
-                }
-                provider
-            },
-            None => {
-                logger.warn(tr(
-                    "Ningún proveedor en español respondió a la comprobación inicial; iniciando en modo local/offline con el proveedor solicitado",
-                    "No Spanish manga provider passed startup checks; starting in local/offline mode with requested provider",
-                ));
-                requested_provider
-            },
-        }
-    } else {
-        requested_provider
-    };
-
-    logger.inform(format!("{}: {provider}", tr("Proveedor de manga", "Manga provider")));
+    let provider = if let Some(pro) = manga_provider_cli { pro } else { config.default_manga_provider };
 
     match provider {
         MangaProviders::Mangadex => {
             let mangadex_client =
                 MangadexClient::new(API_URL_BASE.parse().unwrap(), COVER_IMG_URL_BASE.parse().unwrap(), cache_provider)
                     .with_image_quality(config.image_quality);
-
-            logger.inform(tr("Comprobando el estado de MangaDex...", "Checking mangadex status..."));
-
-            // If mangadex is down the app still starts so the library, downloads and other providers
-            // (via multi-provider search) can still be used
-            match mangadex_client.check_status().await {
-                Ok(response) if response.status() == StatusCode::OK => {},
-                Ok(_) => logger.warn(tr(
-                    "MangaDex parece estar en mantenimiento, prueba otro proveedor con: manga-tui -p weebcentral",
-                    "Mangadex appears to be in maintenance, try another provider with: manga-tui -p weebcentral",
-                )),
-                Err(e) => logger.warn(format!(
-                    "{} : {e}",
-                    tr(
-                        "No se pudo contactar con MangaDex, prueba otro proveedor con -p",
-                        "Could not reach mangadex, try another provider with -p"
-                    )
-                )),
-            }
 
             let (terminal, _guard) = TerminalGuard::init()?;
             run_app(

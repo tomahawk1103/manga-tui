@@ -117,7 +117,7 @@ impl<T: MangaProvider + 'static> DownloadQueueWorker<T> {
             if let Some(item) = self.queue.pop_front() {
                 self.send_progress(true, &item.manga_title, &item.chapter.chapter_number, 0.0);
 
-                let config = MangaTuiConfig::get().clone();
+                let config = MangaTuiConfig::get().effective();
                 let event_tx_clone = self.global_event_tx.clone();
                 let manga_title_clone = item.manga_title.clone();
                 let chapter_num_clone = item.chapter.chapter_number.clone();

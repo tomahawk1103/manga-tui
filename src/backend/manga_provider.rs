@@ -228,7 +228,8 @@ impl Languages {
     }
 
     pub fn get_preferred_lang() -> &'static Languages {
-        PREFERRED_LANGUAGE.get_or_init(Self::default)
+        let _ = PREFERRED_LANGUAGE.get_or_init(Self::default);
+        crate::view::widgets::settings::active_chapter_language_ref()
     }
 
     pub fn as_human_readable(self) -> String {
@@ -745,6 +746,18 @@ pub enum MangaProviders {
 impl MangaProviders {
     pub fn is_multi_language(&self) -> bool {
         matches!(self, Self::Mangadex)
+    }
+
+    pub fn short_name(&self) -> &'static str {
+        match self {
+            Self::Inmanga => "InManga",
+            Self::Mangaoni => "MangaOni",
+            Self::Leercapitulo => "LeerCapítulo",
+            Self::Mangadex => "MangaDex",
+            Self::Weebcentral => "WeebCentral",
+            Self::Mangapill => "MangaPill",
+            Self::Comizy => "Comizy",
+        }
     }
 
     pub fn badge_label(&self) -> &'static str {

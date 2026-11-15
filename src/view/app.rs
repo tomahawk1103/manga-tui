@@ -30,10 +30,14 @@ use crate::backend::tui::{Action, Events, NewChapterNotificationGroup};
 use crate::config::MangaTuiConfig;
 use crate::global::INSTRUCTIONS_STYLE;
 use crate::i18n::tr;
+use crate::theme::{current_theme, cycle_theme, theme};
 use crate::view::pages::search::SearchScope;
 use crate::view::pages::*;
 use crate::view::tasks::manga::{AutoDownloadItem, download_new_chapters, download_new_favorite_chapters};
-use crate::view::widgets::{DownloadQueueModal, ErrorModal, HelpModal, NewChapterItem, NewChaptersModal, NewChaptersModalState};
+use crate::view::widgets::{
+    DownloadQueueModal, ErrorModal, HelpModal, NewChapterItem, NewChaptersModal, NewChaptersModalState, SettingsModal,
+    SettingsModalState, SettingsOutcome,
+};
 
 const NEW_CHAPTER_CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
@@ -83,6 +87,8 @@ where
     pub home_page: Home<T>,
     pub feed_page: Feed<T>,
     manga_provider: Arc<T>,
+    pub active_provider: MangaProviders,
+    pub is_checking_provider: bool,
     manga_tracker: Option<S>,
     error_message: Option<String>,
     new_chapters_state: Option<NewChaptersModalState>,
@@ -92,6 +98,8 @@ where
     pub queue_status_toast: Option<(String, Instant)>,
     pub is_queue_modal_open: bool,
     pub is_help_modal_open: bool,
+    pub is_settings_modal_open: bool,
+    pub settings_state: SettingsModalState,
     last_new_chapter_check: Instant,
     // The picker is what decides how big a image needs to be rendered depending on the user's
     // terminal font size and the graphics it supports
@@ -134,6 +142,8 @@ where
             DownloadQueueModal::new(self.download_queue_progress.as_ref()).render(area, frame.buffer_mut());
         } else if self.is_help_modal_open {
             HelpModal::new().render(area, frame.buffer_mut());
+        } else if self.is_settings_modal_open {
+            SettingsModal::new(&self.settings_state).render(area, frame.buffer_mut());
         }
     }
 
@@ -274,6 +284,38 @@ where
                 self.current_tab = SelectedPage::Search;
                 self.search_page.search_with_query_all_providers(&query);
             },
+            Events::ProviderCheckTrying(candidate) => {
+                self.is_checking_provider = true;
+                self.active_provider = candidate;
+            },
+            Events::ProviderCheckFinished {
+                active_provider,
+                switched_from,
+                all_failed,
+            } => {
+                self.is_checking_provider = false;
+                self.active_provider = active_provider;
+                self.home_page.set_active_provider(active_provider);
+                self.search_page.set_active_provider(active_provider);
+
+                if let Some(original) = switched_from {
+                    self.home_page.clean_up();
+                    self.home_page.init_search();
+                    let msg = if crate::i18n::is_es() {
+                        format!("✓ {original} no disponible → usando {active_provider}")
+                    } else {
+                        format!("✓ {original} unavailable → switched to {active_provider}")
+                    };
+                    self.queue_status_toast = Some((msg, Instant::now()));
+                } else if all_failed {
+                    let msg = if crate::i18n::is_es() {
+                        format!("⚠ {active_provider} sin conexión (modo offline)")
+                    } else {
+                        format!("⚠ {active_provider} unreachable (offline mode)")
+                    };
+                    self.favorite_status_toast = Some((msg, Instant::now()));
+                }
+            },
             _ => {},
         }
     }
@@ -358,10 +400,95 @@ where
             queue_status_toast: None,
             is_queue_modal_open: false,
             is_help_modal_open: false,
+            is_settings_modal_open: false,
+            settings_state: SettingsModalState::new(),
             last_new_chapter_check: Instant::now(),
             manga_provider: Arc::clone(&provider),
+            active_provider: which_provider,
+            is_checking_provider: false,
             top_tabs_area: Rect::default(),
             tab_hit_boxes: Vec::new(),
+        }
+    }
+
+    pub fn spawn_startup_provider_check(&mut self) {
+        let requested_provider = self.manga_provider.name();
+        let event_tx = self.global_event_tx.clone();
+        let image_quality = MangaTuiConfig::get().image_quality;
+
+        if let Some(candidates) = crate::backend::multi_provider::spanish_provider_candidates(requested_provider) {
+            self.is_checking_provider = true;
+            tokio::spawn(async move {
+                let mut available_provider = None;
+                for candidate in candidates {
+                    let _ = event_tx.send(Events::ProviderCheckTrying(candidate));
+                    match tokio::time::timeout(
+                        Duration::from_secs(15),
+                        crate::backend::multi_provider::check_spanish_provider(candidate, image_quality),
+                    )
+                    .await
+                    {
+                        Ok(Ok(())) => {
+                            crate::backend::multi_provider::POOL.health.record_success(candidate);
+                            available_provider = Some(candidate);
+                            break;
+                        },
+                        Ok(Err(err)) => {
+                            write_to_error_log(format!("El proveedor {candidate} no está disponible al iniciar ({err}).").into());
+                            crate::backend::multi_provider::POOL.health.record_startup_check_failure(candidate, &err);
+                        },
+                        Err(_) => {
+                            write_to_error_log(format!("El proveedor {candidate} no está disponible al iniciar (timeout).").into());
+                            crate::backend::multi_provider::POOL
+                                .health
+                                .record_startup_check_failure(candidate, "startup check timed out");
+                        },
+                    }
+                }
+
+                match available_provider {
+                    Some(active) => {
+                        let switched_from = if active != requested_provider { Some(requested_provider) } else { None };
+                        let _ = event_tx.send(Events::ProviderCheckFinished {
+                            active_provider: active,
+                            switched_from,
+                            all_failed: false,
+                        });
+                    },
+                    None => {
+                        let _ = event_tx.send(Events::ProviderCheckFinished {
+                            active_provider: requested_provider,
+                            switched_from: None,
+                            all_failed: true,
+                        });
+                    },
+                }
+            });
+        } else if requested_provider == MangaProviders::Mangadex {
+            self.is_checking_provider = true;
+            tokio::spawn(async move {
+                let _ = event_tx.send(Events::ProviderCheckTrying(MangaProviders::Mangadex));
+                let is_ok = matches!(
+                    tokio::time::timeout(
+                        Duration::from_secs(10),
+                        crate::backend::multi_provider::POOL.mangadex.check_status(),
+                    )
+                    .await,
+                    Ok(Ok(response)) if response.status() == reqwest::StatusCode::OK
+                );
+                if is_ok {
+                    crate::backend::multi_provider::POOL.health.record_success(MangaProviders::Mangadex);
+                } else {
+                    crate::backend::multi_provider::POOL
+                        .health
+                        .record_startup_check_failure(MangaProviders::Mangadex, "mangadex status check failed");
+                }
+                let _ = event_tx.send(Events::ProviderCheckFinished {
+                    active_provider: MangaProviders::Mangadex,
+                    switched_from: None,
+                    all_failed: !is_ok,
+                });
+            });
         }
     }
 
@@ -523,7 +650,7 @@ where
             }
 
             if !auto_download_items.is_empty() {
-                let config = MangaTuiConfig::get().clone();
+                let config = MangaTuiConfig::get().effective();
                 let tx = event_tx.clone();
                 tokio::spawn(async move {
                     let result = download_new_favorite_chapters(auto_download_items, config).await;
@@ -550,10 +677,11 @@ where
             return;
         }
 
-        let bar_bg = Color::Rgb(24, 27, 36);
-        let inactive_pill_bg = Color::Rgb(42, 47, 62);
-        let active_pill_bg = Color::Cyan;
-        let brand_bg = Color::Magenta;
+        let t = theme();
+        let bar_bg = t.bar_bg;
+        let inactive_pill_bg = t.chip_bg;
+        let active_pill_bg = t.accent_primary;
+        let brand_bg = t.accent_secondary;
 
         let top_row = Rect {
             x: area.x,
@@ -602,7 +730,7 @@ where
         for (page, label) in tab_defs {
             let is_active = self.current_tab == page;
             let pill_bg = if is_active { active_pill_bg } else { inactive_pill_bg };
-            let pill_fg = if is_active { Color::Black } else { Color::White };
+            let pill_fg = if is_active { Color::Black } else { t.text_primary };
 
             let start_x = cursor_x;
             spans.push(Span::styled("", Style::default().fg(pill_bg).bg(bar_bg)));
@@ -645,59 +773,59 @@ where
                     progress.current_chapter_number,
                     progress.current_page_percentage
                 );
-                right_spans.push(Span::styled("", Style::default().fg(Color::Cyan).bg(bar_bg)));
-                right_spans.push(Span::styled(dl_text, Style::default().fg(Color::Black).bg(Color::Cyan).bold()));
+                right_spans.push(Span::styled("", Style::default().fg(t.accent_primary).bg(bar_bg)));
+                right_spans.push(Span::styled(dl_text, Style::default().fg(Color::Black).bg(t.accent_primary).bold()));
                 right_spans.push(Span::styled(" ", Style::default().bg(bar_bg)));
             }
         } else if let Some((msg, time)) = &self.queue_status_toast
             && time.elapsed().as_secs() < 8
         {
-            right_spans.push(Span::styled("", Style::default().fg(Color::Green).bg(bar_bg)));
-            right_spans.push(Span::styled(format!(" {msg} "), Style::default().fg(Color::Black).bg(Color::Green).bold()));
+            right_spans.push(Span::styled("", Style::default().fg(t.status_success).bg(bar_bg)));
+            right_spans.push(Span::styled(format!(" {msg} "), Style::default().fg(Color::Black).bg(t.status_success).bold()));
             right_spans.push(Span::styled(" ", Style::default().bg(bar_bg)));
         } else if let Some((msg, time)) = &self.favorite_status_toast
             && time.elapsed().as_secs() < 15
         {
-            right_spans.push(Span::styled("", Style::default().fg(Color::Yellow).bg(bar_bg)));
-            right_spans.push(Span::styled(format!(" {msg} "), Style::default().fg(Color::Black).bg(Color::Yellow).bold()));
+            right_spans.push(Span::styled("", Style::default().fg(t.accent_highlight).bg(bar_bg)));
+            right_spans.push(Span::styled(format!(" {msg} "), Style::default().fg(Color::Black).bg(t.accent_highlight).bold()));
             right_spans.push(Span::styled(" ", Style::default().bg(bar_bg)));
         }
 
         // Active Provider / Scope badge
         let active_provider = if self.current_tab == SelectedPage::MangaTab {
-            self.manga_page
-                .as_ref()
-                .and_then(|p| p.manga.provider)
-                .unwrap_or_else(|| self.manga_provider.name())
+            self.manga_page.as_ref().and_then(|p| p.manga.provider).unwrap_or(self.active_provider)
         } else {
-            self.manga_provider.name()
+            self.active_provider
         };
 
+        let pill_color = t.title_chip_primary_bg;
         if self.current_tab == SelectedPage::Search && self.search_page.search_scope == SearchScope::AllProviders {
             let lang_tag = match self.search_page.language_filter {
                 crate::view::pages::search::SearchLanguageFilter::All => "ALL",
                 crate::view::pages::search::SearchLanguageFilter::Spanish => "ES",
                 crate::view::pages::search::SearchLanguageFilter::English => "EN",
             };
-            let pill_color = Color::Rgb(58, 66, 88);
             right_spans.push(Span::styled("", Style::default().fg(pill_color).bg(bar_bg)));
-            right_spans.push(Span::styled(" 🌐 ", Style::default().fg(Color::Cyan).bg(pill_color).bold()));
+            right_spans.push(Span::styled(" 🌐 ", Style::default().fg(t.accent_primary).bg(pill_color).bold()));
             right_spans.push(Span::styled(
                 format!("{} ({lang_tag}) ", tr("Todos", "All")),
-                Style::default().fg(Color::White).bg(pill_color).bold(),
+                Style::default().fg(t.text_primary).bg(pill_color).bold(),
             ));
         } else {
             let health = crate::backend::multi_provider::get_provider_health_status(active_provider);
-            let dot_color = match health {
-                crate::backend::multi_provider::ProviderHealthStatus::Healthy => Color::Green,
-                crate::backend::multi_provider::ProviderHealthStatus::Degraded => Color::Yellow,
-                crate::backend::multi_provider::ProviderHealthStatus::CircuitOpen => Color::Red,
+            let dot_color = if self.is_checking_provider && active_provider == self.active_provider {
+                t.status_warning
+            } else {
+                match health {
+                    crate::backend::multi_provider::ProviderHealthStatus::Healthy => t.status_success,
+                    crate::backend::multi_provider::ProviderHealthStatus::Degraded => t.status_warning,
+                    crate::backend::multi_provider::ProviderHealthStatus::CircuitOpen => t.status_error,
+                }
             };
-            let pill_color = Color::Rgb(58, 66, 88);
             right_spans.push(Span::styled("", Style::default().fg(pill_color).bg(bar_bg)));
+            right_spans.push(Span::styled(" ● ", Style::default().fg(dot_color).bg(pill_color).bold()));
             right_spans
-                .push(Span::styled(format!(" {} ", health.indicator()), Style::default().fg(dot_color).bg(pill_color).bold()));
-            right_spans.push(Span::styled(format!("{active_provider} "), Style::default().fg(Color::White).bg(pill_color).bold()));
+                .push(Span::styled(format!("{active_provider:?} "), Style::default().fg(t.text_primary).bg(pill_color).bold()));
         }
 
         Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right).render(top_row, buf);
@@ -705,7 +833,7 @@ where
         // Second row: subtle horizontal rule with active tab highlight bar
         if area.height >= 2 {
             let divider_y = area.y + 1;
-            let rule_style = Style::default().fg(Color::DarkGray);
+            let rule_style = Style::default().fg(t.border_muted);
             let active_rule_style = Style::default().fg(active_pill_bg).bold();
             for x in area.left()..area.right() {
                 if let Some((start_x, end_x)) = active_tab_range
@@ -725,8 +853,9 @@ where
             return;
         }
 
-        let bar_bg = Color::Rgb(24, 27, 36);
-        let chip_bg = Color::Rgb(45, 51, 68);
+        let t = theme();
+        let bar_bg = t.bar_bg;
+        let chip_bg = t.chip_bg;
 
         for x in area.left()..area.right() {
             buf[(x, area.y)].set_bg(bar_bg).set_symbol(" ");
@@ -736,20 +865,22 @@ where
             self.search_page.input_mode == InputMode::Typing || self.search_page.is_typing_filter() || self.feed_page.is_typing();
 
         let (mode_label, mode_color) = if self.is_help_modal_open {
-            (tr(" ❓ AYUDA ", " ❓ HELP "), Color::Cyan)
+            (tr(" ❓ AYUDA ", " ❓ HELP "), t.accent_primary)
+        } else if self.is_settings_modal_open {
+            (tr(" ⚙ AJUSTES ", " ⚙ SETTINGS "), t.accent_primary)
         } else if self.is_queue_modal_open {
-            (tr(" ⬇ COLA ", " ⬇ QUEUE "), Color::Cyan)
+            (tr(" ⬇ COLA ", " ⬇ QUEUE "), t.accent_primary)
         } else if is_typing {
-            (tr(" ⌨ ESCRIBIENDO ", " ⌨ TYPING "), Color::Yellow)
+            (tr(" ⌨ ESCRIBIENDO ", " ⌨ TYPING "), t.accent_highlight)
         } else if self.search_page.is_filter_open() {
-            (tr(" ⚙ FILTROS ", " ⚙ FILTERS "), Color::Magenta)
+            (tr(" ⚙ FILTROS ", " ⚙ FILTERS "), t.accent_secondary)
         } else {
             match self.current_tab {
-                SelectedPage::Home => (tr(" 🏠 INICIO ", " 🏠 HOME "), Color::Cyan),
-                SelectedPage::Search => (tr(" 🔍 EXPLORAR ", " 🔍 SEARCH "), Color::LightBlue),
-                SelectedPage::Feed => (tr(" 📚 BIBLIOTECA ", " 📚 LIBRARY "), Color::Green),
-                SelectedPage::MangaTab => (tr(" 📖 FICHA ", " 📖 MANGA "), Color::Magenta),
-                SelectedPage::ReaderTab => (tr(" 👁 LECTOR ", " 👁 READER "), Color::Yellow),
+                SelectedPage::Home => (tr(" 🏠 INICIO ", " 🏠 HOME "), t.accent_primary),
+                SelectedPage::Search => (tr(" 🔍 EXPLORAR ", " 🔍 SEARCH "), t.accent_primary),
+                SelectedPage::Feed => (tr(" 📚 BIBLIOTECA ", " 📚 LIBRARY "), t.status_success),
+                SelectedPage::MangaTab => (tr(" 📖 FICHA ", " 📖 MANGA "), t.accent_secondary),
+                SelectedPage::ReaderTab => (tr(" 👁 LECTOR ", " 👁 READER "), t.accent_highlight),
             }
         };
 
@@ -772,6 +903,7 @@ where
                     ("s", tr("Buscar", "Search")),
                     ("j/k", tr("Mover", "Move")),
                     ("r", tr("Abrir", "Open")),
+                    ("P", tr("Fuente", "Source")),
                     ("p", tr("Planear", "Plan")),
                     ("w/b", tr("Pág.", "Page")),
                     ("Tab", tr("Alcance", "Scope")),
@@ -821,19 +953,24 @@ where
         ];
 
         for (key, action) in shortcuts {
-            left_spans.push(Span::styled(format!(" {key} "), Style::default().fg(Color::Cyan).bg(chip_bg).bold()));
-            left_spans.push(Span::styled(format!(" {action}  "), Style::default().fg(Color::Gray).bg(bar_bg)));
+            left_spans.push(Span::styled(format!(" {key} "), Style::default().fg(t.accent_primary).bg(chip_bg).bold()));
+            left_spans.push(Span::styled(format!(" {action}  "), Style::default().fg(t.text_muted).bg(bar_bg)));
         }
 
         Paragraph::new(Line::from(left_spans)).render(area, buf);
 
+        let active_theme_label = current_theme().label();
         let right_spans: Vec<Span<'static>> = vec![
-            Span::styled(" D ", Style::default().fg(Color::Cyan).bg(chip_bg).bold()),
-            Span::styled(format!(" {}  ", tr("Cola", "Queue")), Style::default().fg(Color::Gray).bg(bar_bg)),
-            Span::styled(" n ", Style::default().fg(Color::Yellow).bg(chip_bg).bold()),
-            Span::styled(format!(" {}  ", tr("Ayuda", "Help")), Style::default().fg(Color::Gray).bg(bar_bg)),
-            Span::styled(" ^C ", Style::default().fg(Color::LightRed).bg(chip_bg).bold()),
-            Span::styled(format!(" {} ", tr("Salir", "Quit")), Style::default().fg(Color::Gray).bg(bar_bg)),
+            Span::styled(" c ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
+            Span::styled(format!(" {}  ", tr("Ajustes", "Settings")), Style::default().fg(t.text_muted).bg(bar_bg)),
+            Span::styled(" T ", Style::default().fg(t.accent_secondary).bg(chip_bg).bold()),
+            Span::styled(format!(" {active_theme_label}  "), Style::default().fg(t.text_muted).bg(bar_bg)),
+            Span::styled(" D ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
+            Span::styled(format!(" {}  ", tr("Cola", "Queue")), Style::default().fg(t.text_muted).bg(bar_bg)),
+            Span::styled(" n ", Style::default().fg(t.accent_highlight).bg(chip_bg).bold()),
+            Span::styled(format!(" {}  ", tr("Ayuda", "Help")), Style::default().fg(t.text_muted).bg(bar_bg)),
+            Span::styled(" ^C ", Style::default().fg(t.status_error).bg(chip_bg).bold()),
+            Span::styled(format!(" {} ", tr("Salir", "Quit")), Style::default().fg(t.text_muted).bg(bar_bg)),
         ];
 
         Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right).render(area, buf);
@@ -852,6 +989,7 @@ where
         self.new_chapters_state = None;
         self.is_queue_modal_open = false;
         self.is_help_modal_open = false;
+        self.is_settings_modal_open = false;
     }
 
     fn dismiss_new_chapters_notification(&mut self) -> Result<(), String> {
@@ -876,7 +1014,11 @@ where
     }
 
     fn is_displaying_modal(&self) -> bool {
-        self.error_message.is_some() || self.new_chapters_state.is_some() || self.is_queue_modal_open || self.is_help_modal_open
+        self.error_message.is_some()
+            || self.new_chapters_state.is_some()
+            || self.is_queue_modal_open
+            || self.is_help_modal_open
+            || self.is_settings_modal_open
     }
 
     pub fn render_pages(&mut self, area: Rect, frame: &mut Frame<'_>) {
@@ -941,6 +1083,31 @@ where
                     | KeyCode::Esc
             ) {
                 self.is_help_modal_open = false;
+            }
+            return;
+        }
+
+        if self.is_settings_modal_open {
+            match self.settings_state.handle_key_event(key_event) {
+                SettingsOutcome::Close => {
+                    self.is_settings_modal_open = false;
+                },
+                SettingsOutcome::ProviderChanged(new_provider) => {
+                    self.is_checking_provider = false;
+                    self.active_provider = new_provider;
+                    self.home_page.set_active_provider(new_provider);
+                    self.search_page.set_active_provider(new_provider);
+                    self.home_page.clean_up();
+                    if self.current_tab == SelectedPage::Home {
+                        self.home_page.init_search();
+                    }
+                },
+                SettingsOutcome::ChapterLanguageChanged(new_lang) => {
+                    if let Some(manga_page) = self.manga_page.as_mut() {
+                        manga_page.apply_preferred_language(new_lang);
+                    }
+                },
+                _ => {},
             }
             return;
         }
@@ -1047,7 +1214,7 @@ where
                 Some(format!("Downloading {} new chapter(s)... Press <q> to close.", chapters_to_download.len()));
 
             let client = Arc::clone(&self.manga_provider);
-            let config = MangaTuiConfig::get().clone();
+            let config = MangaTuiConfig::get().effective();
             let event_tx = self.global_event_tx.clone();
 
             tokio::spawn(async move {
@@ -1069,6 +1236,31 @@ where
 
         let is_typing =
             self.search_page.input_mode == InputMode::Typing || self.search_page.is_typing_filter() || self.feed_page.is_typing();
+
+        if !is_typing && key_event.code == KeyCode::Char('T') && self.current_tab != SelectedPage::ReaderTab {
+            cycle_theme();
+            let _ = crate::view::widgets::settings::persist_setting_to_disk(
+                "theme",
+                crate::view::widgets::settings::theme_toml_value(current_theme()),
+            );
+            return;
+        }
+
+        let manga_page_blocks_c = self.current_tab == SelectedPage::MangaTab
+            && self
+                .manga_page
+                .as_ref()
+                .is_some_and(|p| !p.selected_chapters.is_empty() || p.is_provider_switcher_open || p.is_list_languages_open);
+
+        if !is_typing
+            && !self.search_page.is_filter_open()
+            && self.current_tab != SelectedPage::ReaderTab
+            && (key_event.code == KeyCode::F(5) || (key_event.code == KeyCode::Char('c') && !manga_page_blocks_c))
+        {
+            self.settings_state.status_message = None;
+            self.is_settings_modal_open = true;
+            return;
+        }
 
         if !is_typing && key_event.code == KeyCode::Char('D') && self.current_tab != SelectedPage::ReaderTab {
             self.is_queue_modal_open = true;
@@ -1585,5 +1777,91 @@ mod tests {
         app.global_event_tx.send(Events::Key(KeyCode::Char('n').into())).unwrap();
         app.listen_to_event().await;
         assert!(!app.is_help_modal_open);
+    }
+
+    #[tokio::test]
+    async fn test_live_provider_check_updates_top_bar_indicator() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app: App<MockMangaPageProvider, TrackerTest> =
+            App::new(MockMangaPageProvider::new(), None, None, MockFiltersHandler::new(MockFilterState {}), MockWidgetFilter {});
+
+        // Drain initial GoToHome event
+        app.listen_to_event().await;
+
+        app.global_event_tx.send(Events::ProviderCheckTrying(MangaProviders::Inmanga)).unwrap();
+        app.listen_to_event().await;
+        assert!(app.is_checking_provider);
+        assert_eq!(app.active_provider, MangaProviders::Inmanga);
+
+        let backend = TestBackend::new(120, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 120, 30);
+        terminal.draw(|f| app.render(area, f)).unwrap();
+
+        let top_row_text: String = (0..120).map(|x| terminal.backend().buffer()[(x, 0)].symbol()).collect();
+        assert!(top_row_text.contains("● Inmanga"), "Top bar should show '● Inmanga', got: {top_row_text}");
+
+        app.global_event_tx
+            .send(Events::ProviderCheckFinished {
+                active_provider: MangaProviders::Mangaoni,
+                switched_from: Some(MangaProviders::Inmanga),
+                all_failed: false,
+            })
+            .unwrap();
+        app.listen_to_event().await;
+        assert!(!app.is_checking_provider);
+        assert_eq!(app.active_provider, MangaProviders::Mangaoni);
+        assert_eq!(app.home_page.active_provider, MangaProviders::Mangaoni);
+        assert_eq!(app.search_page.active_provider, MangaProviders::Mangaoni);
+    }
+
+    #[tokio::test]
+    async fn test_settings_modal_opens_with_c_and_f5_and_updates_provider() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app: App<MockMangaPageProvider, TrackerTest> =
+            App::new(MockMangaPageProvider::new(), None, None, MockFiltersHandler::new(MockFilterState {}), MockWidgetFilter {});
+
+        // Drain initial GoToHome event
+        app.listen_to_event().await;
+        assert!(!app.is_settings_modal_open);
+
+        // Press 'c' to open settings modal
+        app.global_event_tx.send(Events::Key(KeyCode::Char('c').into())).unwrap();
+        app.listen_to_event().await;
+        assert!(app.is_settings_modal_open);
+
+        // Render modal
+        let backend = TestBackend::new(110, 32);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 110, 32);
+        terminal.draw(|f| app.render(area, f)).unwrap();
+
+        // Cycle default provider right ('l') inside settings modal
+        let initial_provider = crate::view::widgets::settings::active_default_provider();
+        app.global_event_tx.send(Events::Key(KeyCode::Char('l').into())).unwrap();
+        app.listen_to_event().await;
+        let updated_provider = crate::view::widgets::settings::active_default_provider();
+        assert_ne!(initial_provider, updated_provider);
+        assert_eq!(app.active_provider, updated_provider);
+        assert_eq!(app.home_page.active_provider, updated_provider);
+        assert_eq!(app.search_page.active_provider, updated_provider);
+
+        // Close with 'c'
+        app.global_event_tx.send(Events::Key(KeyCode::Char('c').into())).unwrap();
+        app.listen_to_event().await;
+        assert!(!app.is_settings_modal_open);
+
+        // Open with F5 and close with Esc
+        app.global_event_tx.send(Events::Key(KeyCode::F(5).into())).unwrap();
+        app.listen_to_event().await;
+        assert!(app.is_settings_modal_open);
+
+        app.global_event_tx.send(Events::Key(KeyCode::Esc.into())).unwrap();
+        app.listen_to_event().await;
+        assert!(!app.is_settings_modal_open);
     }
 }

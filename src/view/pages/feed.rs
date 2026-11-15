@@ -52,10 +52,10 @@ use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use manga_tui::SearchTerm;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Margin, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span, ToSpan};
-use ratatui::widgets::{Block, Paragraph, StatefulWidget, Tabs, Widget};
+use ratatui::widgets::{Block, BorderType, Paragraph, StatefulWidget, Tabs, Widget, Wrap};
 use throbber_widgets_tui::{Throbber, ThrobberState};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinSet;
@@ -66,7 +66,9 @@ use crate::backend::database::{Database, GetHistoryArgs, MangaHistoryResponse, M
 use crate::backend::error_log::{ErrorType, write_to_error_log};
 use crate::backend::manga_provider::{Chapter, FeedPageProvider, LatestChapter, MangaProviders};
 use crate::backend::tui::Events;
-use crate::global::{ERROR_STYLE, INSTRUCTIONS_STYLE};
+use crate::global::ERROR_STYLE;
+use crate::i18n::tr;
+use crate::theme::theme;
 use crate::utils::render_search_bar;
 use crate::view::app::MangaToRead;
 use crate::view::widgets::Component;
@@ -236,36 +238,86 @@ where
         self
     }
 
-    fn render_history(&mut self, area: Rect, buf: &mut Buffer) {
-        if self.state == FeedState::ErrorSearchingHistory {
-            Paragraph::new(
-                "No se pudo cargar el historial debido a un error, revisa los registros de error"
-                    .to_span()
-                    .style(*ERROR_STYLE),
+    fn render_empty_history_card(&self, area: Rect, buf: &mut Buffer) {
+        let t = theme();
+        let tab_title = if self.tabs == FeedTabs::Library {
+            tr(" 📚 Biblioteca ", " 📚 Library ")
+        } else {
+            tr(" 📖 Continuar leyendo ", " 📖 Continue Reading ")
+        };
+        let msg = if self.tabs == FeedTabs::Library {
+            tr(
+                "Tu biblioteca está vacía.\nConsejo: Marca cualquier manga como favorito con <f> o guárdalo como Pendiente (<p> en Buscar).",
+                "Your library is empty.\nTip: Mark any manga as favorite with <f> or save it as Plan to Read (<p> in Search).",
             )
-            .render(area, buf);
+        } else {
+            tr(
+                "No tienes historial de lectura todavía.\nConsejo: Comienza a leer cualquier manga para ver aquí tu progreso.",
+                "You have no reading history yet.\nTip: Start reading any manga to track your progress here.",
+            )
+        };
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(t.border))
+            .title(Line::from(vec![Span::styled(
+                tab_title,
+                Style::default().fg(t.accent_primary).bg(t.title_chip_primary_bg).bold(),
+            )]))
+            .title_bottom(Line::from(vec![
+                Span::raw(" "),
+                t.key_chip("Tab / 1-3"),
+                Span::styled(tr(" Cambiar pestaña  ", " Switch tab  "), Style::default().fg(t.text_muted)),
+                t.key_chip("i"),
+                Span::styled(tr(" Ir a Buscar ", " Go to Search "), Style::default().fg(t.text_muted)),
+            ]));
+        let inner = block.inner(area).inner(Margin {
+            horizontal: 2,
+            vertical: 2,
+        });
+        block.render(area, buf);
+        Paragraph::new(msg)
+            .style(Style::default().fg(t.text_muted))
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true })
+            .render(inner, buf);
+    }
+
+    fn render_history(&mut self, area: Rect, buf: &mut Buffer) {
+        let t = theme();
+        if self.state == FeedState::ErrorSearchingHistory {
+            let block = Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(t.status_error))
+                .title(Span::styled(tr(" ⚠ Error al cargar el historial ", " ⚠ Failed to load history "), *ERROR_STYLE));
+            let inner = block.inner(area).inner(Margin {
+                horizontal: 2,
+                vertical: 1,
+            });
+            block.render(area, buf);
+            Paragraph::new(
+                tr(
+                    "No se pudo cargar el historial debido a un error, revisa los registros de error.",
+                    "Could not load history due to an error, please check the error logs.",
+                )
+                .to_span()
+                .style(Style::default().fg(t.status_error)),
+            )
+            .wrap(Wrap { trim: true })
+            .render(inner, buf);
             return;
         }
+        let active_tab = self.tabs;
         match self.history.as_mut() {
             Some(history) => {
                 if self.state == FeedState::HistoryNotFound {
-                    let msg = if self.tabs == FeedTabs::Library {
-                        "Tu biblioteca está vacía.\nConsejo: Marca cualquier manga como favorito con <f> o guárdalo como Plan to Read."
-                    } else {
-                        "No tienes historial de lectura todavía.\nConsejo: Comienza a leer cualquier manga para ver aquí tu progreso."
-                    };
-                    Paragraph::new(msg).render(area, buf);
+                    self.render_empty_history_card(area, buf);
                 } else {
+                    history.active_tab = active_tab;
                     StatefulWidget::render(history.clone(), area, buf, &mut history.state);
                 }
             },
             None => {
-                let msg = if self.tabs == FeedTabs::Library {
-                    "Tu biblioteca está vacía.\nConsejo: Marca cualquier manga como favorito con <f> o guárdalo como Plan to Read."
-                } else {
-                    "No tienes historial de lectura todavía.\nConsejo: Comienza a leer cualquier manga para ver aquí tu progreso."
-                };
-                Paragraph::new(msg).render(area, buf);
+                self.render_empty_history_card(area, buf);
             },
         }
     }
@@ -274,17 +326,18 @@ where
         if let Some(timeline) = self.timeline.as_mut() {
             StatefulWidget::render(timeline.clone(), area, buf, &mut timeline.state);
         } else {
-            let text = if self.state == FeedState::SearchingHistory {
-                "Buscando actualizaciones de tus mangas favoritos... Por favor, espera."
-            } else {
-                "No hay novedades disponibles.\nConsejo: Añade mangas a favoritos pulsando <f> en cualquier ficha de manga."
+            let mut empty_widget = TimelineWidget {
+                items: Vec::new(),
+                state: tui_widget_list::ListState::default(),
+                is_loading: self.state == FeedState::SearchingHistory,
             };
-            Paragraph::new(text).render(area, buf);
+            StatefulWidget::render(empty_widget.clone(), area, buf, &mut empty_widget.state);
         }
     }
 
     fn render_tabs_and_search_bar(&mut self, area: Rect, frame: &mut Frame) {
-        let [tabs_area, search_bar_area] = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
+        let t = theme();
+        let [tabs_area, search_bar_area] = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(area);
 
         let selected_tab = match self.tabs {
             FeedTabs::Timeline => 0,
@@ -292,62 +345,118 @@ where
             FeedTabs::Library => 2,
         };
 
-        let tabs_instructions = Line::from(vec![
-            "Cambiar pestaña: ".into(),
-            Span::raw("<tab>").style(*INSTRUCTIONS_STYLE),
-            " o ".into(),
-            Span::raw("<1-3>").style(*INSTRUCTIONS_STYLE),
+        let tabs_title = Line::from(vec![
+            Span::styled(tr(" 📚 Seguimiento ", " 📚 Feed "), Style::default().fg(t.accent_primary).bold()),
+            Span::styled("<Tab | 1-3> ", Style::default().fg(t.accent_highlight).bold()),
+            Span::styled(tr("Pestaña ", "Tab "), Style::default().fg(t.text_muted)),
         ]);
 
-        Tabs::new(vec!["⚡ Novedades", "📖 Continuar leyendo", "📚 Biblioteca"])
-            .select(selected_tab)
-            .block(Block::bordered().title(tabs_instructions))
-            .highlight_style(Style::default().fg(Color::Yellow).bold())
-            .render(tabs_area, frame.buffer_mut());
+        let mut tabs_block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(t.border))
+            .title(tabs_title);
 
-        let input_help: Vec<Span<'_>> = if self.is_typing {
-            vec!["Pulsa ".into(), Span::raw("<Enter>").style(*INSTRUCTIONS_STYLE), " para buscar".into()]
+        if self.state == FeedState::MangaPageNotFound {
+            tabs_block = tabs_block.title_top(
+                Line::from(vec![Span::styled(
+                    tr(" ⚠ Error al abrir manga ", " ⚠ Failed to open manga "),
+                    Style::default().fg(t.status_error).bold(),
+                )])
+                .right_aligned(),
+            );
+        }
+
+        let inner_tabs = tabs_block.inner(tabs_area).inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
+        tabs_block.render(tabs_area, frame.buffer_mut());
+
+        if inner_tabs.width > 0 && inner_tabs.height > 0 {
+            let [tab_row, status_row] = if inner_tabs.height >= 2 {
+                Layout::vertical([Constraint::Length(1), Constraint::Length(1)]).areas(inner_tabs)
+            } else {
+                [inner_tabs, Rect::default()]
+            };
+
+            Tabs::new(vec![
+                tr(" ⚡ Novedades ", " ⚡ Updates "),
+                tr(" 📖 Continuar leyendo ", " 📖 Continue Reading "),
+                tr(" 📚 Biblioteca ", " 📚 Library "),
+            ])
+            .select(selected_tab)
+            .style(Style::default().fg(t.text_muted))
+            .highlight_style(Style::default().fg(Color::Black).bg(t.accent_primary).bold())
+            .divider(Span::styled("│", Style::default().fg(t.border_muted)))
+            .render(tab_row, frame.buffer_mut());
+
+            if status_row.height > 0 {
+                self.render_searching_status(status_row, frame.buffer_mut());
+            }
+        }
+
+        let input_help = if self.is_typing {
+            Line::from(vec![
+                Span::styled(tr(" ⌨ Filtrando ", " ⌨ Filtering "), Style::default().fg(Color::Black).bg(t.accent_highlight).bold()),
+                Span::raw(" "),
+                Span::styled("<Enter> ", Style::default().fg(t.accent_highlight).bold()),
+                Span::styled(tr("Buscar ", "Search "), Style::default().fg(t.text_muted)),
+                Span::styled("<Esc> ", Style::default().fg(t.accent_highlight).bold()),
+                Span::styled(tr("Salir ", "Stop "), Style::default().fg(t.text_muted)),
+            ])
         } else {
-            vec!["Pulsa ".into(), Span::raw("<s>").style(*INSTRUCTIONS_STYLE), " para filtrar".into()]
+            Line::from(vec![
+                Span::styled(tr(" 🔍 Filtrar ", " 🔍 Filter "), Style::default().fg(t.accent_primary).bold()),
+                Span::styled("<s> ", Style::default().fg(t.accent_highlight).bold()),
+                Span::styled(tr("Escribir ", "Type "), Style::default().fg(t.text_muted)),
+                Span::styled("<u> ", Style::default().fg(t.accent_highlight).bold()),
+                Span::styled(tr("Actualizar ", "Refresh "), Style::default().fg(t.text_muted)),
+            ])
         };
 
-        render_search_bar(self.is_typing, input_help.into(), &self.search_bar, frame, search_bar_area);
+        render_search_bar(self.is_typing, input_help, &self.search_bar, frame, search_bar_area);
     }
 
     fn render_searching_status(&mut self, area: Rect, buf: &mut Buffer) {
+        let t = theme();
         if let Some(state) = self.loading_state.as_mut() {
             let loader = Throbber::default()
-                .label("Buscando información de manga, por favor espera ")
-                .style(Style::default().fg(Color::Yellow))
+                .label(tr("Cargando ficha del manga, por favor espera... ", "Loading manga page, please wait... "))
+                .style(Style::default().fg(t.accent_highlight).bold())
                 .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
                 .use_type(throbber_widgets_tui::WhichUse::Spin);
 
-            StatefulWidget::render(
-                loader,
-                area.inner(Margin {
-                    horizontal: 1,
-                    vertical: 1,
-                }),
-                buf,
-                state,
-            );
-        }
-        if self.state == FeedState::MangaPageNotFound {
+            StatefulWidget::render(loader, area, buf, state);
+        } else if self.state == FeedState::MangaPageNotFound {
             Paragraph::new(
-                "Error, no se pudo obtener los datos del manga, inténtalo de nuevo más tarde"
-                    .to_span()
-                    .style(*ERROR_STYLE),
+                tr(
+                    "⚠ No se pudieron obtener los datos del manga, inténtalo de nuevo más tarde.",
+                    "⚠ Could not fetch manga data, please try again later.",
+                )
+                .to_span()
+                .style(Style::default().fg(t.status_error).bold()),
             )
             .render(area, buf);
+        } else {
+            let hint = match self.tabs {
+                FeedTabs::Timeline => tr(
+                    "💡 Capítulos nuevos de tus favoritos e historial reciente",
+                    "💡 Latest chapters from your favorites and recent history",
+                ),
+                FeedTabs::ContinueReading => {
+                    tr("💡 Progreso de lectura guardado automáticamente", "💡 Automatically saved reading progress")
+                },
+                FeedTabs::Library => tr(
+                    "💡 Tus mangas favoritos (★) y pendientes por leer (📋)",
+                    "💡 Your favorite (★) and plan-to-read (📋) mangas",
+                ),
+            };
+            Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(t.text_dim)))).render(area, buf);
         }
     }
 
     fn render_top_area(&mut self, area: Rect, frame: &mut Frame) {
-        let [tabs_and_search_bar_area, searching_area] = Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
-
-        self.render_tabs_and_search_bar(tabs_and_search_bar_area, frame);
-
-        self.render_searching_status(searching_area, frame.buffer_mut());
+        self.render_tabs_and_search_bar(area, frame);
     }
 
     fn render_ask_modal_confirmation_delete_all_mangas(&mut self, area: Rect, buf: &mut Buffer) {
@@ -987,7 +1096,8 @@ where
     type Actions = FeedActions;
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
-        let layout = Layout::vertical([Constraint::Length(5), Constraint::Min(10)]);
+        let top_bar_height = if area.height < 18 { 3 } else { 4 };
+        let layout = Layout::vertical([Constraint::Length(top_bar_height), Constraint::Fill(1)]);
 
         let [tabs_area, content_area] = layout.areas(area);
 

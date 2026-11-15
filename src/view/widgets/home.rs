@@ -10,6 +10,7 @@ use crate::backend::manga_provider::{MangaStatus, PopularManga, Rating, Recently
 use crate::common::ImageState;
 use crate::config::MangaTuiConfig;
 use crate::i18n::tr;
+use crate::theme::theme;
 
 #[derive(Clone, Default, PartialEq, Eq)]
 pub enum CarrouselState {
@@ -19,29 +20,23 @@ pub enum CarrouselState {
     NotFound,
 }
 
-const WIDGET_BORDER: Color = Color::Rgb(58, 64, 92);
-const WIDGET_ACCENT_CYAN: Color = Color::Rgb(0, 210, 255);
-const WIDGET_ACCENT_VIOLET: Color = Color::Rgb(160, 120, 255);
-const WIDGET_CHIP_BG: Color = Color::Rgb(34, 38, 58);
-const WIDGET_MUTED: Color = Color::Rgb(120, 128, 160);
-
 fn status_pill(status: MangaStatus) -> Span<'static> {
+    let t = theme();
     match status {
         MangaStatus::Ongoing => Span::styled(
             format!(" ● {} ", tr("En emisión", "Ongoing")),
-            Style::default().fg(Color::Rgb(110, 220, 140)).bg(Color::Rgb(20, 44, 34)).bold(),
+            Style::default().fg(Color::Black).bg(t.status_success).bold(),
         ),
         MangaStatus::Completed => Span::styled(
-            format!(" ● {} ", tr("Finalizado", "Completed")),
-            Style::default().fg(WIDGET_ACCENT_CYAN).bg(Color::Rgb(20, 40, 60)).bold(),
+            format!(" ✔ {} ", tr("Finalizado", "Completed")),
+            Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
         ),
-        MangaStatus::Hiatus => Span::styled(
-            format!(" ◐ {} ", tr("En pausa", "Hiatus")),
-            Style::default().fg(Color::Rgb(255, 200, 80)).bg(Color::Rgb(50, 40, 20)).bold(),
-        ),
+        MangaStatus::Hiatus => {
+            Span::styled(format!(" ⏸ {} ", tr("En pausa", "Hiatus")), Style::default().fg(Color::Black).bg(t.status_warning).bold())
+        },
         MangaStatus::Cancelled => Span::styled(
-            format!(" ✕ {} ", tr("Cancelado", "Cancelled")),
-            Style::default().fg(Color::LightRed).bg(Color::Rgb(52, 24, 28)).bold(),
+            format!(" ✖ {} ", tr("Cancelado", "Cancelled")),
+            Style::default().fg(Color::White).bg(t.status_error).bold(),
         ),
     }
 }
@@ -61,9 +56,8 @@ impl CarrouselItemPopularManga {
     }
 
     fn render_cover(&mut self, area: Rect, buf: &mut Buffer, state: &mut ImageState) {
-        let cover_block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(WIDGET_BORDER));
+        let t = theme();
+        let cover_block = t.rounded_block();
         let inner = cover_block.inner(area);
         cover_block.render(area, buf);
 
@@ -80,7 +74,7 @@ impl CarrouselItemPopularManga {
             None => {
                 let loader = Throbber::default()
                     .label(tr("Cargando portada...", "Loading cover..."))
-                    .style(Style::default().fg(WIDGET_ACCENT_CYAN))
+                    .style(Style::default().fg(t.accent_primary))
                     .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
                     .use_type(throbber_widgets_tui::WhichUse::Spin);
 
@@ -90,14 +84,12 @@ impl CarrouselItemPopularManga {
     }
 
     fn render_details(&mut self, area: Rect, buf: &mut Buffer) {
-        let mut block = Block::bordered()
-            .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(WIDGET_BORDER))
-            .title(Line::from(vec![
-                Span::styled(" ✦ ", Style::default().fg(WIDGET_ACCENT_CYAN).bold()),
-                Span::styled(self.manga.title.clone(), Style::default().fg(Color::White).bold()),
-                Span::raw(" "),
-            ]));
+        let t = theme();
+        let mut block = t.rounded_block().title(Line::from(vec![
+            Span::styled(" ✦ ", Style::default().fg(t.accent_primary).bold()),
+            Span::styled(self.manga.title.clone(), Style::default().fg(t.text_primary).bold()),
+            Span::raw(" "),
+        ]));
 
         if let Some(status) = self.manga.status {
             block = block.title_top(Line::from(vec![status_pill(status)]).right_aligned());
@@ -119,15 +111,15 @@ impl CarrouselItemPopularManga {
         if self.manga.genres.is_empty() {
             genre_spans.push(Span::styled(
                 tr(" ✦ Destacado del catálogo ", " ✦ Featured in catalog "),
-                Style::default().fg(Color::Rgb(165, 210, 255)).bg(WIDGET_CHIP_BG).italic(),
+                Style::default().fg(t.accent_primary).bg(t.chip_bg).italic(),
             ));
         } else {
             for genre in &self.manga.genres {
                 let pill_style = match genre.rating {
-                    Rating::Normal => Style::default().fg(Color::Rgb(165, 210, 255)).bg(WIDGET_CHIP_BG),
-                    Rating::Moderate => Style::default().fg(Color::Rgb(255, 200, 80)).bg(Color::Rgb(54, 42, 20)).bold(),
-                    Rating::Doujinshi => Style::default().fg(WIDGET_ACCENT_VIOLET).bg(Color::Rgb(38, 30, 62)).bold(),
-                    Rating::Nsfw => Style::default().fg(Color::LightRed).bg(Color::Rgb(54, 24, 30)).bold(),
+                    Rating::Normal => Style::default().fg(t.accent_primary).bg(t.chip_bg),
+                    Rating::Moderate => Style::default().fg(t.status_warning).bg(t.chip_bg).bold(),
+                    Rating::Doujinshi => Style::default().fg(t.accent_secondary).bg(t.chip_bg).bold(),
+                    Rating::Nsfw => Style::default().fg(t.status_error).bg(t.chip_bg).bold(),
                 };
                 genre_spans.push(Span::styled(format!(" {} ", genre.title), pill_style));
                 genre_spans.push(Span::raw(" "));
@@ -142,10 +134,10 @@ impl CarrouselItemPopularManga {
                     "Sin sinopsis disponible en la vista rápida — pulsa <r> para abrir la ficha completa del manga.",
                     "No synopsis available in quick view — press <r> to open the full manga page.",
                 ),
-                Style::default().fg(WIDGET_MUTED).italic(),
+                Style::default().fg(t.text_muted).italic(),
             ))
         } else {
-            Line::from(Span::styled(self.manga.description.clone(), Style::default().fg(Color::Rgb(205, 210, 226))))
+            Line::from(Span::styled(self.manga.description.clone(), Style::default().fg(t.text_secondary)))
         };
 
         Paragraph::new(synopsis).wrap(Wrap { trim: true }).render(description_area, buf);
@@ -172,18 +164,17 @@ impl StatefulWidget for PopularMangaCarrousel {
     type State = ImageState;
 
     fn render(mut self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let t = theme();
         let layout = Layout::horizontal([Constraint::Percentage(26), Constraint::Percentage(74)]);
         let [cover_area, details_area] = layout.areas(area);
         match self.state {
             CarrouselState::Searching => {
-                let block = Block::bordered()
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(WIDGET_BORDER));
+                let block = t.rounded_block();
                 let inner = block.inner(area);
                 block.render(area, buf);
                 Paragraph::new(Line::from(vec![Span::styled(
                     tr(" ⏳ Buscando mangas populares...", " ⏳ Searching popular mangas..."),
-                    Style::default().fg(WIDGET_ACCENT_CYAN).bold(),
+                    Style::default().fg(t.accent_primary).bold(),
                 )]))
                 .render(inner, buf);
                 state.set_area(cover_area);
@@ -199,23 +190,19 @@ impl StatefulWidget for PopularMangaCarrousel {
                         }
                     },
                     None => {
-                        Block::bordered()
-                            .border_type(BorderType::Rounded)
-                            .border_style(Style::default().fg(Color::DarkGray))
-                            .title(tr(" Cargando... ", " Loading... "))
-                            .render(area, buf);
+                        t.rounded_block().title(tr(" Cargando... ", " Loading... ")).render(area, buf);
                     },
                 };
             },
             CarrouselState::NotFound => {
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Red));
+                    .border_style(Style::default().fg(t.status_error));
                 let inner = block.inner(area);
                 block.render(area, buf);
                 Paragraph::new(Line::from(vec![Span::styled(
                     tr(" ⚠ No se encontraron mangas populares", " ⚠ Popular mangas not found"),
-                    Style::default().fg(Color::LightRed).bold(),
+                    Style::default().fg(t.status_error).bold(),
                 )]))
                 .render(inner, buf);
             },
@@ -254,7 +241,7 @@ impl PopularMangaCarrousel {
             if self.current_item_visible_index == 0 {
                 self.current_item_visible_index = self.items.len() - 1
             } else {
-                self.current_item_visible_index = self.current_item_visible_index.saturating_sub(1)
+                self.current_item_visible_index = self.current_item_visible_index.saturating_sub(1);
             }
         }
     }
@@ -276,6 +263,7 @@ pub struct CarrouselItemRecentlyAddedManga {
 
 impl CarrouselItemRecentlyAddedManga {
     fn render_cover(&mut self, area: Rect, buf: &mut Buffer, state: &mut ImageState) {
+        let t = theme();
         match state.get_image_state(&self.manga.id) {
             Some(image_state) => {
                 let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
@@ -285,7 +273,7 @@ impl CarrouselItemRecentlyAddedManga {
             None => {
                 let loader = Throbber::default()
                     .label(tr("Cargando...", "Loading..."))
-                    .style(Style::default().fg(WIDGET_ACCENT_VIOLET))
+                    .style(Style::default().fg(t.accent_secondary))
                     .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
                     .use_type(throbber_widgets_tui::WhichUse::Spin);
 
@@ -312,6 +300,7 @@ impl StatefulWidget for RecentlyAddedCarrousel {
     type State = ImageState;
 
     fn render(mut self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let t = theme();
         let layout = Layout::horizontal([
             Constraint::Fill(1),
             Constraint::Fill(1),
@@ -339,19 +328,16 @@ impl StatefulWidget for RecentlyAddedCarrousel {
                     let card_block = if is_selected {
                         Block::bordered()
                             .border_type(BorderType::Rounded)
-                            .border_style(Style::default().fg(WIDGET_ACCENT_VIOLET).bold())
+                            .border_style(Style::default().fg(t.accent_primary).bold())
                             .title(Line::from(vec![Span::styled(
                                 format!(" ▸ #{} ", item_index + 1),
-                                Style::default().fg(Color::Black).bg(WIDGET_ACCENT_VIOLET).bold(),
+                                Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
                             )]))
                     } else {
-                        Block::bordered()
-                            .border_type(BorderType::Rounded)
-                            .border_style(Style::default().fg(WIDGET_BORDER))
-                            .title(Line::from(vec![Span::styled(
-                                format!(" #{} ", item_index + 1),
-                                Style::default().fg(WIDGET_MUTED),
-                            )]))
+                        t.rounded_block().title(Line::from(vec![Span::styled(
+                            format!(" #{} ", item_index + 1),
+                            Style::default().fg(t.text_muted),
+                        )]))
                     };
 
                     let inner_card = card_block.inner(*area_manga);
@@ -366,9 +352,9 @@ impl StatefulWidget for RecentlyAddedCarrousel {
                         let [top, bottom] = Layout::vertical(manga_constraints).areas(inner_card);
 
                         let title_style = if is_selected {
-                            Style::default().fg(Color::White).bg(WIDGET_CHIP_BG).bold()
+                            Style::default().fg(t.text_primary).bg(t.row_selected_bg).bold()
                         } else {
-                            Style::default().fg(Color::Rgb(190, 196, 218))
+                            Style::default().fg(t.text_secondary)
                         };
 
                         if self.can_display_images {
@@ -382,7 +368,7 @@ impl StatefulWidget for RecentlyAddedCarrousel {
                                 .render(top, buf);
                             Paragraph::new(Line::from(Span::styled(
                                 item.manga.description.clone(),
-                                Style::default().fg(WIDGET_MUTED),
+                                Style::default().fg(t.text_muted),
                             )))
                             .wrap(Wrap { trim: true })
                             .render(bottom, buf);
@@ -391,14 +377,12 @@ impl StatefulWidget for RecentlyAddedCarrousel {
                 }
             },
             CarrouselState::Searching => {
-                let block = Block::bordered()
-                    .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(WIDGET_BORDER));
+                let block = t.rounded_block();
                 let inner = block.inner(area);
                 block.render(area, buf);
                 Paragraph::new(Line::from(vec![Span::styled(
                     tr(" ⏳ Buscando mangas recientes...", " ⏳ Searching recent mangas..."),
-                    Style::default().fg(WIDGET_ACCENT_VIOLET).bold(),
+                    Style::default().fg(t.accent_secondary).bold(),
                 )]))
                 .render(inner, buf);
 
@@ -414,12 +398,12 @@ impl StatefulWidget for RecentlyAddedCarrousel {
             CarrouselState::NotFound => {
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Red));
+                    .border_style(Style::default().fg(t.status_error));
                 let inner = block.inner(area);
                 block.render(area, buf);
                 Paragraph::new(Line::from(vec![Span::styled(
                     tr(" ⚠ No se pudieron obtener los mangas recientes", " ⚠ Could not get recent mangas"),
-                    Style::default().fg(Color::LightRed).bold(),
+                    Style::default().fg(t.status_error).bold(),
                 )]))
                 .render(inner, buf);
             },

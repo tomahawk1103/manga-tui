@@ -63,16 +63,20 @@ pub fn centered_rect(r: Rect, percent_x: u16, percent_y: u16) -> Rect {
 }
 
 pub fn render_search_bar(is_typing: bool, input_help: Line<'_>, input: &Input, frame: &mut Frame<'_>, area: Rect) {
-    let border_style =
-        if is_typing { Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD) } else { Style::default().fg(Color::Cyan) };
+    let t = crate::theme::theme();
+    let border_style = if is_typing {
+        Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(t.accent_primary)
+    };
 
     let content = if input.value().is_empty() && !is_typing {
         Line::from(vec![Span::styled(
             tr(" 🔍 Pulsa <s> para escribir el nombre de un manga...", " 🔍 Press <s> to type a manga title..."),
-            Style::default().fg(Color::DarkGray).add_modifier(Modifier::ITALIC),
+            Style::default().fg(t.text_dim).add_modifier(Modifier::ITALIC),
         )])
     } else {
-        Line::from(vec![Span::styled(input.value(), Style::default().fg(Color::White).add_modifier(Modifier::BOLD))])
+        Line::from(vec![Span::styled(input.value(), Style::default().fg(t.text_primary).add_modifier(Modifier::BOLD))])
     };
 
     let input_bar = Paragraph::new(content).block(

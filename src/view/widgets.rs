@@ -11,6 +11,7 @@ use crate::backend::manga_provider::LatestChapter;
 use crate::backend::tui::Events;
 use crate::global::INSTRUCTIONS_STYLE;
 use crate::i18n::tr;
+use crate::theme::theme;
 use crate::utils::centered_rect;
 
 pub mod feed;
@@ -18,6 +19,9 @@ pub mod home;
 pub mod manga;
 pub mod reader;
 pub mod search;
+pub mod settings;
+
+pub use settings::{SettingsModal, SettingsModalState, SettingsOutcome};
 
 pub trait Component {
     type Actions;
@@ -320,19 +324,20 @@ impl<'a> DownloadQueueModal<'a> {
 
 impl<'a> Widget for DownloadQueueModal<'a> {
     fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer) {
+        let t = theme();
         let area = centered_rect(area, 60, 40);
         Clear.render(area, buf);
 
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(Style::default().fg(t.border_accent))
             .title(Line::from(vec![Span::styled(
                 tr(" ⬇ Cola de Descargas ", " ⬇ Download Queue "),
-                Style::default().add_modifier(Modifier::BOLD).fg(Color::Cyan),
+                Style::default().add_modifier(Modifier::BOLD).fg(t.accent_primary),
             )]))
             .title_bottom(Line::from(vec![Span::styled(
                 tr(" <c> Cancelar todo | <q>, <Esc> o <D> Cerrar ", " <c> Cancel All | <q> or <Esc> or <D> Close "),
-                Style::default().fg(Color::Yellow),
+                Style::default().fg(t.accent_highlight),
             )]));
 
         let inner = block.inner(area);
@@ -350,7 +355,7 @@ impl<'a> Widget for DownloadQueueModal<'a> {
                         tr("Descargando actualmente: ", "Currently downloading: "),
                         Style::default().add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(&p.current_manga_title, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+                    Span::styled(&p.current_manga_title, Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD)),
                 ]));
                 lines.push(Line::from(vec![Span::raw(format!(
                     "{} {}  |  {} {:.0}%",
@@ -375,7 +380,7 @@ impl<'a> Widget for DownloadQueueModal<'a> {
                 }
                 lines.push(Line::from(vec![Span::styled(
                     batch_text,
-                    Style::default().fg(if p.failed_in_batch > 0 { Color::LightRed } else { Color::Cyan }),
+                    Style::default().fg(if p.failed_in_batch > 0 { t.status_error } else { t.accent_primary }),
                 )]));
                 lines.push(Line::raw(""));
 
@@ -385,7 +390,7 @@ impl<'a> Widget for DownloadQueueModal<'a> {
                 let filled = filled.min(gauge_width);
                 let empty = gauge_width.saturating_sub(filled);
                 let bar = format!("[{}{}] {:.0}%", "█".repeat(filled), "░".repeat(empty), p.current_page_percentage);
-                lines.push(Line::from(vec![Span::styled(bar, Style::default().fg(Color::Cyan))]));
+                lines.push(Line::from(vec![Span::styled(bar, Style::default().fg(t.accent_primary))]));
             },
             Some(p) if p.remaining_items > 0 => {
                 lines.push(Line::from(vec![Span::styled(
@@ -395,7 +400,7 @@ impl<'a> Widget for DownloadQueueModal<'a> {
                         p.remaining_items,
                         tr("elementos restantes", "items remaining")
                     ),
-                    Style::default().fg(Color::Yellow),
+                    Style::default().fg(t.accent_highlight),
                 )]));
             },
             _ => {
@@ -424,33 +429,36 @@ impl HelpModal {
     }
 
     fn key_line<'a>(key: &'a str, desc: &'a str) -> Line<'a> {
+        let t = theme();
         Line::from(vec![
-            Span::styled(format!(" {:<10} ", key), Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
-            Span::styled(desc, Style::default().fg(Color::White)),
+            Span::styled(format!(" {:<10} ", key), Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD)),
+            Span::styled(desc, Style::default().fg(t.text_primary)),
         ])
     }
 
     fn section_title<'a>(title: &'a str) -> Line<'a> {
-        Line::from(vec![Span::styled(format!(" ▸ {title}"), Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))])
+        let t = theme();
+        Line::from(vec![Span::styled(format!(" ▸ {title}"), Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD))])
     }
 }
 
 impl Widget for HelpModal {
     fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer) {
-        let modal_area = centered_rect(area, 78, 76);
+        let t = theme();
+        let modal_area = centered_rect(area, 78, 78);
         Clear.render(modal_area, buf);
 
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Cyan))
+            .border_style(Style::default().fg(t.border_accent))
             .title(Line::from(vec![Span::styled(
                 tr(" ⌨ Atajos de Teclado y Ayuda Rápida ", " ⌨ Keyboard Shortcuts & Quick Help "),
-                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD),
             )]))
             .title_bottom(
                 Line::from(vec![Span::styled(
                     tr(" Pulsa <n>, <q> o <Esc> para cerrar ", " Press <n>, <q> or <Esc> to close "),
-                    Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+                    Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD),
                 )])
                 .alignment(Alignment::Center),
             );
@@ -475,6 +483,10 @@ impl Widget for HelpModal {
             Self::key_line("u / F1", tr("Ir a Inicio", "Go to Home")),
             Self::key_line("i / F2", tr("Ir a Buscar", "Go to Search")),
             Self::key_line("o / F3", tr("Ir a Seguimiento (Biblioteca)", "Go to Feed (Library)")),
+            Self::key_line(
+                "T",
+                tr("Alternar tema (Tokyo Night/Catppuccin/Clásico)", "Cycle theme (Tokyo Night/Catppuccin/Classic)"),
+            ),
             Self::key_line("D", tr("Abrir cola de descargas", "Open download queue")),
             Self::key_line("n / F4", tr("Mostrar/ocultar esta ayuda", "Toggle this help modal")),
             Self::key_line("Ctrl+C", tr("Salir de manga-tui", "Quit manga-tui")),
@@ -487,6 +499,7 @@ impl Widget for HelpModal {
             Self::key_line("Tab / m", tr("Alternar Todos / Proveedor actual", "Toggle All / Current provider")),
             Self::key_line("l", tr("Filtrar idioma (Todos/ES/EN)", "Filter language (All/ES/EN)")),
             Self::key_line("p", tr("Guardar en Planeado (Plan to read)", "Save to Plan to read")),
+            Self::key_line("P", tr("Cambiar proveedor agrupado (Shift+P)", "Switch grouped provider (Shift+P)")),
             Self::key_line("f", tr("Abrir filtros avanzados", "Open advanced filters")),
             Self::key_line("r / Enter", tr("Abrir ficha del manga", "Open manga page")),
         ];
@@ -494,9 +507,9 @@ impl Widget for HelpModal {
         let right_lines = vec![
             Self::section_title(tr("Ficha del Manga", "Manga Page")),
             Self::key_line("j / k", tr("Subir / bajar en capítulos", "Scroll chapters up / down")),
-            Self::key_line("r", tr("Leer capítulo seleccionado", "Read selected chapter")),
+            Self::key_line("r / v", tr("Leer en TUI / Abrir Visor Web HD", "Read in TUI / Open HD Web Viewer")),
             Self::key_line("Space", tr("Seleccionar capítulo para lote", "Toggle select chapter")),
-            Self::key_line("v / c", tr("Seleccionar página / Limpiar", "Select page / Clear selection")),
+            Self::key_line("V / c", tr("Seleccionar página / Limpiar", "Select page / Clear selection")),
             Self::key_line("d / a", tr("Descargar selección / todos", "Download selected / all")),
             Self::key_line("f", tr("Marcar/desmarcar Favorito ★", "Toggle Favorite ★")),
             Self::key_line("P", tr("Migrar a otro proveedor", "Switch manga provider")),
@@ -506,6 +519,7 @@ impl Widget for HelpModal {
             Self::section_title(tr("Biblioteca y Lector", "Library & Reader")),
             Self::key_line("Tab / 1-3", tr("Cambiar pestaña en Seguimiento", "Switch tab in Feed")),
             Self::key_line("j / k", tr("Pasar página en el lector", "Next / prev page in reader")),
+            Self::key_line("v", tr("Abrir en navegador (Scroll HD)", "Open in browser (HD Scroll)")),
             Self::key_line("w / b", tr("Siguiente / anterior capítulo", "Next / prev chapter in reader")),
             Self::key_line("Backspace", tr("Volver atrás", "Go back")),
         ];

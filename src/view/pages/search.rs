@@ -30,6 +30,7 @@ use crate::backend::tui::Events;
 use crate::common::ImageState;
 use crate::global::{ERROR_STYLE, INSTRUCTIONS_STYLE};
 use crate::i18n::tr;
+use crate::theme::theme;
 use crate::utils::{centered_rect, render_search_bar};
 use crate::view::widgets::search::*;
 use crate::view::widgets::{Component, StatefulWidgetFrame};
@@ -399,6 +400,7 @@ pub enum SearchPageActions {
     DiscoveryRight,
     SelectDiscoveryCol(usize),
     ReturnToDiscovery,
+    SwitchProvider,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -489,9 +491,11 @@ where
     pub history_index: Option<usize>,
     pub stashed_input: String,
     manga_provider: Arc<T>,
+    pub active_provider: MangaProviders,
     manga_tracker: Option<S>,
     all_providers_results: Vec<SearchManga>,
     all_providers_unfiltered_results: Vec<SearchManga>,
+    pub all_providers_groups: Vec<crate::backend::multi_provider::GroupedSearchManga>,
     manga_area: Rect,
     pub most_read_feed: DiscoveryFeed,
     pub top_rated_feed: DiscoveryFeed,
@@ -619,6 +623,7 @@ where
                 self.clean_up();
                 self.discovery_personal = build_personal_and_trending_discovery(&self.search_history);
             },
+            SearchPageActions::SwitchProvider => self.switch_selected_manga_provider(),
         }
     }
 
@@ -671,6 +676,7 @@ where
             .unwrap_or_default();
 
         let discovery_personal = build_personal_and_trending_discovery(&search_history);
+        let active_provider = api_client.name();
 
         Self {
             global_event_tx: None,
@@ -695,9 +701,11 @@ where
             history_index: None,
             stashed_input: String::new(),
             manga_provider: api_client,
+            active_provider,
             manga_tracker,
             all_providers_results: Vec::new(),
             all_providers_unfiltered_results: Vec::new(),
+            all_providers_groups: Vec::new(),
             manga_area: Rect::default(),
             most_read_feed: DiscoveryFeed::new(default_global_most_read()),
             top_rated_feed: DiscoveryFeed::new(default_global_top_rated()),
@@ -710,32 +718,37 @@ where
         }
     }
 
+    pub fn set_active_provider(&mut self, provider: MangaProviders) {
+        self.active_provider = provider;
+    }
+
     pub fn with_global_sender(mut self, sender: UnboundedSender<Events>) -> Self {
         self.global_event_tx = Some(sender);
         self
     }
 
     fn render_input_area(&self, area: Rect, frame: &mut Frame<'_>) {
+        let t = theme();
         let [input_area, information_area] =
             Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(area);
 
         let input_help = match self.input_mode {
             InputMode::Idle => Line::from(vec![
-                Span::styled(tr(" 🔍 Buscador ", " 🔍 Search "), Style::default().fg(Color::Cyan).bold()),
-                Span::styled("<s> ", Style::default().fg(Color::Yellow).bold()),
-                Span::styled(tr("Escribir ", "Type "), Style::default().fg(Color::Gray)),
-                Span::styled("<f> ", Style::default().fg(Color::Yellow).bold()),
-                Span::styled(tr("Filtros ", "Filters "), Style::default().fg(Color::Gray)),
+                Span::styled(tr(" 🔍 Buscador ", " 🔍 Search "), Style::default().fg(t.accent_primary).bold()),
+                Span::styled("<s> ", Style::default().fg(t.accent_highlight).bold()),
+                Span::styled(tr("Escribir ", "Type "), Style::default().fg(t.text_muted)),
+                Span::styled("<f> ", Style::default().fg(t.accent_highlight).bold()),
+                Span::styled(tr("Filtros ", "Filters "), Style::default().fg(t.text_muted)),
             ]),
             InputMode::Typing => Line::from(vec![
-                Span::styled(tr(" ⌨ Escribiendo ", " ⌨ Typing "), Style::default().fg(Color::Black).bg(Color::Yellow).bold()),
+                Span::styled(tr(" ⌨ Escribiendo ", " ⌨ Typing "), Style::default().fg(Color::Black).bg(t.accent_highlight).bold()),
                 Span::raw(" "),
-                Span::styled("<Enter> ", Style::default().fg(Color::Yellow).bold()),
-                Span::styled(tr("Buscar ", "Search "), Style::default().fg(Color::Gray)),
-                Span::styled("<↑/↓> ", Style::default().fg(Color::Yellow).bold()),
-                Span::styled(tr("Historial ", "History "), Style::default().fg(Color::Gray)),
-                Span::styled("<Esc> ", Style::default().fg(Color::Yellow).bold()),
-                Span::styled(tr("Salir ", "Stop "), Style::default().fg(Color::Gray)),
+                Span::styled("<Enter> ", Style::default().fg(t.accent_highlight).bold()),
+                Span::styled(tr("Buscar ", "Search "), Style::default().fg(t.text_muted)),
+                Span::styled("<↑/↓> ", Style::default().fg(t.accent_highlight).bold()),
+                Span::styled(tr("Historial ", "History "), Style::default().fg(t.text_muted)),
+                Span::styled("<Esc> ", Style::default().fg(t.accent_highlight).bold()),
+                Span::styled(tr("Salir ", "Stop "), Style::default().fg(t.text_muted)),
             ]),
         };
 
@@ -744,56 +757,55 @@ where
         let scope_span = match self.search_scope {
             SearchScope::AllProviders => Span::styled(
                 format!(" 🌐 {} ", tr("Todos", "All Providers")),
-                Style::default().fg(Color::Black).bg(Color::Yellow).bold(),
+                Style::default().fg(Color::Black).bg(t.accent_highlight).bold(),
             ),
             SearchScope::CurrentProvider => Span::styled(
-                format!(" 🎯 {} ", self.manga_provider.name()),
-                Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+                format!(" 🎯 {} ", self.active_provider),
+                Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
             ),
         };
 
         let lang_span = match self.language_filter {
-            SearchLanguageFilter::All => Span::styled(
-                format!(" 🌍 {} ", tr("Todos", "All")),
-                Style::default().fg(Color::White).bg(Color::Rgb(55, 62, 82)).bold(),
-            ),
-            SearchLanguageFilter::Spanish => Span::styled(" 🇪🇸 ES ", Style::default().fg(Color::Black).bg(Color::Green).bold()),
-            SearchLanguageFilter::English => Span::styled(" 🇬🇧 EN ", Style::default().fg(Color::White).bg(Color::Blue).bold()),
+            SearchLanguageFilter::All => {
+                Span::styled(format!(" 🌍 {} ", tr("Todos", "All")), Style::default().fg(t.text_primary).bg(t.chip_bg).bold())
+            },
+            SearchLanguageFilter::Spanish => Span::styled(" 🇪🇸 ES ", Style::default().fg(Color::Black).bg(t.status_success).bold()),
+            SearchLanguageFilter::English => Span::styled(" 🇬🇧 EN ", Style::default().fg(Color::Black).bg(t.accent_primary).bold()),
         };
 
         let mut info_lines = vec![Line::from(vec![
-            Span::styled(tr("Alcance: ", "Scope: "), Style::default().fg(Color::Gray)),
+            Span::styled(tr("Alcance: ", "Scope: "), Style::default().fg(t.text_muted)),
             scope_span,
-            Span::styled(" <Tab/m>  ", Style::default().fg(Color::Cyan).bold()),
-            Span::styled(tr("Idioma: ", "Lang: "), Style::default().fg(Color::Gray)),
+            Span::styled(" <Tab/m>  ", Style::default().fg(t.accent_primary).bold()),
+            Span::styled(tr("Idioma: ", "Lang: "), Style::default().fg(t.text_muted)),
             lang_span,
-            Span::styled(" <l>", Style::default().fg(Color::Cyan).bold()),
+            Span::styled(" <l>", Style::default().fg(t.accent_primary).bold()),
         ])];
 
         if let Some(idx) = self.history_index {
             info_lines.push(Line::from(vec![
-                Span::styled("🕒 ", Style::default().fg(Color::Yellow)),
+                Span::styled("🕒 ", Style::default().fg(t.accent_highlight)),
                 Span::styled(
                     format!("{}: {}/{} (<↑/↓>)", tr("Historial", "History"), idx + 1, self.search_history.len()),
-                    Style::default().fg(Color::Yellow).bold(),
+                    Style::default().fg(t.accent_highlight).bold(),
                 ),
             ]));
         } else if let Some(name) = self.manga_added_to_plan_to_read.as_ref() {
             info_lines.push(Line::from(vec![
-                Span::styled("✔ ", Style::default().fg(Color::Green).bold()),
+                Span::styled("✔ ", Style::default().fg(t.status_success).bold()),
                 Span::styled(
                     format!("{}: {name} 📖", tr("Añadido a Planeado", "Added to Plan to read")),
-                    Style::default().fg(Color::Green).bold(),
+                    Style::default().fg(t.status_success).bold(),
                 ),
             ]));
         }
 
         let info_block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Rgb(75, 88, 120)))
+            .border_style(Style::default().fg(t.border))
             .title(Line::from(vec![Span::styled(
                 tr(" ⚙ Filtros Rápidos ", " ⚙ Quick Filters "),
-                Style::default().fg(Color::Cyan).bold(),
+                Style::default().fg(t.accent_primary).bold(),
             )]));
 
         let inner_info = info_block.inner(information_area).inner(Margin {
@@ -807,6 +819,7 @@ where
     }
 
     fn render_manga_found_area(&mut self, area: Rect, frame: &mut Frame<'_>) {
+        let t = theme();
         let buf = frame.buffer_mut();
         let [manga_list_area, preview_area] =
             Layout::horizontal([Constraint::Percentage(42), Constraint::Percentage(58)]).areas(area);
@@ -817,32 +830,35 @@ where
                 let sync_badge = if is_live {
                     Span::styled(
                         tr(" 🌐 Ranking Mundial en Vivo ", " 🌐 Live Global Ranking "),
-                        Style::default().fg(Color::Black).bg(Color::Green).bold(),
+                        Style::default().fg(Color::Black).bg(t.status_success).bold(),
                     )
                 } else {
                     Span::styled(
                         tr(" ⚡ Ranking Global ", " ⚡ Global Ranking "),
-                        Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+                        Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
                     )
                 };
 
                 let bottom_help = Line::from(vec![
                     Span::raw(" "),
-                    Span::styled(" <←/→ | 1-3> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-                    Span::styled(tr(" Columna  ", " Column  "), Style::default().fg(Color::Gray)),
-                    Span::styled(" <↑/↓ | PgDn> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-                    Span::styled(tr(" Explorar Top  ", " Browse Top  "), Style::default().fg(Color::Gray)),
-                    Span::styled(" <Enter> ", Style::default().fg(Color::Black).bg(Color::Cyan).bold()),
-                    Span::styled(tr(" Buscar manga  ", " Search manga  "), Style::default().fg(Color::White).bold()),
-                    Span::styled(" <s> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-                    Span::styled(tr(" Escribir ", " Type "), Style::default().fg(Color::Gray)),
+                    t.highlight_key_chip("←/→ | 1-3"),
+                    Span::styled(tr(" Columna  ", " Column  "), Style::default().fg(t.text_muted)),
+                    t.highlight_key_chip("↑/↓ | PgDn"),
+                    Span::styled(tr(" Explorar Top  ", " Browse Top  "), Style::default().fg(t.text_muted)),
+                    t.action_chip_primary("Enter"),
+                    Span::styled(tr(" Buscar manga  ", " Search manga  "), Style::default().fg(t.text_primary).bold()),
+                    t.highlight_key_chip("s"),
+                    Span::styled(tr(" Escribir ", " Type "), Style::default().fg(t.text_muted)),
                 ]);
 
                 let welcome_block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Rgb(75, 88, 120)))
+                    .border_style(Style::default().fg(t.border))
                     .title(Line::from(vec![
-                        Span::styled(tr(" 🧭 Descubrir Mangas ", " 🧭 Discover Mangas "), Style::default().fg(Color::Cyan).bold()),
+                        Span::styled(
+                            tr(" 🧭 Descubrir Mangas ", " 🧭 Discover Mangas "),
+                            Style::default().fg(t.accent_primary).bold(),
+                        ),
                         sync_badge,
                     ]))
                     .title_bottom(bottom_help);
@@ -870,12 +886,12 @@ where
                 ];
 
                 let mut provider_spans: Vec<Span<'static>> =
-                    vec![Span::styled(format!(" {} ", tr("Fuentes:", "Sources:")), Style::default().fg(Color::Gray).bold())];
+                    vec![Span::styled(format!(" {} ", tr("Fuentes:", "Sources:")), Style::default().fg(t.text_muted).bold())];
                 for prov in all_providers {
                     let health = crate::backend::multi_provider::get_provider_health_status(prov);
                     provider_spans.push(Span::styled(
                         format!(" {} {} ", health.indicator(), prov),
-                        Style::default().fg(Color::White).bg(Color::Rgb(42, 48, 66)).bold(),
+                        Style::default().fg(t.text_primary).bg(t.chip_bg).bold(),
                     ));
                     provider_spans.push(Span::raw(" "));
                 }
@@ -894,27 +910,24 @@ where
                     (
                         0usize,
                         tr(" 🌍 1. Más Leídos", " 🌍 1. Most Read"),
-                        Color::Cyan,
+                        t.accent_primary,
                         &self.most_read_feed.items,
                         self.most_read_feed.is_fetching,
                     ),
                     (
                         1usize,
                         tr(" ⭐ 2. Top Valorados", " ⭐ 2. Top Rated"),
-                        Color::Yellow,
+                        t.accent_highlight,
                         &self.top_rated_feed.items,
                         self.top_rated_feed.is_fetching,
                     ),
-                    (2usize, tr(" 🔥 3. Tuyos & Recs", " 🔥 3. Yours & Recs"), Color::Magenta, &self.discovery_personal, false),
+                    (2usize, tr(" 🔥 3. Tuyos & Recs", " 🔥 3. Yours & Recs"), t.accent_secondary, &self.discovery_personal, false),
                 ];
 
                 for (col_idx, label, accent_color, items, is_loading_more) in col_configs {
                     let is_active_col = self.discovery_col == col_idx;
-                    let border_style = if is_active_col {
-                        Style::default().fg(accent_color).bold()
-                    } else {
-                        Style::default().fg(Color::Rgb(52, 60, 86))
-                    };
+                    let border_style =
+                        if is_active_col { Style::default().fg(accent_color).bold() } else { Style::default().fg(t.border_muted) };
                     let title_style = if is_active_col {
                         Style::default().fg(Color::Black).bg(accent_color).bold()
                     } else {
@@ -950,11 +963,11 @@ where
                         let rank_str = format!("{:>3}. ", idx + 1);
 
                         let (cursor, row_bg, title_fg) = if is_selected {
-                            ("▸ ", Some(Color::Rgb(42, 49, 72)), Color::White)
+                            ("▸ ", Some(t.row_selected_bg), t.text_primary)
                         } else if idx == selected_row {
-                            ("• ", None, Color::White)
+                            ("• ", None, t.text_primary)
                         } else {
-                            ("  ", None, Color::Gray)
+                            ("  ", None, t.text_secondary)
                         };
 
                         let base_style = match row_bg {
@@ -963,13 +976,13 @@ where
                         };
 
                         let badge_style = if item.badge.starts_with('★') {
-                            base_style.fg(Color::Yellow).bold()
+                            base_style.fg(t.accent_highlight).bold()
                         } else if item.badge.starts_with("📖") {
-                            base_style.fg(Color::Green).bold()
+                            base_style.fg(t.status_success).bold()
                         } else if item.badge.starts_with("🕒") {
-                            base_style.fg(Color::Cyan)
+                            base_style.fg(t.accent_primary)
                         } else {
-                            base_style.fg(Color::LightRed).bold()
+                            base_style.fg(t.accent_secondary).bold()
                         };
 
                         let badge_text = format!("[{}]", item.badge);
@@ -985,9 +998,9 @@ where
                         let mut spans = vec![
                             Span::styled(
                                 cursor,
-                                if is_selected { base_style.fg(accent_color).bold() } else { base_style.fg(Color::DarkGray) },
+                                if is_selected { base_style.fg(accent_color).bold() } else { base_style.fg(t.text_dim) },
                             ),
-                            Span::styled(rank_str, base_style.fg(Color::DarkGray)),
+                            Span::styled(rank_str, base_style.fg(t.text_dim)),
                             Span::styled(
                                 display_title,
                                 if is_selected { base_style.fg(title_fg).bold() } else { base_style.fg(title_fg) },
@@ -997,7 +1010,7 @@ where
                         ];
 
                         if show_tag {
-                            spans.push(Span::styled(format!(" {}", item.tag), base_style.fg(Color::DarkGray)));
+                            spans.push(Span::styled(format!(" {}", item.tag), base_style.fg(t.text_dim)));
                         }
 
                         row_lines.push(Line::from(spans));
@@ -1009,10 +1022,10 @@ where
             PageState::SearchingMangas => {
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Yellow))
+                    .border_style(Style::default().fg(t.accent_highlight))
                     .title(Line::from(vec![Span::styled(
                         tr(" ⏳ Buscando... ", " ⏳ Searching... "),
-                        Style::default().fg(Color::Yellow).bold(),
+                        Style::default().fg(t.accent_highlight).bold(),
                     )]));
                 let inner = block.inner(area).inner(Margin {
                     horizontal: 2,
@@ -1025,7 +1038,7 @@ where
                         "Buscando mangas en los proveedores seleccionados...",
                         "Searching mangas across selected providers...",
                     ))
-                    .style(Style::default().fg(Color::Yellow).bold())
+                    .style(Style::default().fg(t.accent_highlight).bold())
                     .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
                     .use_type(throbber_widgets_tui::WhichUse::Spin);
 
@@ -1034,15 +1047,15 @@ where
             PageState::NotFound => {
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Yellow))
+                    .border_style(Style::default().fg(t.accent_highlight))
                     .title(Line::from(vec![Span::styled(
                         tr(" 📭 Sin resultados ", " 📭 No results "),
-                        Style::default().fg(Color::Yellow).bold(),
+                        Style::default().fg(t.accent_highlight).bold(),
                     )]))
                     .title_top(
                         Line::from(vec![
-                            Span::styled(" <Esc> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-                            Span::styled(tr(" Volver a Descubrir ", " Back to Discover "), Style::default().fg(Color::Gray)),
+                            t.highlight_key_chip("Esc"),
+                            Span::styled(tr(" Volver a Descubrir ", " Back to Discover "), Style::default().fg(t.text_muted)),
                         ])
                         .right_aligned(),
                     );
@@ -1055,7 +1068,7 @@ where
                     "No se encontraron mangas con ese nombre. Prueba con otro término, cambia el filtro (<l>/<Tab>) o pulsa <Esc> para volver al Ranking Mundial.",
                     "No mangas were found. Try another search term, toggle filters (<l>/<Tab>), or press <Esc> to return to Global Rankings.",
                 ))
-                .style(Style::default().fg(Color::Gray))
+                .style(Style::default().fg(t.text_muted))
                 .alignment(Alignment::Center)
                 .wrap(Wrap { trim: true })
                 .render(inner, buf);
@@ -1063,7 +1076,7 @@ where
             PageState::ErrorOcurredSearchingMangas => {
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Red))
+                    .border_style(Style::default().fg(t.status_error))
                     .title(Span::styled(
                         tr(
                             " ⚠ Error al buscar mangas, inténtalo de nuevo (<Esc> Volver) ",
@@ -1079,28 +1092,28 @@ where
                 let total_items = self.mangas_found_list.pagination.total_items;
 
                 let list_title = Line::from(vec![
-                    Span::styled(format!(" 📋 {} ", tr("Resultados", "Results")), Style::default().fg(Color::Cyan).bold()),
-                    Span::styled(format!("({total_items}) "), Style::default().fg(Color::Yellow).bold()),
+                    Span::styled(format!(" 📋 {} ", tr("Resultados", "Results")), Style::default().fg(t.accent_primary).bold()),
+                    Span::styled(format!("({total_items}) "), Style::default().fg(t.accent_highlight).bold()),
                 ]);
 
                 let back_hint = Line::from(vec![
-                    Span::styled(" <Esc> ", Style::default().fg(Color::Yellow).bg(Color::DarkGray).bold()),
-                    Span::styled(tr(" 🧭 Top/Recs ", " 🧭 Top/Recs "), Style::default().fg(Color::Gray)),
+                    t.highlight_key_chip("Esc"),
+                    Span::styled(tr(" 🧭 Top/Recs ", " 🧭 Top/Recs "), Style::default().fg(t.text_muted)),
                 ])
                 .right_aligned();
 
                 let pagination_instructions = Line::from(vec![
-                    Span::styled(" ◀ <b> ", Style::default().fg(Color::Cyan).bold()),
+                    Span::styled(" ◀ <b> ", Style::default().fg(t.accent_primary).bold()),
                     Span::styled(
                         format!(" {} {current_page}/{total_pages} ", tr("Pág.", "Page")),
-                        Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+                        Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
                     ),
-                    Span::styled(" <w> ▶ ", Style::default().fg(Color::Cyan).bold()),
+                    Span::styled(" <w> ▶ ", Style::default().fg(t.accent_primary).bold()),
                 ]);
 
                 Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(Color::Cyan))
+                    .border_style(Style::default().fg(t.border_accent))
                     .title_top(list_title)
                     .title_top(back_hint)
                     .title_bottom(pagination_instructions.alignment(Alignment::Center))
@@ -1132,7 +1145,8 @@ where
                                 manga_selected.manga.provider,
                                 self.picker.is_some(),
                                 loader_state,
-                            ),
+                            )
+                            .with_variants(&manga_selected.variants, manga_selected.selected_variant_idx),
                             preview_area,
                             buf,
                             &mut self.manga_cover_state,
@@ -1147,6 +1161,7 @@ where
     }
 
     fn render_filters(&mut self, area: Rect, frame: &mut Frame<'_>) {
+        let t = theme();
         let buf = frame.buffer_mut();
         let popup_area = centered_rect(area, 80, 70);
 
@@ -1164,7 +1179,7 @@ where
 
         Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Magenta))
+            .border_style(Style::default().fg(t.accent_secondary))
             .title(filter_instructions)
             .render(popup_area, buf);
 
@@ -1369,6 +1384,7 @@ where
         self.mangas_found_list.next_page = false;
         self.all_providers_results.clear();
         self.all_providers_unfiltered_results.clear();
+        self.all_providers_groups.clear();
     }
 
     fn get_current_manga_selected_mut(&mut self) -> Option<&mut MangaItem> {
@@ -1405,7 +1421,7 @@ where
                 id: &item.manga.id,
                 title: &item.manga.title,
                 img_url: Some(&item.manga.cover_img_url),
-                provider: item.manga.provider.unwrap_or_else(|| self.manga_provider.name()),
+                provider: item.manga.provider.unwrap_or(self.active_provider),
             });
 
             match plan_to_read_operation {
@@ -1419,30 +1435,44 @@ where
 
     fn search_manga_page(&mut self) {
         let manga_selected = self.get_current_manga_selected();
-        if let Some(manga) = manga_selected {
+        if let Some(manga_item) = manga_selected {
             let client = Arc::clone(&self.manga_provider);
-            let id = manga.manga.id.clone();
-            let provider = manga.manga.provider;
+            let active_provider = self.active_provider;
+            let mut candidates = vec![manga_item.manga.clone()];
+            for v in &manga_item.variants {
+                if v.provider != manga_item.manga.provider || v.id != manga_item.manga.id {
+                    candidates.push(v.clone());
+                }
+            }
             let tx = self.local_event_tx.clone();
             self.tasks.spawn(async move {
-                let response = match provider {
-                    Some(p) => crate::backend::multi_provider::get_manga_by_id_for_provider(p, &id)
-                        .await
-                        .map_err(|e| e.to_string()),
-                    None => client.get_manga_by_id(&id).await.map_err(|e| e.to_string()),
-                };
-                match response {
-                    Ok(mut res) => {
-                        if res.provider.is_none() {
-                            res.provider = provider;
-                        }
-                        tx.send(SearchPageEvents::GoToMangaPage(Box::new(res))).ok();
-                    },
-                    Err(e) => {
-                        tx.send(SearchPageEvents::FailedGoToMangaPage(e.clone())).ok();
-                        write_to_error_log(e.into());
-                    },
+                let mut last_err = String::from("No manga candidates available");
+                for candidate in candidates {
+                    let id = candidate.id.clone();
+                    let provider = candidate.provider;
+                    let effective_provider = provider.unwrap_or(active_provider);
+                    let response = if provider.is_some() || effective_provider != client.name() {
+                        crate::backend::multi_provider::get_manga_by_id_for_provider(effective_provider, &id)
+                            .await
+                            .map_err(|e| e.to_string())
+                    } else {
+                        client.get_manga_by_id(&id).await.map_err(|e| e.to_string())
+                    };
+                    match response {
+                        Ok(mut res) => {
+                            if res.provider.is_none() {
+                                res.provider = Some(effective_provider);
+                            }
+                            tx.send(SearchPageEvents::GoToMangaPage(Box::new(res))).ok();
+                            return;
+                        },
+                        Err(e) => {
+                            last_err = e;
+                        },
+                    }
                 }
+                tx.send(SearchPageEvents::FailedGoToMangaPage(last_err.clone())).ok();
+                write_to_error_log(last_err.into());
             });
         }
     }
@@ -1516,6 +1546,9 @@ where
                 },
                 KeyCode::Char('p') => {
                     self.local_action_tx.send(SearchPageActions::PlanToRead).ok();
+                },
+                KeyCode::Char('P') => {
+                    self.local_action_tx.send(SearchPageActions::SwitchProvider).ok();
                 },
                 KeyCode::Char('b') => {
                     self.local_action_tx.send(SearchPageActions::PreviousPage).ok();
@@ -1595,20 +1628,74 @@ where
         }
     }
 
+    fn rebuild_all_providers_groups(&mut self) {
+        let filtered: Vec<SearchManga> = self
+            .all_providers_unfiltered_results
+            .iter()
+            .filter(|m| self.language_filter.matches_provider(m.provider))
+            .cloned()
+            .collect();
+        let groups = crate::backend::multi_provider::group_search_results(
+            filtered,
+            self.search_bar.value(),
+            self.language_filter.to_multi_search_language(),
+        );
+        self.all_providers_results = groups.iter().map(|g| g.selected_manga().clone()).collect();
+        self.all_providers_groups = groups;
+        self.mangas_found_list.pagination.total_items = self.all_providers_results.len() as u32;
+        self.mangas_found_list.pagination.current_page = 1;
+        self.load_all_providers_page();
+        self.state = if self.all_providers_results.is_empty() { PageState::NotFound } else { PageState::DisplayingMangasFound };
+    }
+
+    pub fn switch_selected_manga_provider(&mut self) {
+        if self.state != PageState::DisplayingMangasFound {
+            return;
+        }
+        let Some(selected_idx) = self.mangas_found_list.state.selected else {
+            return;
+        };
+        let global_idx = self.mangas_found_list.pagination.index_to_slice_from() + selected_idx;
+        let Some(item) = self.mangas_found_list.widget.mangas.get_mut(selected_idx) else {
+            return;
+        };
+        if !item.cycle_provider() {
+            return;
+        }
+        let new_manga = item.manga.clone();
+        let new_variant_idx = item.selected_variant_idx;
+
+        if let Some(group) = self.all_providers_groups.get_mut(global_idx) {
+            group.selected_idx = new_variant_idx;
+        }
+        if let Some(slot) = self.all_providers_results.get_mut(global_idx) {
+            *slot = new_manga.clone();
+        }
+
+        if self.picker.is_some() && !self.manga_cover_state.has_image(&new_manga.id) {
+            let cover = new_manga.cover_img_url.clone();
+            let id = new_manga.id.clone();
+            let provider = new_manga.provider;
+            let tx = self.local_event_tx.clone();
+            let client = Arc::clone(&self.manga_provider);
+            self.tasks.spawn(async move {
+                let response = match provider {
+                    Some(p) => crate::backend::multi_provider::get_image_for_provider(p, &cover)
+                        .await
+                        .map_err(|e| e as Box<dyn std::error::Error>),
+                    None => client.get_image(&cover).await,
+                };
+                if let Ok(res) = response {
+                    tx.send(SearchPageEvents::LoadCover(Some(res), id)).ok();
+                }
+            });
+        }
+    }
+
     fn toggle_language_filter(&mut self) {
         self.language_filter = self.language_filter.next();
         if self.search_scope == SearchScope::AllProviders && !self.all_providers_unfiltered_results.is_empty() {
-            let filtered: Vec<SearchManga> = self
-                .all_providers_unfiltered_results
-                .iter()
-                .filter(|m| self.language_filter.matches_provider(m.provider))
-                .cloned()
-                .collect();
-            self.all_providers_results = filtered;
-            self.mangas_found_list.pagination.total_items = self.all_providers_results.len() as u32;
-            self.mangas_found_list.pagination.current_page = 1;
-            self.load_all_providers_page();
-            self.state = if self.all_providers_results.is_empty() { PageState::NotFound } else { PageState::DisplayingMangasFound };
+            self.rebuild_all_providers_groups();
         }
     }
 
@@ -1709,6 +1796,7 @@ where
         let search_term = SearchTerm::trimmed_lowercased(self.search_bar.value());
         let filters = self.filter_state.get_state().clone();
         let client = Arc::clone(&self.manga_provider);
+        let active_provider = self.active_provider;
         let scope = self.search_scope;
         let lang = self.language_filter.to_multi_search_language();
 
@@ -1730,7 +1818,18 @@ where
                     tx.send(SearchPageEvents::LoadMangasFound(Some(response))).ok();
                 },
                 SearchScope::CurrentProvider => {
-                    let response = client.search_mangas(search_term, filters, page).await;
+                    let response = if active_provider != client.name() {
+                        crate::backend::multi_provider::search_mangas_for_provider(active_provider, search_term, page)
+                            .await
+                            .map(|mut res| {
+                                for m in &mut res.mangas {
+                                    m.provider = Some(active_provider);
+                                }
+                                res
+                            })
+                    } else {
+                        client.search_mangas(search_term, filters, page).await
+                    };
                     match response {
                         Ok(res) => {
                             tx.send(SearchPageEvents::LoadMangasFound(Some(res))).ok();
@@ -1781,15 +1880,15 @@ where
     }
 
     fn load_all_providers_page(&mut self) {
-        let total = self.all_providers_results.len();
+        let total = self.all_providers_groups.len();
         let from = self.mangas_found_list.pagination.index_to_slice_from();
         let to = self.mangas_found_list.pagination.to_index(total);
 
-        let slice = if from < total { self.all_providers_results[from..to].to_vec() } else { vec![] };
+        let slice = if from < total { self.all_providers_groups[from..to].to_vec() } else { vec![] };
 
         self.abort_tasks();
         self.manga_cover_state = ImageState::default();
-        self.mangas_found_list.widget = ListMangasFoundWidget::from_response(slice.clone());
+        self.mangas_found_list.widget = ListMangasFoundWidget::from_grouped_response(slice.clone());
         if !slice.is_empty() {
             self.mangas_found_list.state.select(Some(0));
         } else {
@@ -1807,24 +1906,16 @@ where
                     self.mangas_found_list.pagination.total_items = 0;
                     self.all_providers_results.clear();
                     self.all_providers_unfiltered_results.clear();
+                    self.all_providers_groups.clear();
                     return;
                 }
                 if self.search_scope == SearchScope::AllProviders {
-                    self.all_providers_unfiltered_results = response.mangas.clone();
-                    let filtered: Vec<SearchManga> = response
-                        .mangas
-                        .into_iter()
-                        .filter(|m| self.language_filter.matches_provider(m.provider))
-                        .collect();
-                    self.all_providers_results = filtered;
-                    self.mangas_found_list.pagination.total_items = self.all_providers_results.len() as u32;
-                    self.mangas_found_list.pagination.current_page = 1;
-                    self.load_all_providers_page();
-                    self.state =
-                        if self.all_providers_results.is_empty() { PageState::NotFound } else { PageState::DisplayingMangasFound };
+                    self.all_providers_unfiltered_results = response.mangas;
+                    self.rebuild_all_providers_groups();
                 } else {
                     self.all_providers_results.clear();
                     self.all_providers_unfiltered_results.clear();
+                    self.all_providers_groups.clear();
                     self.mangas_found_list.pagination.total_items = response.total_mangas;
                     self.mangas_found_list.state.select(Some(0));
                     self.mangas_found_list.widget = ListMangasFoundWidget::from_response(response.mangas);
@@ -1838,6 +1929,7 @@ where
                 self.mangas_found_list.pagination.total_items = 0;
                 self.all_providers_results.clear();
                 self.all_providers_unfiltered_results.clear();
+                self.all_providers_groups.clear();
             },
         }
     }
@@ -1859,10 +1951,12 @@ where
 
         let tx = self.local_event_tx.clone();
         let client = Arc::clone(&self.manga_provider);
+        let active_provider = self.active_provider;
 
         self.tasks.spawn(async move {
             for (cover, id, provider) in cover_items {
-                let response = match provider {
+                let target_provider = provider.or(if active_provider != client.name() { Some(active_provider) } else { None });
+                let response = match target_provider {
                     Some(p) => crate::backend::multi_provider::get_image_for_provider(p, &cover)
                         .await
                         .map_err(|e| e as Box<dyn std::error::Error>),
@@ -2592,5 +2686,98 @@ mod test {
         });
         assert_eq!(search_page.discovery_row[0], 17);
         assert_eq!(search_page.local_action_rx.try_recv().unwrap(), SearchPageActions::SearchMangaPage);
+    }
+
+    #[tokio::test]
+    async fn test_multi_provider_smart_grouping_badges_and_shift_p_switch() {
+        use ratatui::buffer::Buffer;
+
+        use super::*;
+        use crate::backend::manga_provider::MangaProviders;
+        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
+        use crate::global::test_utils::TrackerTest;
+        use crate::view::widgets::press_key;
+
+        let mut search_page: SearchPage<MockMangaPageProvider, TrackerTest> = SearchPage::new(
+            None,
+            MockMangaPageProvider::new().into(),
+            None,
+            MockFiltersHandler::new(MockFilterState {}),
+            MockWidgetFilter {},
+            Pagination::from_first_page(20),
+        );
+
+        search_page.search_scope = SearchScope::AllProviders;
+        search_page.search_bar = Input::default().with_value("Berserk".to_string());
+
+        let raw_results = vec![
+            SearchManga {
+                id: "md_berserk".to_string(),
+                title: "Berserk".to_string(),
+                description: Some("Dark fantasy masterpiece.".to_string()),
+                provider: Some(MangaProviders::Mangadex),
+                ..Default::default()
+            },
+            SearchManga {
+                id: "oni_berserk".to_string(),
+                title: "BERSERK".to_string(),
+                description: None,
+                provider: Some(MangaProviders::Mangaoni),
+                ..Default::default()
+            },
+            SearchManga {
+                id: "inm_berserk".to_string(),
+                title: "Berserk".to_string(),
+                description: None,
+                provider: Some(MangaProviders::Inmanga),
+                ..Default::default()
+            },
+        ];
+
+        search_page.load_mangas_found(Some(GetMangasResponse {
+            mangas: raw_results,
+            total_mangas: 3,
+            next_page: false,
+        }));
+
+        // All 3 results of "Berserk" are grouped into 1 card
+        assert_eq!(search_page.all_providers_groups.len(), 1);
+        assert_eq!(search_page.all_providers_results.len(), 1);
+        assert_eq!(search_page.mangas_found_list.widget.mangas.len(), 1);
+
+        let card = &search_page.mangas_found_list.widget.mangas[0];
+        assert_eq!(card.available_providers(), vec![MangaProviders::Inmanga, MangaProviders::Mangaoni, MangaProviders::Mangadex,]);
+        // Automatically picks best provider (InManga) and enriches description from MangaDex
+        assert_eq!(card.manga.provider, Some(MangaProviders::Inmanga));
+        assert_eq!(card.manga.id, "inm_berserk");
+        assert_eq!(card.manga.description.as_deref(), Some("Dark fantasy masterpiece."));
+
+        // Render card into buffer and verify all badges [InManga] [MangaOni] [MangaDex] are shown
+        let area = Rect::new(0, 0, 60, 2);
+        let mut buf = Buffer::empty(area);
+        card.clone().render(area, &mut buf);
+        let rendered: String = buf.content().iter().map(|c| c.symbol()).collect();
+        assert!(rendered.contains("[InManga]"), "Expected [InManga] badge in: {rendered}");
+        assert!(rendered.contains("[MangaOni]"), "Expected [MangaOni] badge in: {rendered}");
+        assert!(rendered.contains("[MangaDex]"), "Expected [MangaDex] badge in: {rendered}");
+
+        // Press Shift+P ('P') -> cycles active provider to MangaOni, then MangaDex, then back to InManga
+        press_key(&mut search_page, KeyCode::Char('P'));
+        let action = search_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(action, SearchPageActions::SwitchProvider);
+        search_page.update(action);
+        assert_eq!(search_page.mangas_found_list.widget.mangas[0].manga.provider, Some(MangaProviders::Mangaoni));
+        assert_eq!(search_page.mangas_found_list.widget.mangas[0].manga.id, "oni_berserk");
+
+        press_key(&mut search_page, KeyCode::Char('P'));
+        let action = search_page.local_action_rx.try_recv().unwrap();
+        search_page.update(action);
+        assert_eq!(search_page.mangas_found_list.widget.mangas[0].manga.provider, Some(MangaProviders::Mangadex));
+        assert_eq!(search_page.mangas_found_list.widget.mangas[0].manga.id, "md_berserk");
+
+        press_key(&mut search_page, KeyCode::Char('P'));
+        let action = search_page.local_action_rx.try_recv().unwrap();
+        search_page.update(action);
+        assert_eq!(search_page.mangas_found_list.widget.mangas[0].manga.provider, Some(MangaProviders::Inmanga));
     }
 }

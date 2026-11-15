@@ -30,6 +30,10 @@ impl ImageState {
         self.image_state.get_mut(id)
     }
 
+    pub fn has_image(&self, id: &str) -> bool {
+        self.image_state.contains_key(id)
+    }
+
     pub fn is_empty(&self) -> bool {
         self.image_state.is_empty()
     }

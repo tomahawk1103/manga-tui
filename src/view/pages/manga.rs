@@ -87,6 +87,7 @@ pub enum MangaPageActions {
     ScrollChapterUp,
     ToggleOrder,
     ReadChapter,
+    OpenInWebViewer,
     ToggleAvailableLanguagesList,
     ScrollDownAvailbleLanguages,
     ScrollUpAvailbleLanguages,
@@ -124,6 +125,7 @@ pub enum MangaPageEvents {
     ReadError(String),
 
     ReadSuccesful(ChapterToRead, ListOfChapters),
+    OpenWebViewerSuccesful(ChapterToRead, ListOfChapters),
     LoadChapters(Option<GetChaptersResponse>),
     TrackingFailed(String),
     LoadAlternativeProviders(Vec<SearchManga>),
@@ -150,7 +152,7 @@ where
     tasks: JoinSet<()>,
     picker: Option<Picker>,
     available_languages_state: ListState,
-    is_list_languages_open: bool,
+    pub is_list_languages_open: bool,
     pub is_provider_switcher_open: bool,
     pub is_searching_alternatives: bool,
     pub alternative_providers: Vec<SearchManga>,
@@ -253,6 +255,25 @@ where
     pub fn with_manga_tracker(mut self, tracker: Option<S>) -> Self {
         self.manga_tracker = tracker;
         self
+    }
+
+    pub fn apply_preferred_language(&mut self, preferred: Languages) {
+        let resolved = self.manga.languages.iter().find(|lang| **lang == preferred).copied().or_else(|| {
+            if preferred == Languages::Spanish {
+                self.manga.languages.iter().find(|lang| **lang == Languages::SpanishLa).copied()
+            } else if preferred == Languages::SpanishLa {
+                self.manga.languages.iter().find(|lang| **lang == Languages::Spanish).copied()
+            } else {
+                None
+            }
+        });
+        if let Some(new_lang) = resolved
+            && self.chapter_filters.language != new_lang
+        {
+            self.chapters = None;
+            self.chapter_filters.language = new_lang;
+            self.search_chapters();
+        }
     }
 
     fn render_cover(&mut self, area: Rect, buf: &mut Buffer) {
@@ -416,6 +437,8 @@ where
                     chapter_instructions.push(" Bookmark ".into());
                     chapter_instructions.push(Span::raw("<Tab>").style(*INSTRUCTIONS_STYLE));
                 }
+                chapter_instructions.push(crate::i18n::tr(" Visor Web ", " Web View ").into());
+                chapter_instructions.push(Span::raw("<v>").style(*INSTRUCTIONS_STYLE));
 
                 let mut bottom_instructions: Vec<Span<'_>> = vec![page.into(), " | ".into(), total.into()];
                 if selected_count > 0 {
@@ -427,7 +450,7 @@ where
                     " Prev ".into(),
                     "<b>".to_span().style(*INSTRUCTIONS_STYLE),
                     " Toggle all ".into(),
-                    "<v>".to_span().style(*INSTRUCTIONS_STYLE),
+                    "<V>".to_span().style(*INSTRUCTIONS_STYLE),
                 ]);
                 if !self.bookmark_state.auto_bookmark {
                     bottom_instructions.push(" Bookmark ".into());
@@ -669,6 +692,9 @@ where
                         self.local_action_tx.send(MangaPageActions::ToggleSelectChapter).ok();
                     },
                     KeyCode::Char('v') => {
+                        self.local_action_tx.send(MangaPageActions::OpenInWebViewer).ok();
+                    },
+                    KeyCode::Char('V') => {
                         self.local_action_tx.send(MangaPageActions::ToggleSelectAllCurrentPage).ok();
                     },
                     KeyCode::Char('c') => {
@@ -836,7 +862,7 @@ where
             let lang = self.get_current_selected_language();
             let tx = self.local_event_tx.clone();
             let client = Arc::clone(&self.manga_provider);
-            let config = MangaTuiConfig::get();
+            let config = MangaTuiConfig::get().effective();
 
             self.tasks.spawn(download_selected_chapters(DownloadSelectedChapters {
                 client,
@@ -845,7 +871,7 @@ where
                 manga_title,
                 lang,
                 chapters: chapters_to_download,
-                config: config.clone(),
+                config,
                 tx,
             }));
         }
@@ -938,6 +964,72 @@ where
                             write_to_error_log(error_log::ErrorType::Error(
                                 format!("cannot read chapter with id {id_chapter} of manga with id {manga_id}, more details : {e}")
                                     .into(),
+                            ));
+                            local_tx.send(MangaPageEvents::ReadError(id_chapter)).ok();
+                        },
+                    }
+                });
+            },
+            None => self.state = PageState::DisplayingChapters,
+        }
+    }
+
+    fn open_chapter_in_web_viewer(&mut self) {
+        self.state = PageState::SearchingChapterData;
+        let chapter_opt = if let Some(chapter_selected) = self.get_current_selected_chapter_mut() {
+            chapter_selected.set_normal_state();
+            Some(chapter_selected.chapter.clone())
+        } else {
+            None
+        };
+
+        match chapter_opt {
+            Some(chapter_clone) => {
+                let id_chapter = chapter_clone.id.clone();
+                let manga_id = self.manga.id.clone();
+                let manga_title = self.manga.title.clone();
+                let local_tx = self.local_event_tx.clone();
+                let client = Arc::clone(&self.manga_provider);
+                let provider = self.manga.provider;
+
+                tokio::spawn(async move {
+                    let search_chapter_response = match provider {
+                        Some(p) => crate::backend::multi_provider::read_chapter_for_provider(p, &id_chapter, &manga_id).await,
+                        None => client.read_chapter(&id_chapter, &manga_id).await,
+                    };
+
+                    match search_chapter_response {
+                        Ok((chapter, manga_to_read)) => {
+                            local_tx.send(MangaPageEvents::OpenWebViewerSuccesful(chapter, manga_to_read)).ok();
+                        },
+                        Err(e) => {
+                            if let Some(source) = crate::view::pages::reader::LocalChapterSource::find(&manga_title, &id_chapter) {
+                                let page_count = source.page_count();
+                                if page_count > 0 {
+                                    let num = chapter_clone.chapter_number.parse::<f64>().unwrap_or(0.0);
+                                    let dummy_urls = (0..page_count)
+                                        .filter_map(|i| reqwest::Url::parse(&format!("http://localhost/local/{}", i)).ok())
+                                        .collect();
+                                    let chapter_to_read = ChapterToRead {
+                                        id: id_chapter.clone(),
+                                        title: chapter_clone.title.clone(),
+                                        number: num,
+                                        volume_number: chapter_clone.volume_number.clone(),
+                                        language: chapter_clone.language,
+                                        pages_url: dummy_urls,
+                                        num_page_bookmarked: None,
+                                    };
+                                    local_tx
+                                        .send(MangaPageEvents::OpenWebViewerSuccesful(chapter_to_read, Default::default()))
+                                        .ok();
+                                    return;
+                                }
+                            }
+                            write_to_error_log(error_log::ErrorType::Error(
+                                format!(
+                                    "cannot open chapter in web viewer with id {id_chapter} of manga with id {manga_id}, more details : {e}"
+                                )
+                                .into(),
                             ));
                             local_tx.send(MangaPageEvents::ReadError(id_chapter)).ok();
                         },
@@ -1275,7 +1367,7 @@ where
             let tx = self.local_event_tx.clone();
             let client = Arc::clone(&self.manga_provider);
             let manga_tracker = self.manga_tracker.clone();
-            let config = MangaTuiConfig::get();
+            let config = MangaTuiConfig::get().effective();
             self.state = PageState::DownloadingChapters;
 
             tokio::spawn(download_single_chapter(DownloadSingleChapter {
@@ -1285,7 +1377,7 @@ where
                 manga_id_safe_for_download: id_safe_for_download,
                 manga_title,
                 chapter,
-                config: config.clone(),
+                config,
                 tx,
             }));
         }
@@ -1434,14 +1526,14 @@ where
             let lang = self.get_current_selected_language();
             let tx = self.local_event_tx.clone();
             let client = Arc::clone(&self.manga_provider);
-            let config = MangaTuiConfig::get();
+            let config = MangaTuiConfig::get().effective();
             self.tasks.spawn(download_all_chapters(DownloadAllChapters {
                 client,
                 manga_id,
                 manga_id_safe_for_download,
                 manga_title,
                 lang,
-                config: config.clone(),
+                config,
                 tx,
             }));
         }
@@ -1659,6 +1751,30 @@ where
                         }))
                         .ok();
                 },
+                MangaPageEvents::OpenWebViewerSuccesful(chapter_to_read, list) => {
+                    self.state = PageState::DisplayingChapters;
+                    let volume = chapter_to_read.clone().volume_number.and_then(|vol| vol.parse::<u32>().ok());
+                    self.mark_chapter_as_read_in_db(&chapter_to_read);
+                    self.track_manga(self.manga_tracker.clone(), self.manga.title.clone(), chapter_to_read.number as u32, volume);
+                    self.local_event_tx.send(MangaPageEvents::CheckChapterStatus).ok();
+
+                    let local_source = crate::view::pages::reader::LocalChapterSource::find(&self.manga.title, &chapter_to_read.id);
+                    let session = crate::backend::web_viewer::WebViewerSession {
+                        manga_id: self.manga.id.clone(),
+                        manga_title: self.manga.title.clone(),
+                        manga_cover_url: Some(self.manga.cover_img_url.clone()),
+                        provider: self.manga.provider.unwrap_or_else(|| self.manga_provider.name()),
+                        chapter: chapter_to_read,
+                        list_of_chapters: list,
+                        local_source,
+                    };
+
+                    tokio::spawn(async move {
+                        if let Err(e) = crate::backend::web_viewer::open_chapter_in_browser(session).await {
+                            write_to_error_log(error_log::ErrorType::String(&e));
+                        }
+                    });
+                },
             }
         }
     }
@@ -1747,6 +1863,11 @@ where
             MangaPageActions::ReadChapter => {
                 if self.state != PageState::SearchingChapterData {
                     self.read_chapter();
+                }
+            },
+            MangaPageActions::OpenInWebViewer => {
+                if self.state != PageState::SearchingChapterData {
+                    self.open_chapter_in_web_viewer();
                 }
             },
             MangaPageActions::ToggleFavorite => self.toggle_favorite(),
@@ -2403,8 +2524,13 @@ mod test {
         let action = manga_page.local_action_rx.recv().await.unwrap();
         assert_eq!(MangaPageActions::ToggleSelectChapter, action);
 
-        // Press v -> ToggleSelectAllCurrentPage
+        // Press v -> OpenInWebViewer
         press_key(&mut manga_page, KeyCode::Char('v'));
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(MangaPageActions::OpenInWebViewer, action);
+
+        // Press V -> ToggleSelectAllCurrentPage
+        press_key(&mut manga_page, KeyCode::Char('V'));
         let action = manga_page.local_action_rx.recv().await.unwrap();
         assert_eq!(MangaPageActions::ToggleSelectAllCurrentPage, action);
 

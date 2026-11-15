@@ -282,9 +282,12 @@ impl CliArgs {
                                 exit(0)
                             }
 
-                            PREFERRED_LANGUAGE.set(try_lang.unwrap()).ok();
+                            let resolved = try_lang.unwrap();
+                            crate::view::widgets::settings::set_active_chapter_language(resolved);
+                            PREFERRED_LANGUAGE.set(resolved).ok();
                         },
                         None => {
+                            crate::view::widgets::settings::set_active_chapter_language(preferred_lang_to_set);
                             PREFERRED_LANGUAGE.set(preferred_lang_to_set).ok();
                         },
                     }
@@ -312,6 +315,7 @@ impl CliArgs {
                 },
             },
             None => {
+                crate::view::widgets::settings::set_active_chapter_language(preferred_lang_to_set);
                 PREFERRED_LANGUAGE.set(preferred_lang_to_set).ok();
                 Ok(())
             },

@@ -23,6 +23,7 @@ pub mod release_notifier;
 pub mod secrets;
 pub mod tracker;
 pub mod tui;
+pub mod web_viewer;
 
 #[derive(Display, EnumIter, Clone, Copy, PartialEq, Eq, Debug)]
 pub enum AppDirectories {
