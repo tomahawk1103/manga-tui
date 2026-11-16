@@ -210,53 +210,92 @@ impl<'a> NewChaptersModal<'a> {
     }
 }
 
+fn centered_modal_rect(area: Rect, width: u16, height: u16) -> Rect {
+    let w = width.min(area.width).max(1);
+    let h = height.min(area.height).max(1);
+    let x = area.x + area.width.saturating_sub(w) / 2;
+    let y = area.y + area.height.saturating_sub(h) / 2;
+    Rect::new(x, y, w, h)
+}
+
 impl<'a> Widget for NewChaptersModal<'a> {
     fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer)
     where
         Self: Sized,
     {
-        let area = centered_rect(area, 75, 65);
-        Clear.render(area, buf);
+        let t = theme();
+        let target_width = (area.width.saturating_mul(68) / 100).clamp(52.min(area.width), area.width.saturating_sub(4).max(1));
 
         if let Some(status) = &self.state.status_message {
-            let block = Block::bordered()
-                .title(Line::from(vec![Span::styled(" New chapters ", Style::default().add_modifier(Modifier::BOLD))]))
-                .title_bottom(Line::from(vec![Span::styled(
-                    " Press <q> or <Esc> to close ",
-                    Style::default().add_modifier(Modifier::ITALIC),
-                )]));
-            let inner = block.inner(area);
-            block.render(area, buf);
-            Paragraph::new(status.as_str()).wrap(Wrap { trim: true }).render(inner, buf);
+            let modal_area = centered_modal_rect(area, target_width, 9);
+            Clear.render(modal_area, buf);
+
+            let block = t
+                .rounded_accent_block()
+                .title(Line::from(vec![Span::styled(
+                    tr(" ★ Nuevos capítulos ", " ★ New chapters "),
+                    Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD),
+                )]))
+                .title_bottom(
+                    Line::from(vec![Span::styled(
+                        tr(" Pulsa <q> o <Esc> para cerrar ", " Press <q> or <Esc> to close "),
+                        Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD),
+                    )])
+                    .alignment(Alignment::Center),
+                );
+            let inner = block.inner(modal_area).inner(Margin {
+                horizontal: 2,
+                vertical: 1,
+            });
+            block.render(modal_area, buf);
+            Paragraph::new(status.as_str())
+                .style(Style::default().fg(t.status_success).add_modifier(Modifier::BOLD))
+                .wrap(Wrap { trim: true })
+                .render(inner, buf);
             return;
         }
 
         let selected_count = self.state.items.iter().filter(|i| i.selected).count();
         let total_count = self.state.items.len();
 
-        let block = Block::bordered()
-            .title(Line::from(vec![Span::styled(
-                format!(" New chapters available ({}/{}) ", selected_count, total_count),
-                Style::default().add_modifier(Modifier::BOLD),
-            )]))
-            .title_bottom(Line::from(vec![Span::styled(
-                " <j/k> Navigate | <Space> Toggle | <a> All | <y>/<d> Download | <q> Close ",
-                Style::default().fg(Color::Yellow),
-            )]));
+        let max_modal_height = (area.height.saturating_mul(65) / 100).max(10);
+        let desired_height = (total_count as u16).saturating_add(7).clamp(10, max_modal_height);
+        let modal_area = centered_modal_rect(area, target_width, desired_height);
+        Clear.render(modal_area, buf);
 
-        let inner = area.inner(Margin {
+        let title = if crate::i18n::is_es() {
+            format!(" ★ Nuevos capítulos disponibles ({selected_count}/{total_count}) ")
+        } else {
+            format!(" ★ New chapters available ({selected_count}/{total_count}) ")
+        };
+
+        let block = t
+            .rounded_accent_block()
+            .title(Line::from(vec![Span::styled(title, Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD))]))
+            .title_bottom(
+                Line::from(vec![Span::styled(
+                    tr(
+                        " <j/k> Mover | <Espacio> Marcar | <a> Todos | <y/d> Descargar | <q> Cerrar ",
+                        " <j/k> Move | <Space> Toggle | <a> All | <y/d> Download | <q> Close ",
+                    ),
+                    Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD),
+                )])
+                .alignment(Alignment::Center),
+            );
+
+        let inner = block.inner(modal_area).inner(Margin {
             horizontal: 2,
             vertical: 1,
         });
-        block.render(area, buf);
+        block.render(modal_area, buf);
 
         if inner.height < 3 || inner.width < 10 {
             return;
         }
 
         let header = Line::from(vec![Span::styled(
-            crate::i18n::tr("Selecciona mangas para descargar nuevos capítulos:", "Select manga to download new chapters:"),
-            Style::default().add_modifier(Modifier::BOLD),
+            tr("Selecciona mangas para descargar nuevos capítulos:", "Select manga to download new chapters:"),
+            Style::default().fg(t.text_secondary).add_modifier(Modifier::BOLD),
         )]);
 
         let max_items_visible = (inner.height.saturating_sub(2)) as usize;
@@ -272,39 +311,49 @@ impl<'a> Widget for NewChaptersModal<'a> {
         for (idx, item) in self.state.items.iter().enumerate().skip(scroll).take(max_items_visible) {
             let is_focused = idx == cursor;
             let cursor_span = if is_focused {
-                Span::styled("> ", Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD))
+                Span::styled("▸ ", Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD))
             } else {
                 Span::raw("  ")
             };
 
             let check_span = if item.selected {
-                Span::styled("[✓] ", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD))
+                Span::styled("[✓] ", Style::default().fg(t.status_success).add_modifier(Modifier::BOLD))
             } else {
-                Span::styled("[ ] ", Style::default().fg(Color::DarkGray))
+                Span::styled("[ ] ", Style::default().fg(t.text_dim))
             };
 
             let title_style = if is_focused {
                 if item.selected {
-                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+                    Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default().fg(Color::DarkGray).add_modifier(Modifier::BOLD)
+                    Style::default().fg(t.text_muted).add_modifier(Modifier::BOLD)
                 }
             } else if item.selected {
-                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                Style::default().fg(t.text_primary).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(t.text_dim)
             };
 
-            let ch_style = if item.selected { Style::default().fg(Color::Yellow) } else { Style::default().fg(Color::DarkGray) };
+            let ch_style = if item.selected { Style::default().fg(t.accent_highlight) } else { Style::default().fg(t.text_dim) };
 
-            let status_extra = if !item.selected { " (skipped)" } else { "" };
-
-            lines.push(Line::from(vec![
+            let mut spans = vec![
                 cursor_span,
                 check_span,
                 Span::styled(item.manga_title.as_str(), title_style),
-                Span::styled(format!(": Ch. {}{}", item.chapter_numbers, status_extra), ch_style),
-            ]));
+                Span::styled(format!(": {} {}", tr("Cap.", "Ch."), item.chapter_numbers), ch_style),
+            ];
+            if !item.selected {
+                spans.push(Span::styled(
+                    tr(" (omitido)", " (skipped)"),
+                    Style::default().fg(t.text_muted).add_modifier(Modifier::ITALIC),
+                ));
+            }
+
+            let mut line = Line::from(spans);
+            if is_focused {
+                line = line.style(Style::default().bg(t.row_selected_bg));
+            }
+            lines.push(line);
         }
 
         Paragraph::new(lines).render(inner, buf);
@@ -533,4 +582,52 @@ impl Widget for HelpModal {
 // Use in testing
 pub fn press_key<T>(page: &mut dyn Component<Actions = T>, key: KeyCode) {
     page.handle_events(Events::Key(key.into()));
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::buffer::Buffer;
+
+    use super::*;
+
+    #[test]
+    fn new_chapters_modal_uses_rounded_themed_border_and_compact_height() {
+        let state = NewChaptersModalState::new(vec![NewChapterItem {
+            manga_id: "mieruko".into(),
+            manga_title: "Mieruko-chan".into(),
+            chapter_numbers: "74".into(),
+            chapters: vec![],
+            selected: true,
+        }]);
+        let area = Rect::new(0, 0, 120, 40);
+        let mut buf = Buffer::empty(area);
+
+        NewChaptersModal::new(&state).render(area, &mut buf);
+
+        let rendered: String = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains('╭'), "modal should use rounded borders");
+        assert!(rendered.contains('╰'), "modal should use rounded bottom borders");
+        assert!(rendered.contains("Mieruko-chan"));
+        assert!(rendered.contains("▸ [✓] Mieruko-chan"));
+
+        // Verify the modal is compact rather than spanning 65% height for 1 item
+        let top_border_y = (0..area.height)
+            .find(|&y| (0..area.width).any(|x| buf[(x, y)].symbol() == "╭"))
+            .expect("top border exists");
+        let bottom_border_y = (0..area.height)
+            .find(|&y| (0..area.width).any(|x| buf[(x, y)].symbol() == "╰"))
+            .expect("bottom border exists");
+        let modal_height = bottom_border_y - top_border_y + 1;
+        assert!(modal_height <= 12, "single-item modal should stay compact, got {modal_height}");
+
+        // Verify themed accent border color
+        let top_left_x = (0..area.width)
+            .find(|&x| buf[(x, top_border_y)].symbol() == "╭")
+            .expect("top-left corner");
+        assert_eq!(buf[(top_left_x, top_border_y)].fg, theme().border_accent);
+    }
 }
