@@ -5,15 +5,15 @@ use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
 use image::DynamicImage;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Style, Stylize};
-use ratatui::text::{Line, Span, ToSpan};
-use ratatui::widgets::{Block, Clear, List, ListState, Paragraph, StatefulWidget, Widget, Wrap};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Clear, List, ListState, Paragraph, StatefulWidget, Widget, Wrap};
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 use strum_macros::EnumIs;
-use throbber_widgets_tui::{Throbber, ThrobberState};
+use throbber_widgets_tui::ThrobberState;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinSet;
 
@@ -31,7 +31,8 @@ use crate::backend::tracker::{MangaTracker, track_manga};
 use crate::backend::tui::Events;
 use crate::common::format_error_message_tracking_reading_history;
 use crate::config::MangaTuiConfig;
-use crate::global::{ERROR_STYLE, INSTRUCTIONS_STYLE};
+use crate::i18n::tr;
+use crate::theme::theme;
 use crate::view::app::MangaToRead;
 use crate::view::tasks::manga::{
     DownloadAllChapters, DownloadSelectedChapters, DownloadSingleChapter, download_all_chapters, download_selected_chapters,
@@ -41,6 +42,7 @@ use crate::view::widgets::Component;
 use crate::view::widgets::manga::{
     ChapterItem, ChaptersListWidget, DownloadAllChaptersState, DownloadAllChaptersWidget, DownloadPhase,
 };
+use crate::view::widgets::search::{provider_pill_colors, status_pill_span};
 
 #[derive(Debug, PartialEq, Eq, Default)]
 pub enum BookmarkPhase {
@@ -277,226 +279,391 @@ where
     }
 
     fn render_cover(&mut self, area: Rect, buf: &mut Buffer) {
-        let [cover_area, more_details_area] =
-            Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(area);
-
-        match self.bookmark_state.phase {
-            BookmarkPhase::Found => {},
-            BookmarkPhase::NotSearching => {},
-            BookmarkPhase::SearchingFromApi => {
-                let loader = Throbber::default()
-                    .label("Searching chapter bookmarked".to_span().style(*INSTRUCTIONS_STYLE))
-                    .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
-                    .use_type(throbber_widgets_tui::WhichUse::Spin);
-
-                StatefulWidget::render(loader, more_details_area, buf, &mut self.bookmark_state.loader);
-            },
-            BookmarkPhase::FailedToFetch => {
-                Paragraph::new("Failed to get chapter please try again".to_span().style(*ERROR_STYLE))
-                    .wrap(Wrap { trim: true })
-                    .render(more_details_area, buf);
-            },
-            BookmarkPhase::NotFoundDatabase => {
-                Paragraph::new("There is no bookmarked chapter".to_span().style(Style::new().underlined()))
-                    .wrap(Wrap { trim: true })
-                    .render(more_details_area, buf);
-            },
-        };
-
-        self.cover_area = cover_area;
+        self.cover_area = area;
         match self.image_state.as_mut() {
             Some(state) => {
                 let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
                 let image = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
-                StatefulWidget::render(image, cover_area, buf, state);
+                StatefulWidget::render(image, area, buf, state);
             },
             None => {
-                Block::bordered().render(area, buf);
+                let t = theme();
+                let block = t.rounded_block().border_style(Style::default().fg(t.border_muted));
+                let inner = block.inner(area);
+                block.render(area, buf);
+                if inner.height >= 1 && inner.width >= 6 {
+                    let msg = if self.picker.is_some() {
+                        tr("⏳ Portada...", "⏳ Loading cover...")
+                    } else {
+                        tr("🖼 Sin portada", "🖼 No cover")
+                    };
+                    let y_offset = inner.height / 2;
+                    let text_area = Rect::new(inner.x, inner.y + y_offset, inner.width, 1);
+                    Paragraph::new(Span::styled(msg, Style::default().fg(t.text_dim)))
+                        .alignment(Alignment::Center)
+                        .render(text_area, buf);
+                }
             },
         }
     }
 
     fn render_manga_information(&mut self, area: Rect, frame: &mut Frame<'_>) {
+        let t = theme();
         let buf = frame.buffer_mut();
-
-        let layout = Layout::vertical([Constraint::Percentage(50), Constraint::Percentage(50)]);
-
-        let [manga_information_area, manga_chapters_area] = layout.areas(area);
-
-        let statistics = Span::raw(format!("Rating ⭐ {} ", self.manga.rating));
-
-        let authors = match &self.manga.author {
-            Some(author) => format!("Author : {} ", author.name),
-            None => String::new(),
-        };
-        let artist = match &self.manga.artist {
-            Some(artist) => format!("Artist : {} ", artist.name),
-            None => String::new(),
-        };
 
         let mut title_spans_vec = Vec::new();
         if self.is_favorite {
-            title_spans_vec.push(Span::styled("★ ", Style::default().fg(ratatui::style::Color::Yellow).bold()));
+            title_spans_vec.push(Span::styled(" ★ ", Style::default().fg(t.accent_highlight).bold()));
+        } else {
+            title_spans_vec.push(Span::styled(" 📖 ", Style::default().fg(t.accent_primary).bold()));
         }
         if let Some(provider) = self.manga.provider {
-            let color = match provider {
-                crate::backend::manga_provider::MangaProviders::Inmanga => ratatui::style::Color::Cyan,
-                crate::backend::manga_provider::MangaProviders::Mangaoni => ratatui::style::Color::LightRed,
-                crate::backend::manga_provider::MangaProviders::Leercapitulo => ratatui::style::Color::Green,
-                crate::backend::manga_provider::MangaProviders::Mangadex => ratatui::style::Color::Yellow,
-                crate::backend::manga_provider::MangaProviders::Weebcentral => ratatui::style::Color::Magenta,
-                crate::backend::manga_provider::MangaProviders::Mangapill => ratatui::style::Color::Blue,
-                crate::backend::manga_provider::MangaProviders::Comizy => ratatui::style::Color::LightYellow,
-            };
-            title_spans_vec.push(Span::styled(format!("[{}] ", provider.badge_with_health()), Style::default().fg(color).bold()));
+            let (fg, bg) = provider_pill_colors(provider);
+            title_spans_vec
+                .push(Span::styled(format!(" {} ", provider.badge_with_health()), Style::default().fg(fg).bg(bg).bold()));
+            title_spans_vec.push(Span::raw(" "));
         }
-        title_spans_vec.push(Span::raw(self.manga.title.clone()));
-        let title_spans = Line::from(title_spans_vec);
+        title_spans_vec.push(Span::styled(format!("{} ", self.manga.title), Style::default().fg(t.text_primary).bold()));
 
-        Block::bordered()
-            .title_top(title_spans)
-            .title_bottom(Line::from(vec![statistics, " ".into(), Span::raw(authors), Span::raw(artist)]))
-            .render(manga_information_area, buf);
+        let mut bottom_spans: Vec<Span<'_>> = Vec::new();
+        let rating = self.manga.rating.trim();
+        if !rating.is_empty() {
+            bottom_spans.push(Span::styled(format!(" ⭐ {rating} "), Style::default().fg(t.accent_highlight).bold()));
+        }
+        if let Some(author) = &self.manga.author {
+            if !author.name.trim().is_empty() {
+                bottom_spans.push(Span::styled(format!(" ✍ {} ", author.name), Style::default().fg(t.text_secondary)));
+            }
+        }
+        if let Some(artist) = &self.manga.artist {
+            let same_as_author = self.manga.author.as_ref().is_some_and(|a| a.name.eq_ignore_ascii_case(&artist.name));
+            if !artist.name.trim().is_empty() && !same_as_author {
+                bottom_spans.push(Span::styled(format!(" 🎨 {} ", artist.name), Style::default().fg(t.text_muted)));
+            }
+        }
+        if bottom_spans.is_empty() {
+            bottom_spans.push(Span::styled(
+                tr(" <r> Leer  |  <v> Visor Web HD  |  <f> Favorito ", " <r> Read  |  <v> Web Viewer HD  |  <f> Favorite "),
+                Style::default().fg(t.text_muted),
+            ));
+        }
 
-        self.render_details(manga_information_area, frame.buffer_mut());
+        let block = t
+            .rounded_accent_block()
+            .title_top(Line::from(title_spans_vec))
+            .title_bottom(Line::from(bottom_spans));
 
-        self.render_chapters_area(manga_chapters_area, frame.buffer_mut());
+        let inner = block.inner(area).inner(Margin {
+            horizontal: 2,
+            vertical: 1,
+        });
+        block.render(area, buf);
+
+        self.render_details(inner, buf);
     }
 
     fn render_details(&mut self, area: Rect, buf: &mut Buffer) {
-        let layout = Layout::vertical([Constraint::Percentage(20), Constraint::Percentage(80)]).margin(1);
-        let [tags_area, description_area] = layout.areas(area);
+        if area.height == 0 || area.width < 10 {
+            return;
+        }
+        let t = theme();
 
-        let [tags_area, status_area] =
-            Layout::horizontal([Constraint::Percentage(80), Constraint::Percentage(20)]).areas(tags_area);
+        let genres_height = if self.manga.genres.is_empty() || area.height <= 9 { 1 } else { 2 };
+        let show_desc_header = area.height >= 5;
+        let constraints = if show_desc_header {
+            vec![Constraint::Length(1), Constraint::Length(genres_height), Constraint::Length(1), Constraint::Min(1)]
+        } else {
+            vec![Constraint::Length(1), Constraint::Length(1), Constraint::Length(0), Constraint::Min(1)]
+        };
+        let [meta_area, genres_area, desc_header_area, description_area] = Layout::vertical(constraints).areas(area);
 
-        Paragraph::new(Line::from_iter(self.manga.genres.clone()))
-            .wrap(Wrap { trim: true })
-            .render(tags_area, buf);
+        // Row 1: status pill + languages pill + chapter count pill + favorite badge + bookmark phase
+        let mut meta_spans: Vec<Span<'_>> = vec![status_pill_span(self.manga.status), Span::raw(" ")];
 
-        Paragraph::new(Line::from(Span::from(self.manga.status)))
-            .wrap(Wrap { trim: true })
-            .render(status_area, buf);
+        if !self.manga.languages.is_empty() {
+            let flags: Vec<&str> = self.manga.languages.iter().take(5).map(|l| l.as_emoji()).collect();
+            let extra =
+                if self.manga.languages.len() > 5 { format!(" +{}", self.manga.languages.len() - 5) } else { String::new() };
+            meta_spans.push(Span::styled(
+                format!(" 🌐 {}{} ", flags.join(" "), extra),
+                Style::default().fg(t.text_secondary).bg(t.chip_bg),
+            ));
+            meta_spans.push(Span::raw(" "));
+        }
 
-        Paragraph::new(self.manga.description.clone())
+        if let Some(chapters) = &self.chapters {
+            meta_spans.push(Span::styled(
+                format!(" 📚 {} {} ", chapters.pagination.total_items, tr("caps.", "chs.")),
+                Style::default().fg(t.accent_primary).bg(t.chip_bg).bold(),
+            ));
+            meta_spans.push(Span::raw(" "));
+        }
+
+        if self.is_favorite {
+            meta_spans.push(Span::styled(
+                format!(" ★ {} ", tr("Favorito", "Favorite")),
+                Style::default().fg(t.accent_highlight).bg(t.title_chip_secondary_bg).bold(),
+            ));
+            meta_spans.push(Span::raw(" "));
+        }
+
+        Paragraph::new(Line::from(meta_spans)).render(meta_area, buf);
+
+        // Row 2: Genres
+        if self.manga.genres.is_empty() {
+            Paragraph::new(Line::from(vec![Span::styled(
+                tr("🏷 Sin etiquetas disponibles en este proveedor", "🏷 No genre tags provided by this source"),
+                Style::default().fg(t.text_dim).italic(),
+            )]))
+            .render(genres_area, buf);
+        } else {
+            let mut genre_spans: Vec<Span<'_>> =
+                vec![Span::styled(format!("🏷 {} ", tr("Géneros:", "Genres:")), Style::default().fg(t.accent_primary).bold())];
+            for g in &self.manga.genres {
+                genre_spans.push(g.clone().into());
+                genre_spans.push(Span::raw(" "));
+            }
+            Paragraph::new(Line::from(genre_spans)).wrap(Wrap { trim: true }).render(genres_area, buf);
+        }
+
+        // Row 3: Synopsis header + bookmark feedback
+        if show_desc_header {
+            let mut header_spans =
+                vec![Span::styled(format!("📝 {}", tr("Sinopsis", "Synopsis")), Style::default().fg(t.accent_highlight).bold())];
+            match self.bookmark_state.phase {
+                BookmarkPhase::Found | BookmarkPhase::NotSearching => {},
+                BookmarkPhase::SearchingFromApi => {
+                    header_spans.push(Span::styled(
+                        format!("  · ⏳ {}", tr("Buscando marcador...", "Searching bookmarked chapter...")),
+                        Style::default().fg(t.accent_primary),
+                    ));
+                },
+                BookmarkPhase::FailedToFetch => {
+                    header_spans.push(Span::styled(
+                        format!("  · ⚠ {}", tr("Error al cargar el marcador", "Failed to load bookmarked chapter")),
+                        Style::default().fg(t.status_error).bold(),
+                    ));
+                },
+                BookmarkPhase::NotFoundDatabase => {
+                    header_spans.push(Span::styled(
+                        format!("  · ℹ {}", tr("No hay capítulo marcado guardado", "No bookmarked chapter saved")),
+                        Style::default().fg(t.text_muted).italic(),
+                    ));
+                },
+            }
+            Paragraph::new(Line::from(header_spans)).render(desc_header_area, buf);
+        }
+
+        // Row 4: Wrapped synopsis
+        let desc = self.manga.description.trim();
+        if desc.is_empty() || desc.eq_ignore_ascii_case("no description") {
+            Paragraph::new(Span::styled(
+                tr("Sin descripción disponible para este manga.", "No description available for this manga."),
+                Style::default().fg(t.text_dim).italic(),
+            ))
             .wrap(Wrap { trim: true })
             .render(description_area, buf);
+        } else {
+            Paragraph::new(desc)
+                .style(Style::default().fg(t.text_secondary))
+                .wrap(Wrap { trim: true })
+                .render(description_area, buf);
+        }
     }
 
     fn render_chapters_area(&mut self, area: Rect, buf: &mut Buffer) {
-        let layout = Layout::vertical([Constraint::Percentage(10), Constraint::Percentage(90)]).margin(2);
-
-        let [sorting_buttons_area, chapters_area] = layout.areas(area);
-
         if self.download_process_started() {
             self.render_download_all_chapters_area(area, buf);
             return;
         }
 
+        let t = theme();
+
         match self.chapters.as_mut() {
             Some(chapters) => {
-                let tota_pages = chapters.pagination.get_total_pages();
-                let page = format!("Page {} of : {}", chapters.pagination.current_page, tota_pages);
-                let total = format!("Total chapters {}", chapters.pagination.total_items);
+                let total_pages = chapters.pagination.get_total_pages();
                 let selected_count = self.selected_chapters.len();
 
-                let mut chapter_instructions = vec![
-                    "Scroll ".into(),
-                    Span::raw("<j>/<k>").style(*INSTRUCTIONS_STYLE),
-                    " Select ".into(),
-                    Span::raw("<Space>").style(*INSTRUCTIONS_STYLE),
+                let order_label = match self.chapter_filters.order {
+                    ChapterOrderBy::Descending => tr("Desc.", "Desc."),
+                    ChapterOrderBy::Ascending => tr("Asc.", "Asc."),
+                };
+
+                let mut top_spans: Vec<Span<'_>> = vec![
+                    Span::styled(
+                        format!(" 📚 {} ({}) ", tr("Capítulos", "Chapters"), chapters.pagination.total_items),
+                        Style::default().fg(t.accent_primary).bold(),
+                    ),
+                    Span::styled(" │ ", Style::default().fg(t.border_muted)),
+                    Span::styled(format!("{} ", tr("Orden:", "Order:")), Style::default().fg(t.text_muted)),
+                    Span::styled(order_label, Style::default().fg(t.text_primary).bold()),
+                    Span::raw(" "),
+                    t.key_chip("t"),
+                    Span::styled(" │ ", Style::default().fg(t.border_muted)),
+                    Span::styled(format!("{} ", tr("Idioma:", "Lang:")), Style::default().fg(t.text_muted)),
+                    Span::raw(self.chapter_filters.language.as_emoji()),
+                    Span::raw(" "),
+                    t.key_chip("l"),
+                    Span::raw(" "),
                 ];
 
                 if selected_count > 0 {
-                    chapter_instructions.push(format!(" Download ({selected_count}) ").into());
-                    chapter_instructions.push(Span::raw("<d>").style(*INSTRUCTIONS_STYLE));
-                    chapter_instructions.push(" Clear ".into());
-                    chapter_instructions.push(Span::raw("<c>").style(*INSTRUCTIONS_STYLE));
-                } else {
-                    chapter_instructions.push(" Download ".into());
-                    chapter_instructions.push(Span::raw("<d>").style(*INSTRUCTIONS_STYLE));
+                    top_spans.push(Span::styled("│ ", Style::default().fg(t.border_muted)));
+                    top_spans.push(Span::styled(
+                        format!("✓ {selected_count} {} ", tr("sel.", "sel.")),
+                        Style::default().fg(t.status_success).bold(),
+                    ));
+                    top_spans.push(t.highlight_key_chip("d"));
+                    top_spans.push(Span::styled(format!(" {} ", tr("Desc.", "DL")), Style::default().fg(t.text_muted)));
+                    top_spans.push(t.key_chip("c"));
+                    top_spans.push(Span::styled(format!(" {} ", tr("Limpiar", "Clear")), Style::default().fg(t.text_muted)));
                 }
 
-                chapter_instructions.push(" Download all ".into());
-                chapter_instructions.push(Span::raw("<a>").style(*INSTRUCTIONS_STYLE));
-
-                chapter_instructions.push(" Queue ".into());
-                chapter_instructions.push(Span::raw("<D>").style(*INSTRUCTIONS_STYLE));
-
-                chapter_instructions.push(" Favorite ".into());
-                if self.is_favorite {
-                    chapter_instructions.push("<f> [★]".bold().yellow());
-                } else {
-                    chapter_instructions.push(Span::raw("<f> [☆]").style(*INSTRUCTIONS_STYLE));
-                }
-
-                if self.picker.is_some() {
-                    chapter_instructions.push(" Read ".into());
-                    chapter_instructions.push(Span::raw("<r>").style(*INSTRUCTIONS_STYLE));
-
-                    chapter_instructions.push(" Bookmark ".into());
-                    chapter_instructions.push(Span::raw("<Tab>").style(*INSTRUCTIONS_STYLE));
-                }
-                chapter_instructions.push(crate::i18n::tr(" Visor Web ", " Web View ").into());
-                chapter_instructions.push(Span::raw("<v>").style(*INSTRUCTIONS_STYLE));
-
-                let mut bottom_instructions: Vec<Span<'_>> = vec![page.into(), " | ".into(), total.into()];
-                if selected_count > 0 {
-                    bottom_instructions.push(format!(" | Selected: {selected_count}").bold().green());
-                }
-                bottom_instructions.extend([
-                    " | Next ".into(),
-                    "<w>".to_span().style(*INSTRUCTIONS_STYLE),
-                    " Prev ".into(),
-                    "<b>".to_span().style(*INSTRUCTIONS_STYLE),
-                    " Toggle all ".into(),
-                    "<V>".to_span().style(*INSTRUCTIONS_STYLE),
-                ]);
+                let mut bottom_spans: Vec<Span<'_>> = vec![
+                    Span::styled(
+                        format!(" {} {} / {} ", tr("Pág.", "Page"), chapters.pagination.current_page, total_pages),
+                        Style::default().fg(t.accent_primary).bold(),
+                    ),
+                    Span::styled(" · ", Style::default().fg(t.border_muted)),
+                    t.key_chip("w/b"),
+                    Span::styled(format!(" {} ", tr("Pág.", "Page")), Style::default().fg(t.text_muted)),
+                    t.key_chip("V"),
+                    Span::styled(format!(" {} ", tr("Selec. todo", "Toggle all")), Style::default().fg(t.text_muted)),
+                    t.key_chip("a"),
+                    Span::styled(format!(" {} ", tr("Desc. todos", "DL all")), Style::default().fg(t.text_muted)),
+                    t.key_chip("v"),
+                    Span::styled(format!(" {} ", tr("Visor Web", "Web View")), Style::default().fg(t.text_muted)),
+                ];
                 if !self.bookmark_state.auto_bookmark {
-                    bottom_instructions.push(" Bookmark ".into());
-                    bottom_instructions.push("<m>".to_span().style(*INSTRUCTIONS_STYLE));
+                    bottom_spans.push(t.key_chip("m"));
+                    bottom_spans.push(Span::styled(format!(" {} ", tr("Marcar", "Bookmark")), Style::default().fg(t.text_muted)));
                 }
-                bottom_instructions.push(" Multi-search ".into());
-                bottom_instructions.push("<p>".to_span().style(*INSTRUCTIONS_STYLE));
-                bottom_instructions.push(crate::i18n::tr(" Cambiar fuente ", " Switch source ").into());
-                bottom_instructions.push("<P>".to_span().style(*INSTRUCTIONS_STYLE));
-                bottom_instructions.push(crate::i18n::tr(" Volver ", " Back ").into());
-                bottom_instructions.push("<Esc>".to_span().style(*INSTRUCTIONS_STYLE));
+                bottom_spans.extend([
+                    t.highlight_key_chip("p"),
+                    Span::styled(format!(" {} ", tr("Multi-búsqueda", "Multi-search")), Style::default().fg(t.text_muted)),
+                    t.key_chip("P"),
+                    Span::styled(format!(" {} ", tr("Fuente", "Source")), Style::default().fg(t.text_muted)),
+                    t.key_chip("Esc"),
+                    Span::styled(format!(" {} ", tr("Volver", "Back")), Style::default().fg(t.text_muted)),
+                ]);
 
-                Block::bordered()
-                    .title_top(Line::from(chapter_instructions))
-                    .title_bottom(Line::from(bottom_instructions))
-                    .render(area, buf);
+                let block = t.rounded_block().title_top(Line::from(top_spans)).title_bottom(Line::from(bottom_spans));
+
+                let inner = block.inner(area).inner(Margin {
+                    horizontal: 1,
+                    vertical: 0,
+                });
+                block.render(area, buf);
+
+                if inner.height == 0 || inner.width < 10 {
+                    return;
+                }
 
                 if chapters.widget.chapters.is_empty() {
                     let text = vec![
                         Line::from(""),
-                        Line::from("No chapters found in this language on this provider.".yellow()),
+                        Line::from(Span::styled(
+                            tr(
+                                "No se encontraron capítulos en este idioma en este proveedor.",
+                                "No chapters found in this language on this provider.",
+                            ),
+                            Style::default().fg(t.status_warning).bold(),
+                        )),
                         Line::from(""),
-                        Line::from("Many licensed manga (Comikey, MangaPlus, Viz) only have external links on MangaDex,")
-                            .dark_gray(),
-                        Line::from("which cannot be read in a terminal reader.").dark_gray(),
-                        Line::from("Try changing language with <l>, or press <P> to switch provider directly.").dark_gray(),
+                        Line::from(Span::styled(
+                            tr(
+                                "Algunos mangas licenciados solo tienen enlaces externos o capítulos en otro idioma.",
+                                "Some licensed manga only have external links or chapters in another language.",
+                            ),
+                            Style::default().fg(t.text_muted),
+                        )),
+                        Line::from(Span::styled(
+                            tr(
+                                "Prueba cambiar de idioma con <l>, o pulsa <P> para cambiar de proveedor.",
+                                "Try changing language with <l>, or press <P> to switch provider directly.",
+                            ),
+                            Style::default().fg(t.accent_primary),
+                        )),
                     ];
                     Paragraph::new(text)
-                        .alignment(ratatui::layout::Alignment::Center)
+                        .alignment(Alignment::Center)
                         .wrap(Wrap { trim: true })
-                        .render(chapters_area, buf);
+                        .render(inner, buf);
                 } else {
-                    StatefulWidget::render(chapters.widget.clone(), chapters_area, buf, &mut chapters.state);
+                    let [col_header_area, list_area] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+
+                    buf.set_style(col_header_area, Style::default().bg(t.bar_bg));
+                    let col_layout = Layout::horizontal([
+                        Constraint::Length(4),
+                        Constraint::Length(3),
+                        Constraint::Length(3),
+                        Constraint::Fill(50),
+                        Constraint::Fill(30),
+                        Constraint::Fill(20),
+                    ]);
+                    let [h_sel, h_read, h_dl, h_title, h_scan, h_date] = col_layout.areas(col_header_area);
+                    let hdr_style = Style::default().fg(t.text_muted).bg(t.bar_bg).bold();
+                    Paragraph::new(Span::styled("Sel", hdr_style)).render(h_sel, buf);
+                    Paragraph::new(Span::styled("👁", hdr_style)).render(h_read, buf);
+                    Paragraph::new(Span::styled("📥", hdr_style)).render(h_dl, buf);
+                    Paragraph::new(Span::styled(tr("Capítulo y título", "Chapter & title"), hdr_style)).render(h_title, buf);
+                    Paragraph::new(Span::styled(tr("Scanlator / Fuente", "Scanlator"), hdr_style)).render(h_scan, buf);
+                    Paragraph::new(Span::styled(tr("Publicado", "Released"), hdr_style)).render(h_date, buf);
+
+                    StatefulWidget::render(chapters.widget.clone(), list_area, buf, &mut chapters.state);
                 }
 
-                self.render_sorting_buttons(sorting_buttons_area, buf);
+                if self.is_list_languages_open {
+                    let lang_w = 34u16.min(inner.width.max(16));
+                    let lang_h = (self.manga.languages.len() as u16 + 2).clamp(4, 12).min(inner.height);
+                    let lang_area =
+                        Rect::new(inner.x + inner.width.saturating_sub(lang_w), inner.y, lang_w, lang_h).intersection(buf.area);
+
+                    Clear.render(lang_area, buf);
+                    let lang_title = Line::from(vec![
+                        Span::styled(format!(" 🌐 {} ", tr("Idiomas", "Languages")), Style::default().fg(t.accent_primary).bold()),
+                        t.key_chip("Enter"),
+                        Span::raw(" "),
+                        t.key_chip("Esc"),
+                    ]);
+
+                    let available_language_list = List::new(
+                        self.manga
+                            .languages
+                            .iter()
+                            .map(|lang| format!(" {} {} ", lang.as_emoji(), lang.as_human_readable())),
+                    )
+                    .block(t.rounded_accent_block().title(lang_title))
+                    .style(Style::default().fg(t.text_secondary))
+                    .highlight_style(Style::default().fg(t.text_primary).bg(t.row_selected_bg).bold());
+
+                    StatefulWidget::render(available_language_list, lang_area, buf, &mut self.available_languages_state);
+                }
             },
 
             None => {
-                let title: Span<'_> = if self.state == PageState::ChaptersNotFound {
-                    "Could not get chapters, please try again".to_span().style(*ERROR_STYLE)
+                let (title_text, title_color) = if self.state == PageState::ChaptersNotFound {
+                    (
+                        tr(
+                            " ⚠ No se pudieron obtener los capítulos, inténtalo de nuevo ",
+                            " ⚠ Could not get chapters, please try again ",
+                        ),
+                        t.status_error,
+                    )
                 } else {
-                    "Searching chapters".to_span()
+                    (tr(" ⏳ Buscando capítulos... ", " ⏳ Searching chapters... "), t.accent_primary)
                 };
 
-                Block::bordered().title(title).render(area, buf);
+                let block = t.rounded_block().title(Span::styled(title_text, Style::default().fg(title_color).bold()));
+                let inner = block.inner(area);
+                block.render(area, buf);
+
+                if inner.height >= 2 {
+                    let msg_area = Rect::new(inner.x, inner.y + inner.height / 2, inner.width, 1);
+                    Paragraph::new(Span::styled(title_text.trim(), Style::default().fg(title_color)))
+                        .alignment(Alignment::Center)
+                        .render(msg_area, buf);
+                }
             },
         }
 
@@ -506,8 +673,9 @@ where
     }
 
     fn render_provider_switcher_modal(&mut self, area: Rect, buf: &mut Buffer) {
-        let modal_width = area.width.clamp(30, 68);
-        let modal_height = area.height.clamp(6, 14);
+        let t = theme();
+        let modal_width = area.width.clamp(34, 68);
+        let modal_height = area.height.clamp(7, 14);
         let modal_x = area.x + area.width.saturating_sub(modal_width) / 2;
         let modal_y = area.y + area.height.saturating_sub(modal_height) / 2;
         let modal_area = Rect::new(modal_x, modal_y, modal_width, modal_height).intersection(buf.area);
@@ -515,41 +683,40 @@ where
         Clear.render(modal_area, buf);
 
         let title = Line::from(vec![
-            crate::i18n::tr(" Migrar / Cambiar Proveedor ", " Migrate / Switch Provider ")
-                .bold()
-                .yellow(),
-            " | ".into(),
-            "Select ".into(),
-            Span::raw("<Enter>").style(*INSTRUCTIONS_STYLE),
-            " Close ".into(),
-            Span::raw("<Esc>").style(*INSTRUCTIONS_STYLE),
+            Span::styled(
+                tr(" 🔄 Migrar / Cambiar Proveedor ", " 🔄 Migrate / Switch Provider "),
+                Style::default().fg(t.accent_highlight).bold(),
+            ),
+            t.key_chip("Enter"),
+            Span::styled(format!(" {} ", tr("Elegir", "Select")), Style::default().fg(t.text_muted)),
+            t.key_chip("Esc"),
+            Span::styled(format!(" {} ", tr("Cerrar", "Close")), Style::default().fg(t.text_muted)),
         ]);
 
+        let block = t.rounded_accent_block().title(title);
+
         if self.is_searching_alternatives {
-            let msg =
-                crate::i18n::tr("Buscando proveedores alternativos disponibles...", "Searching available alternative providers...");
-            Paragraph::new(msg)
-                .block(Block::bordered().title(title))
-                .alignment(ratatui::layout::Alignment::Center)
+            let msg = tr("⏳ Buscando proveedores alternativos disponibles...", "⏳ Searching available alternative providers...");
+            Paragraph::new(Span::styled(msg, Style::default().fg(t.accent_primary)))
+                .block(block)
+                .alignment(Alignment::Center)
                 .render(modal_area, buf);
         } else if self.alternative_providers.is_empty() {
-            let msg = crate::i18n::tr(
-                "No se encontraron otros proveedores para este manga.",
-                "No alternative providers found for this manga.",
-            );
-            Paragraph::new(msg)
-                .block(Block::bordered().title(title))
-                .alignment(ratatui::layout::Alignment::Center)
+            let msg = tr("No se encontraron otros proveedores para este manga.", "No alternative providers found for this manga.");
+            Paragraph::new(Span::styled(msg, Style::default().fg(t.text_muted)))
+                .block(block)
+                .alignment(Alignment::Center)
                 .render(modal_area, buf);
         } else {
             let list_items = self.alternative_providers.iter().map(|m| {
                 let badge = m.provider.map(|p| p.badge_with_health()).unwrap_or_else(|| "Unknown".to_string());
-                format!("[{badge}] {}", m.title)
+                format!(" [{badge}] {}", m.title)
             });
 
             let list = List::new(list_items)
-                .block(Block::bordered().title(title))
-                .highlight_style(Style::default().on_blue().bold());
+                .block(block)
+                .style(Style::default().fg(t.text_secondary))
+                .highlight_style(Style::default().fg(t.text_primary).bg(t.row_selected_bg).bold());
 
             StatefulWidget::render(list, modal_area, buf, &mut self.alternative_providers_state);
         }
@@ -557,58 +724,6 @@ where
 
     fn render_download_all_chapters_area(&mut self, area: Rect, buf: &mut Buffer) {
         StatefulWidget::render(DownloadAllChaptersWidget::new(&self.manga.title), area, buf, &mut self.download_all_chapters_state);
-    }
-
-    fn render_sorting_buttons(&mut self, area: Rect, buf: &mut Buffer) {
-        let layout = Layout::horizontal([Constraint::Percentage(40), Constraint::Percentage(60)]);
-        let [sorting_area, language_area] = layout.areas(area);
-
-        let order_title = format!("Order: {} ", match self.chapter_filters.order {
-            ChapterOrderBy::Descending => "Descending",
-            ChapterOrderBy::Ascending => "Ascending",
-        });
-
-        Paragraph::new(Line::from(vec![
-            order_title.into(),
-            " Change order : ".into(),
-            Span::raw("<t>").style(*INSTRUCTIONS_STYLE),
-        ]))
-        .render(sorting_area, buf);
-
-        let languages_list_area =
-            Rect::new(language_area.x, language_area.y, language_area.width, language_area.height + 10).intersection(buf.area);
-
-        if self.is_list_languages_open {
-            Clear.render(languages_list_area, buf);
-            let instructions = Line::from(vec![
-                "Close".into(),
-                Span::raw(" <Esc> ").style(*INSTRUCTIONS_STYLE),
-                "Up/Down".into(),
-                Span::raw(" <k><j> ").style(*INSTRUCTIONS_STYLE),
-                "Search ".into(),
-                Span::raw("<s>").style(*INSTRUCTIONS_STYLE),
-            ]);
-
-            let available_language_list = List::new(
-                self.manga
-                    .languages
-                    .iter()
-                    .map(|lang| format!("{} {}", lang.as_emoji(), lang.as_human_readable())),
-            )
-            .block(Block::bordered().title(instructions))
-            .highlight_style(Style::default().on_blue());
-
-            StatefulWidget::render(available_language_list, languages_list_area, buf, &mut self.available_languages_state);
-        } else {
-            Paragraph::new(Line::from(vec![
-                "Language: ".into(),
-                self.chapter_filters.language.as_emoji().into(),
-                " | ".into(),
-                "Available languages: ".into(),
-                "<l>".bold().yellow(),
-            ]))
-            .render(language_area, buf);
-        }
     }
 
     fn download_process_started(&self) -> bool {
@@ -1803,14 +1918,29 @@ where
     type Actions = MangaPageActions;
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
-        let layout = Layout::default()
-            .direction(Direction::Horizontal)
-            .constraints([Constraint::Percentage(15), Constraint::Percentage(85)]);
+        if area.height < 6 || area.width < 20 {
+            return;
+        }
+        let header_height = if self.picker.is_some() {
+            (area.height.saturating_mul(36) / 100).clamp(11, 16)
+        } else {
+            (area.height.saturating_mul(32) / 100).clamp(10, 14)
+        }
+        .min(area.height.saturating_sub(6).max(6));
 
-        let [cover_area, information_area] = layout.areas(area);
+        let [top_area, chapters_area] = Layout::vertical([Constraint::Length(header_height), Constraint::Min(6)]).areas(area);
 
-        self.render_cover(cover_area, frame.buffer_mut());
-        self.render_manga_information(information_area, frame);
+        if self.picker.is_some() {
+            let cover_width = ((top_area.height.saturating_mul(16)) / 10).clamp(18, 28).min(top_area.width / 3);
+            let [cover_area, info_area] =
+                Layout::horizontal([Constraint::Length(cover_width), Constraint::Min(20)]).areas(top_area);
+            self.render_cover(cover_area, frame.buffer_mut());
+            self.render_manga_information(info_area, frame);
+        } else {
+            self.render_manga_information(top_area, frame);
+        }
+
+        self.render_chapters_area(chapters_area, frame.buffer_mut());
     }
 
     fn update(&mut self, action: Self::Actions) {
@@ -2683,5 +2813,61 @@ mod test {
         assert_eq!(manga_page.manga.id, "mangaoni_berserk");
         assert!(manga_page.migrated_read_chapter_numbers.contains("1"));
         assert!(!manga_page.migrated_read_chapter_numbers.contains("2"));
+    }
+
+    #[tokio::test]
+    async fn test_render_wide_layout_rounded_themed_and_bounded_header() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut manga = Manga::default();
+        manga.id = "one_piece".into();
+        manga.title = "One Piece".into();
+        manga.provider = Some(crate::backend::manga_provider::MangaProviders::Mangaoni);
+        manga.description = "A pirate adventure.".into();
+
+        let mut manga_page: MangaPage<MockMangaPageProvider, TrackerTest> =
+            MangaPage::new(manga, None, MockMangaPageProvider::new().into());
+
+        manga_page.load_chapters(Some(GetChaptersResponse {
+            chapters: vec![Chapter {
+                id: "ch1198".into(),
+                manga_id: "one_piece".into(),
+                title: "Capítulo 1198".into(),
+                chapter_number: "1198".into(),
+                volume_number: None,
+                ..Default::default()
+            }],
+            total_chapters: 1,
+        }));
+
+        let backend = TestBackend::new(200, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let page_area = Rect::new(0, 2, 200, 47);
+
+        terminal
+            .draw(|f| {
+                manga_page.render(page_area, f);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let rendered: String = (0..50)
+            .map(|y| (0..200).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains('╭'), "should use rounded borders");
+        assert!(rendered.contains('╰'), "should use rounded borders");
+        assert!(!rendered.contains("Vol.  Ch."), "should not render dangling empty Vol prefix");
+        assert!(!rendered.contains("Vol none"), "should never render 'Vol none'");
+        assert_eq!(buf[(0, 2)].fg, crate::theme::theme().border_accent);
+
+        // Top hero card should stay compact (<= 16 rows tall on 47-row page, leaving >= 31 rows for chapters)
+        let chapters_top_y = (3..50)
+            .find(|&y| buf[(0, y)].symbol() == "╭")
+            .expect("chapters block top border should exist");
+        let header_rows = chapters_top_y - 2;
+        assert!(header_rows <= 16, "header should stay compact, got {header_rows} rows");
     }
 }

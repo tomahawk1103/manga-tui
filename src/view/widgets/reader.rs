@@ -1,12 +1,14 @@
 use once_cell::sync::Lazy;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Rect};
-use ratatui::style::{Color, Style, Stylize};
-use ratatui::widgets::{Block, Paragraph, StatefulWidget, Widget, Wrap};
+use ratatui::layout::{Alignment, Constraint, Layout, Rect};
+use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, StatefulWidget, Widget};
 use throbber_widgets_tui::{Throbber, ThrobberState};
 use tui_widget_list::PreRender;
 
-use crate::global::CURRENT_LIST_ITEM_STYLE;
+use crate::i18n::tr;
+use crate::theme::theme;
 
 pub static STYLE_PAGE_BOOKMARKED: Lazy<Style> = Lazy::new(|| Style::new().on_green().black());
 
@@ -24,6 +26,7 @@ pub struct PagesItem {
     pub state: PageItemState,
     pub loading_state: ThrobberState,
     pub style: Style,
+    pub is_focused: bool,
 }
 
 impl Widget for PagesItem {
@@ -31,37 +34,69 @@ impl Widget for PagesItem {
     where
         Self: Sized,
     {
-        let layout = Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]);
-        let [chapter_number_area, loader_area] = layout.areas(area);
+        if area.height == 0 || area.width < 4 {
+            return;
+        }
+        let t = theme();
+        let is_bookmarked = self.style == *STYLE_PAGE_BOOKMARKED;
 
-        let block_style = self.style;
+        let row_bg = if self.is_focused {
+            Some(t.row_selected_bg)
+        } else if is_bookmarked {
+            Some(t.title_chip_primary_bg)
+        } else {
+            None
+        };
+        if let Some(bg) = row_bg {
+            buf.set_style(area, Style::default().bg(bg));
+        }
 
-        Block::default().style(block_style).render(area, buf);
+        let [label_area, status_area] = Layout::horizontal([Constraint::Min(6), Constraint::Length(3)]).areas(area);
 
-        let page = Paragraph::new(format!("{} {}", crate::i18n::tr("Pág.", "Page"), self.number + 1)).wrap(Wrap { trim: true });
+        let prefix = if self.is_focused {
+            Span::styled("▸ ", Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD))
+        } else if is_bookmarked {
+            Span::styled("🔖", Style::default().fg(t.status_success))
+        } else {
+            Span::raw("  ")
+        };
+
+        let label_style = if self.is_focused {
+            Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD)
+        } else if is_bookmarked {
+            Style::default().fg(t.status_success).add_modifier(Modifier::BOLD)
+        } else if self.state == PageItemState::FinishedLoad {
+            Style::default().fg(t.text_primary)
+        } else {
+            Style::default().fg(t.text_muted)
+        };
+
+        Paragraph::new(Line::from(vec![prefix, Span::styled(format!("{} {}", tr("Pág.", "Page"), self.number + 1), label_style)]))
+            .render(label_area, buf);
 
         match self.state {
             PageItemState::Loading => {
                 let loader = Throbber::default()
-                    .label(crate::i18n::tr("Cargando", "Loading"))
-                    .style(Style::default().fg(Color::Yellow))
+                    .label("")
+                    .style(Style::default().fg(t.accent_highlight))
                     .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
                     .use_type(throbber_widgets_tui::WhichUse::Spin);
-
-                page.render(chapter_number_area, buf);
-
-                StatefulWidget::render(loader, loader_area, buf, &mut self.loading_state);
+                StatefulWidget::render(loader, status_area, buf, &mut self.loading_state);
             },
             PageItemState::FinishedLoad => {
-                page.render(area, buf);
+                Paragraph::new(Span::styled("✓ ", Style::default().fg(t.status_success).add_modifier(Modifier::BOLD)))
+                    .alignment(Alignment::Right)
+                    .render(status_area, buf);
             },
             PageItemState::FailedLoad => {
-                page.render(chapter_number_area, buf);
-                Paragraph::new("⚠").wrap(Wrap { trim: true }).red().bold().render(loader_area, buf);
+                Paragraph::new(Span::styled("✗ ", Style::default().fg(t.status_error).add_modifier(Modifier::BOLD)))
+                    .alignment(Alignment::Right)
+                    .render(status_area, buf);
             },
             PageItemState::Waiting => {
-                page.render(chapter_number_area, buf);
-                Paragraph::new("💤").wrap(Wrap { trim: true }).bold().render(loader_area, buf);
+                Paragraph::new(Span::styled("· ", Style::default().fg(t.text_dim)))
+                    .alignment(Alignment::Right)
+                    .render(status_area, buf);
             },
         }
     }
@@ -69,10 +104,8 @@ impl Widget for PagesItem {
 
 impl PreRender for PagesItem {
     fn pre_render(&mut self, context: &tui_widget_list::PreRenderContext) -> u16 {
-        if context.is_selected {
-            self.style = *CURRENT_LIST_ITEM_STYLE;
-        }
-        2
+        self.is_focused = context.is_selected;
+        1
     }
 }
 
@@ -83,6 +116,7 @@ impl PagesItem {
             state: PageItemState::Waiting,
             loading_state: ThrobberState::default(),
             style: Style::default(),
+            is_focused: false,
         }
     }
 

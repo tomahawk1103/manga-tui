@@ -6,9 +6,10 @@ use crossterm::event::{KeyCode, KeyEvent};
 use image::{DynamicImage, GenericImageView};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Margin, Rect};
-use ratatui::text::{Line, Span, ToSpan};
-use ratatui::widgets::{Block, List, Paragraph, StatefulWidget, Widget, Wrap};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
+use ratatui::style::{Color, Style, Stylize};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Paragraph, StatefulWidget, Widget, Wrap};
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
@@ -27,10 +28,11 @@ use crate::backend::tracker::{MangaTracker, track_manga};
 use crate::backend::tui::Events;
 use crate::common::format_error_message_tracking_reading_history;
 use crate::config::MangaTuiConfig;
-use crate::global::{ERROR_STYLE, INSTRUCTIONS_STYLE};
 use crate::i18n::tr;
+use crate::theme::{current_theme, theme};
 use crate::view::widgets::Component;
 use crate::view::widgets::reader::{PageItemState, PagesItem, PagesList, PagesListState};
+use crate::view::widgets::search::provider_pill_colors;
 
 #[derive(Debug, PartialEq, Clone, Default)]
 pub enum PageSize {
@@ -325,6 +327,23 @@ where
     pub local_source: Option<LocalChapterSource>,
 }
 
+fn centered_image_rect(area: Rect, img_w: u32, img_h: u32, font_w: u16, font_h: u16) -> Rect {
+    if img_w == 0 || img_h == 0 || font_w == 0 || font_h == 0 || area.width == 0 || area.height == 0 {
+        return area;
+    }
+    let max_px_w = area.width as f64 * font_w as f64;
+    let max_px_h = area.height as f64 * font_h as f64;
+    let scale = (max_px_w / img_w as f64).min(max_px_h / img_h as f64);
+    let fitted_cols = ((img_w as f64 * scale) / font_w as f64).ceil().clamp(1.0, area.width as f64) as u16;
+    let fitted_rows = ((img_h as f64 * scale) / font_h as f64).ceil().clamp(1.0, area.height as f64) as u16;
+    Rect::new(
+        area.x + area.width.saturating_sub(fitted_cols) / 2,
+        area.y + area.height.saturating_sub(fitted_rows) / 2,
+        fitted_cols,
+        fitted_rows,
+    )
+}
+
 impl<T, S> Component for MangaReader<T, S>
 where
     T: ReaderPageProvider,
@@ -333,28 +352,65 @@ where
     type Actions = MangaReaderActions;
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
+        if area.height < 4 || area.width < 20 {
+            return;
+        }
+        let t = theme();
         let buf = frame.buffer_mut();
 
-        let layout = match self.current_page_size {
-            PageSize::Normal => [Constraint::Percentage(25), Constraint::Percentage(50), Constraint::Percentage(25)],
-            PageSize::Wide => [Constraint::Percentage(15), Constraint::Percentage(70), Constraint::Percentage(15)],
+        let [top_bar_area, body_area, bottom_bar_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)]).areas(area);
+
+        self.render_reader_top_bar(top_bar_area, buf);
+
+        let left_w = if body_area.width >= 120 {
+            22
+        } else if body_area.width >= 85 {
+            19
+        } else {
+            (body_area.width / 4).max(14)
+        };
+        let right_w = if body_area.width >= 115 {
+            if self.current_page_size == PageSize::Wide { 26 } else { 32 }
+        } else if body_area.width >= 88 && self.current_page_size == PageSize::Normal {
+            26
+        } else {
+            0
         };
 
-        let [left, center, right] = Layout::horizontal(layout).areas(area);
+        let (left, center, right) = if right_w > 0 {
+            let [l, c, r] =
+                Layout::horizontal([Constraint::Length(left_w), Constraint::Min(20), Constraint::Length(right_w)]).areas(body_area);
+            (l, c, Some(r))
+        } else {
+            let [l, c] = Layout::horizontal([Constraint::Length(left_w), Constraint::Min(20)]).areas(body_area);
+            (l, c, None)
+        };
 
-        Block::bordered().render(left, buf);
+        let total_pages = self.pages_list.pages.len().max(self.pages.len());
+        let current_page_num = if total_pages == 0 { 0 } else { (self.current_page_index() + 1).min(total_pages) };
+        t.rounded_block()
+            .title(Span::styled(
+                format!(" 📄 {} ({current_page_num}/{total_pages}) ", tr("Páginas", "Pages")),
+                Style::default().fg(t.accent_primary).bold(),
+            ))
+            .render(left, buf);
 
         let index = self.current_page_index();
         let page_loaded = self.pages.get(index).map(|page| page.is_loaded()).unwrap_or(false);
         let show_reload = if page_loaded {
             let (width, height) = {
+                let font_size = self.picker.font_size;
                 let page = &mut self.pages[index];
+                let (raw_w, raw_h) = page.dimensions.unwrap_or((0, 0));
+                let display_h = if page.is_tall_strip() { page.viewport_height() } else { raw_h };
+                let draw_area = centered_image_rect(center, raw_w, display_h, font_size.0, font_size.1);
                 let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
                 let image = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
                 if let Some(protocol) = page.get_or_create_protocol(&mut self.picker) {
-                    StatefulWidget::render(image, center, buf, protocol);
+                    StatefulWidget::render(image, draw_area, buf, protocol);
                 }
-                page.dimensions.unwrap()
+                (raw_w, raw_h)
             };
             self.resize_based_on_image_size(width, height);
 
@@ -367,19 +423,60 @@ where
                 .map(|page| page.state == PageItemState::FailedLoad)
                 .unwrap_or(false);
 
+            let card_w = (center.width.saturating_mul(60) / 100).clamp(24.min(center.width), 52.min(center.width));
+            let card_h = 5.min(center.height);
+            let card_area = Rect::new(
+                center.x + center.width.saturating_sub(card_w) / 2,
+                center.y + center.height.saturating_sub(card_h) / 2,
+                card_w,
+                card_h,
+            );
+
             if show_failed {
-                Block::bordered()
-                    .title(tr("Error al cargar la página", "Failed to load page"))
-                    .render(center, buf);
+                let block = t
+                    .rounded_accent_block()
+                    .border_style(Style::default().fg(t.status_error))
+                    .title(Span::styled(
+                        format!(" ⚠ {} ", tr("Error de carga", "Load error")),
+                        Style::default().fg(t.status_error).bold(),
+                    ));
+                let inner = block.inner(card_area);
+                block.render(card_area, buf);
+                Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        tr("No se pudo cargar la página. ", "Failed to load page. "),
+                        Style::default().fg(t.text_secondary),
+                    ),
+                    t.highlight_key_chip("r"),
+                    Span::styled(format!(" {}", tr("Reintentar", "Reload")), Style::default().fg(t.accent_highlight)),
+                ]))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true })
+                .render(inner, buf);
             } else {
-                Block::bordered().title(tr("Cargando página", "Loading page")).render(center, buf);
+                let block = t.rounded_block().title(Span::styled(
+                    format!(" ⏳ {} ", tr("Cargando página", "Loading page")),
+                    Style::default().fg(t.accent_primary).bold(),
+                ));
+                let inner = block.inner(card_area);
+                block.render(card_area, buf);
+                Paragraph::new(Span::styled(
+                    format!("{} {current_page_num}/{total_pages}...", tr("Cargando pág.", "Loading page")),
+                    Style::default().fg(t.text_muted),
+                ))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true })
+                .render(inner, buf);
             }
 
             show_failed
         };
 
         self.render_page_list(left, buf);
-        self.render_right_panel(buf, right, show_reload);
+        if let Some(right_area) = right {
+            self.render_right_panel(buf, right_area, show_reload);
+        }
+        self.render_reader_bottom_bar(bottom_bar_area, buf, show_reload);
     }
 
     fn update(&mut self, action: Self::Actions) {
@@ -811,93 +908,267 @@ where
         self.global_event_tx.as_ref().unwrap().send(Events::GoBackMangaPage).ok();
     }
 
-    fn render_right_panel(&mut self, buf: &mut Buffer, area: Rect, show_reload: bool) {
-        let [instructions_area, information_era, status_area] =
-            Layout::vertical([Constraint::Percentage(26), Constraint::Percentage(20), Constraint::Percentage(20)])
-                .margin(2)
-                .areas(area);
+    fn format_chapter_heading(&self) -> String {
+        let vol_prefix = self
+            .current_chapter
+            .volume_number
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty() && *v != "0" && !v.eq_ignore_ascii_case("none"))
+            .map(|v| format!("Vol. {v} · "))
+            .unwrap_or_default();
 
-        let (prev_label, next_label) = if self.pages.get(self.current_page_index()).map(|p| p.is_tall_strip()).unwrap_or(false) {
-            (tr("Desplazar / Ant: ", "Scroll up / Prev: "), tr("Desplazar / Sig: ", "Scroll down / Next: "))
+        let title = self.current_chapter.title.trim();
+        if title.is_empty() {
+            format!("{vol_prefix}{} {}", tr("Cap.", "Ch."), self.current_chapter.number)
         } else {
-            (tr("Página anterior: ", "Previous page: "), tr("Página siguiente: ", "Next page: "))
-        };
+            format!("{vol_prefix}{} {} — {title}", tr("Cap.", "Ch."), self.current_chapter.number)
+        }
+    }
 
-        let mut instructions = vec![
-            Line::from(vec![tr("Volver: ", "Go back: ").into(), "<Esc>, <q>, <Backspace>".to_span().style(*INSTRUCTIONS_STYLE)]),
-            Line::from(vec![prev_label.into(), "<k>, <Up>, Scroll".to_span().style(*INSTRUCTIONS_STYLE)]),
-            Line::from(vec![next_label.into(), "<j>, <Down>, Scroll".to_span().style(*INSTRUCTIONS_STYLE)]),
-            Line::from(vec![tr("Primera pág.: ", "First page: ").into(), "<g>, <Home>".to_span().style(*INSTRUCTIONS_STYLE)]),
-            Line::from(vec![tr("Última pág.: ", "Last page: ").into(), "<G>, <End>".to_span().style(*INSTRUCTIONS_STYLE)]),
-            Line::from(vec![tr("Capítulo sig.: ", "Next chapter: ").into(), "<w>".to_span().style(*INSTRUCTIONS_STYLE)]),
-            Line::from(vec![tr("Capítulo ant.: ", "Previous chapter: ").into(), "<b>".to_span().style(*INSTRUCTIONS_STYLE)]),
-            Line::from(vec![tr("Visor Web HD: ", "Web Viewer HD: ").into(), "<v>".to_span().style(*INSTRUCTIONS_STYLE)]),
+    fn render_reader_top_bar(&self, area: Rect, buf: &mut Buffer) {
+        let t = theme();
+        buf.set_style(area, Style::default().bg(t.bar_bg));
+
+        let mut left_spans: Vec<Span<'_>> = vec![
+            Span::styled(
+                format!(" 📖 {} ", tr("LECTOR", "READER")),
+                Style::default().fg(Color::Black).bg(t.accent_highlight).bold(),
+            ),
+            Span::styled(" ", Style::default().fg(t.accent_highlight).bg(t.bar_bg)),
+        ];
+
+        if let Some(provider) = self.provider {
+            let (fg, bg) = provider_pill_colors(provider);
+            left_spans.push(Span::styled(format!(" {} ", provider.short_name()), Style::default().fg(fg).bg(bg).bold()));
+            left_spans.push(Span::styled(" ", Style::default().bg(t.bar_bg)));
+        }
+
+        if !self.manga_title.trim().is_empty() {
+            left_spans.push(Span::styled(self.manga_title.as_str(), Style::default().fg(t.text_primary).bg(t.bar_bg).bold()));
+            left_spans.push(Span::styled(" · ", Style::default().fg(t.text_dim).bg(t.bar_bg)));
+        }
+        left_spans.push(Span::styled(self.format_chapter_heading(), Style::default().fg(t.accent_primary).bg(t.bar_bg).bold()));
+
+        Paragraph::new(Line::from(left_spans)).render(area, buf);
+
+        let total = self.pages_list.pages.len().max(self.pages.len());
+        let curr = if total == 0 { 0 } else { (self.current_page_index() + 1).min(total) };
+        let pct = if total > 0 { (curr * 100 / total).min(100) } else { 0 };
+
+        let mut right_spans: Vec<Span<'_>> = Vec::new();
+        if let Some(page) = self.pages.get(self.current_page_index()) {
+            if page.is_tall_strip() {
+                let max_scroll = page.max_scroll_y();
+                let scroll_pct =
+                    if max_scroll > 0 { (page.scroll_y as f64 / max_scroll as f64 * 100.0).round() as u32 } else { 100 };
+                right_spans.push(Span::styled(
+                    format!(" 📜 {scroll_pct}% "),
+                    Style::default().fg(t.accent_secondary).bg(t.chip_bg).bold(),
+                ));
+                right_spans.push(Span::styled(" ", Style::default().bg(t.bar_bg)));
+            }
+        }
+        if let Some(bm) = self.page_list_state.page_bookmarked {
+            right_spans.push(Span::styled(
+                format!(" 🔖 {} {} ", tr("Pág.", "Pg."), bm + 1),
+                Style::default().fg(t.status_success).bg(t.chip_bg).bold(),
+            ));
+            right_spans.push(Span::styled(" ", Style::default().bg(t.bar_bg)));
+        }
+        right_spans.push(Span::styled(
+            format!(" {} {curr}/{total} ({pct}%) ", tr("Pág.", "Page")),
+            Style::default().fg(t.accent_highlight).bg(t.chip_bg).bold(),
+        ));
+
+        Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right).render(area, buf);
+    }
+
+    fn render_reader_bottom_bar(&self, area: Rect, buf: &mut Buffer, show_reload: bool) {
+        let t = theme();
+        buf.set_style(area, Style::default().bg(t.bar_bg));
+
+        let is_strip = self.pages.get(self.current_page_index()).map(|p| p.is_tall_strip()).unwrap_or(false);
+        let nav_label = if is_strip { tr("Desplazar", "Scroll") } else { tr("Pág.", "Page") };
+
+        let mut left_spans: Vec<Span<'_>> = vec![
+            Span::styled(format!(" ⌨ {} ", tr("ATÁJOS", "KEYS")), Style::default().fg(Color::Black).bg(t.accent_primary).bold()),
+            Span::styled(" ", Style::default().fg(t.accent_primary).bg(t.bar_bg)),
+            t.key_chip("j/k"),
+            Span::styled(format!(" {nav_label}  "), Style::default().fg(t.text_muted).bg(t.bar_bg)),
+            t.key_chip("w/b"),
+            Span::styled(format!(" {}  ", tr("Cap.", "Chap.")), Style::default().fg(t.text_muted).bg(t.bar_bg)),
+            t.key_chip("g/G"),
+            Span::styled(format!(" {}  ", tr("Inicio/Fin", "Start/End")), Style::default().fg(t.text_muted).bg(t.bar_bg)),
+            t.highlight_key_chip("v"),
+            Span::styled(format!(" {}  ", tr("Visor Web HD", "Web HD")), Style::default().fg(t.text_muted).bg(t.bar_bg)),
         ];
 
         if show_reload {
-            instructions.push(Line::from(vec![tr("Recargar: ", "Reload: ").into(), "<r>".to_span().style(*INSTRUCTIONS_STYLE)]));
+            left_spans.push(t.highlight_key_chip("r"));
+            left_spans
+                .push(Span::styled(format!(" {}  ", tr("Recargar", "Reload")), Style::default().fg(t.text_muted).bg(t.bar_bg)));
         }
-
         if !self.auto_bookmark {
-            instructions
-                .push(Line::from(vec![tr("Marcar página: ", "Bookmark: ").into(), "<m>".to_span().style(*INSTRUCTIONS_STYLE)]));
+            left_spans.push(t.key_chip("m"));
+            left_spans
+                .push(Span::styled(format!(" {}  ", tr("Marcar", "Bookmark")), Style::default().fg(t.text_muted).bg(t.bar_bg)));
         }
 
-        Widget::render(List::new(instructions).block(Block::bordered()), instructions_area, buf);
+        left_spans.push(t.key_chip("Esc/q"));
+        left_spans.push(Span::styled(format!(" {} ", tr("Volver", "Back")), Style::default().fg(t.text_muted).bg(t.bar_bg)));
 
-        let mut current_chapter_title = format!(
-            "{} : Vol {} {} {} {}",
-            tr("Leyendo", "Reading"),
-            self.current_chapter.volume_number.as_ref().cloned().unwrap_or("none".to_string()),
-            tr("Cap.", "Ch."),
-            self.current_chapter.number,
-            self.current_chapter.title
-        );
+        Paragraph::new(Line::from(left_spans)).render(area, buf);
+
+        let right_spans =
+            vec![Span::styled(format!(" 🎨 {} ", current_theme().label()), Style::default().fg(t.text_muted).bg(t.bar_bg))];
+        Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right).render(area, buf);
+    }
+
+    fn render_right_panel(&mut self, buf: &mut Buffer, area: Rect, show_reload: bool) {
+        if area.height < 6 || area.width < 16 {
+            return;
+        }
+        let t = theme();
+
+        let info_height = 11u16.min(area.height.saturating_sub(6).max(6));
+        let [info_card_area, controls_card_area] =
+            Layout::vertical([Constraint::Length(info_height), Constraint::Min(6)]).areas(area);
+
+        // Card 1: Chapter info + reading progress + active status
+        let info_block = t
+            .rounded_accent_block()
+            .title(Span::styled(format!(" 📖 {} ", tr("Capítulo", "Chapter")), Style::default().fg(t.accent_highlight).bold()));
+        let info_inner = info_block.inner(info_card_area).inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
+        info_block.render(info_card_area, buf);
+
+        let total = self.pages_list.pages.len().max(self.pages.len());
+        let curr = if total == 0 { 0 } else { (self.current_page_index() + 1).min(total) };
+        let loaded_count = self.pages_list.pages.iter().filter(|p| p.state == PageItemState::FinishedLoad).count();
+        let failed_count = self.pages_list.pages.iter().filter(|p| p.state == PageItemState::FailedLoad).count();
+
+        let bar_w = info_inner.width.saturating_sub(10).clamp(6, 16) as usize;
+        let ratio = if total > 0 { curr as f64 / total as f64 } else { 0.0 };
+        let filled = ((ratio * bar_w as f64).round() as usize).min(bar_w);
+        let progress_bar = format!("[{}{}] {curr}/{total}", "█".repeat(filled), "░".repeat(bar_w - filled));
+
+        let mut info_lines = Vec::new();
+        if !self.manga_title.trim().is_empty() {
+            info_lines.push(Line::from(vec![Span::styled(self.manga_title.as_str(), Style::default().fg(t.text_primary).bold())]));
+        }
+        info_lines.push(Line::from(vec![Span::styled(self.format_chapter_heading(), Style::default().fg(t.accent_primary))]));
+        info_lines.push(Line::from(vec![Span::styled(progress_bar, Style::default().fg(t.accent_highlight).bold())]));
 
         if let Some(page) = self.pages.get(self.current_page_index()) {
             if page.is_tall_strip() {
                 let max_scroll = page.max_scroll_y();
                 let percent = if max_scroll > 0 { (page.scroll_y as f64 / max_scroll as f64 * 100.0).round() as u32 } else { 100 };
-                current_chapter_title.push_str(&format!("\nScroll : {}%", percent));
+                info_lines.push(Line::from(vec![Span::styled(
+                    format!("📜 Scroll: {percent}%"),
+                    Style::default().fg(t.accent_secondary),
+                )]));
             }
         }
 
-        Paragraph::new(current_chapter_title)
-            .wrap(Wrap { trim: true })
-            .render(information_era, buf);
+        let mut stats_spans =
+            vec![Span::styled(format!("✓ {loaded_count}/{total} {}", tr("carg.", "ready")), Style::default().fg(t.status_success))];
+        if failed_count > 0 {
+            stats_spans.push(Span::styled(format!(" · ✗ {failed_count}"), Style::default().fg(t.status_error).bold()));
+        }
+        info_lines.push(Line::from(stats_spans));
 
         match self.state {
-            State::DisplayingChapterNotFound => Paragraph::new(tr("No hay más capítulos", "There is no more chapters"))
-                .wrap(Wrap { trim: true })
-                .render(status_area, buf),
-            State::ErrorSearchingChapter => Paragraph::new(
-                tr("Error al buscar el capítulo, inténtelo de nuevo", "error searching chapter, please try again")
-                    .to_span()
-                    .style(*ERROR_STYLE),
-            )
-            .wrap(Wrap { trim: true })
-            .render(status_area, buf),
+            State::DisplayingChapterNotFound => {
+                info_lines.push(Line::from(vec![Span::styled(
+                    tr("ℹ No hay más capítulos", "ℹ No more chapters"),
+                    Style::default().fg(t.text_muted).italic(),
+                )]));
+            },
+            State::ErrorSearchingChapter => {
+                info_lines.push(Line::from(vec![Span::styled(
+                    tr("⚠ Error al buscar capítulo", "⚠ Failed to find chapter"),
+                    Style::default().fg(t.status_error).bold(),
+                )]));
+            },
             State::SearchingChapter => {
-                let loader = Throbber::default()
-                    .label(Span::styled(tr("Buscando capítulo", "Searching chapter"), *INSTRUCTIONS_STYLE))
-                    .throbber_set(throbber_widgets_tui::BRAILLE_SIX)
-                    .use_type(throbber_widgets_tui::WhichUse::Spin);
-
-                StatefulWidget::render(loader, status_area, buf, &mut self.search_next_chapter_loader)
+                info_lines.push(Line::from(vec![Span::styled(
+                    format!("⏳ {}", tr("Buscando capítulo...", "Loading chapter...")),
+                    Style::default().fg(t.accent_highlight),
+                )]));
             },
             State::ManualBookmark => {
-                let message = format!(
-                    "{}: {}",
-                    tr("Marcado en página", "Bookmarked at page"),
-                    self.page_list_state.page_bookmarked.unwrap_or(0)
-                );
-
-                Paragraph::new(message.to_span().style(*INSTRUCTIONS_STYLE))
-                    .wrap(Wrap { trim: true })
-                    .render(status_area, buf)
+                info_lines.push(Line::from(vec![Span::styled(
+                    format!(
+                        "🔖 {}: {}",
+                        tr("Marcado pág.", "Bookmarked pg."),
+                        self.page_list_state.page_bookmarked.unwrap_or(0) + 1
+                    ),
+                    Style::default().fg(t.status_success).bold(),
+                )]));
             },
             _ => {},
+        }
+
+        Paragraph::new(info_lines).wrap(Wrap { trim: true }).render(info_inner, buf);
+
+        // Card 2: Themed Keyboard Controls
+        let controls_block = t
+            .rounded_block()
+            .title(Span::styled(format!(" ⌨ {} ", tr("Controles", "Controls")), Style::default().fg(t.accent_primary).bold()));
+        let controls_inner = controls_block.inner(controls_card_area).inner(Margin {
+            horizontal: 1,
+            vertical: 1,
+        });
+        controls_block.render(controls_card_area, buf);
+
+        if controls_inner.height < 2 || controls_inner.width < 12 {
+            return;
+        }
+
+        let is_strip = self.pages.get(self.current_page_index()).map(|p| p.is_tall_strip()).unwrap_or(false);
+        let (prev_label, next_label) = if is_strip {
+            (tr("Subir / Ant.", "Scroll up"), tr("Bajar / Sig.", "Scroll down"))
+        } else {
+            (tr("Pág. anterior", "Prev page"), tr("Pág. siguiente", "Next page"))
         };
+
+        let shortcut_row = |key: &str, desc: &str| {
+            Line::from(vec![
+                Span::styled(format!("{key:<11} "), Style::default().fg(t.accent_primary).bold()),
+                Span::styled(desc.to_string(), Style::default().fg(t.text_secondary)),
+            ])
+        };
+
+        let mut control_lines = vec![
+            shortcut_row("Esc / q", tr("Volver atrás", "Go back")),
+            shortcut_row("k / Up", prev_label),
+            shortcut_row("j / Down", next_label),
+            shortcut_row("g / Home", tr("Primera pág.", "First page")),
+            shortcut_row("G / End", tr("Última pág.", "Last page")),
+            shortcut_row("w", tr("Cap. siguiente", "Next chapter")),
+            shortcut_row("b", tr("Cap. anterior", "Prev chapter")),
+            shortcut_row("v", tr("Visor Web HD", "Web Viewer HD")),
+        ];
+
+        if show_reload {
+            control_lines.push(shortcut_row("r", tr("Recargar pág.", "Reload page")));
+        }
+        if !self.auto_bookmark {
+            control_lines.push(shortcut_row("m", tr("Marcar pág.", "Bookmark page")));
+        }
+
+        if controls_inner.height as usize > control_lines.len() + 2 {
+            control_lines.push(Line::raw(""));
+            control_lines.push(Line::from(vec![Span::styled(
+                tr("💡 Scroll de ratón cambia pág.", "💡 Mouse wheel turns pages"),
+                Style::default().fg(t.text_muted).italic(),
+            )]));
+        }
+
+        Paragraph::new(control_lines).wrap(Wrap { trim: true }).render(controls_inner, buf);
     }
 
     fn tick(&mut self) {
@@ -1732,5 +2003,54 @@ mod test {
         manga_reader.previous_page();
         assert_eq!(0, manga_reader.current_page_index());
         assert_eq!(max_scroll, manga_reader.pages[0].scroll_y);
+    }
+
+    #[tokio::test]
+    async fn test_render_reader_wide_layout_themed_and_centered_image_rect() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let chapter = ChapterToRead {
+            id: "1198".into(),
+            title: "Capítulo 1198".into(),
+            number: 1198.0,
+            volume_number: None,
+            pages_url: vec!["http://localhost/1".parse().unwrap(), "http://localhost/2".parse().unwrap()],
+            ..Default::default()
+        };
+
+        let mut manga_reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(chapter, "op".into(), Picker::new((8, 16)), ReaderPageProvierMock::new().into())
+                .with_manga_title("One Piece".into());
+
+        manga_reader.init_fetching_pages();
+
+        let backend = TestBackend::new(200, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 200, 50);
+
+        terminal
+            .draw(|f| {
+                manga_reader.render(area, f);
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let rendered: String = (0..50)
+            .map(|y| (0..200).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains('╭'), "reader should use rounded borders");
+        assert!(rendered.contains('╰'), "reader should use rounded bottom borders");
+        assert!(!rendered.contains("Vol none"), "reader must never render 'Vol none'");
+        assert!(rendered.contains("One Piece"));
+        assert!(rendered.contains("1198"));
+
+        // Verify portrait page centering inside a wide center pane
+        let center = Rect::new(22, 1, 146, 48);
+        let fitted = centered_image_rect(center, 800, 1200, 8, 16);
+        assert!(fitted.x > center.x + 20, "portrait image should be horizontally centered, got x={}", fitted.x);
+        assert!(fitted.width < center.width, "portrait image should preserve aspect ratio without stretching full width");
     }
 }

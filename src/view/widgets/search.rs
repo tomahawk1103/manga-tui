@@ -15,7 +15,7 @@ use crate::global::CURRENT_LIST_ITEM_STYLE;
 use crate::i18n::tr;
 use crate::theme::theme;
 
-fn provider_pill_colors(provider: MangaProviders) -> (Color, Color) {
+pub(crate) fn provider_pill_colors(provider: MangaProviders) -> (Color, Color) {
     match provider {
         MangaProviders::Inmanga => (Color::Black, Color::Cyan),
         MangaProviders::Mangaoni => (Color::White, Color::Red),
@@ -27,7 +27,8 @@ fn provider_pill_colors(provider: MangaProviders) -> (Color, Color) {
     }
 }
 
-fn provider_badge_fg(provider: MangaProviders) -> Color {
+#[allow(dead_code)]
+pub(crate) fn provider_badge_fg(provider: MangaProviders) -> Color {
     match provider {
         MangaProviders::Inmanga => Color::Cyan,
         MangaProviders::Mangaoni => Color::LightRed,
@@ -39,7 +40,7 @@ fn provider_badge_fg(provider: MangaProviders) -> Color {
     }
 }
 
-fn status_pill_span(status: MangaStatus) -> Span<'static> {
+pub(crate) fn status_pill_span(status: MangaStatus) -> Span<'static> {
     match status {
         MangaStatus::Ongoing => {
             Span::styled(format!(" ● {} ", tr("En emisión", "Ongoing")), Style::default().fg(Color::Black).bg(Color::Green).bold())
