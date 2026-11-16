@@ -294,6 +294,33 @@ impl<'a> StatefulWidget for MangaPreview<'a> {
     }
 }
 
+fn truncate_title_for_width(text: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    if Span::raw(text).width() <= max_width {
+        return text.to_string();
+    }
+    if max_width == 1 {
+        return "…".to_string();
+    }
+    let target = max_width - 1;
+    let mut out = String::new();
+    let mut current_w = 0;
+    for ch in text.chars() {
+        let mut buf = [0u8; 4];
+        let ch_str = ch.encode_utf8(&mut buf);
+        let ch_w = Span::raw(&*ch_str).width();
+        if current_w + ch_w > target {
+            break;
+        }
+        out.push(ch);
+        current_w += ch_w;
+    }
+    out.push('…');
+    out
+}
+
 #[derive(Default, Clone, Debug, PartialEq)]
 pub struct MangaItem {
     pub manga: SearchManga,
@@ -303,11 +330,108 @@ pub struct MangaItem {
     pub is_selected: bool,
 }
 
+impl MangaItem {
+    fn provider_entries(&self) -> Vec<(usize, MangaProviders)> {
+        if !self.variants.is_empty() {
+            self.variants
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, variant)| variant.provider.map(|p| (idx, p)))
+                .collect()
+        } else {
+            self.manga.provider.map(|p| vec![(0, p)]).unwrap_or_default()
+        }
+    }
+
+    fn build_badge_spans(&self, providers: &[(usize, MangaProviders)], max_width: usize, row_bg: Color) -> Vec<Span<'static>> {
+        if providers.is_empty() || max_width == 0 {
+            return Vec::new();
+        }
+        let t = theme();
+        let badge_width = |p: MangaProviders| Span::raw(format!("[{}]", p.short_name())).width();
+        let make_badge = |idx: usize, p: MangaProviders| {
+            let text = format!("[{}]", p.short_name());
+            if idx == self.selected_variant_idx {
+                let (fg, bg) = provider_pill_colors(p);
+                Span::styled(text, Style::default().fg(fg).bg(bg).bold())
+            } else {
+                let fg = provider_badge_fg(p);
+                Span::styled(text, Style::default().fg(fg).bg(row_bg))
+            }
+        };
+
+        let total_width: usize = providers.iter().map(|(_, p)| badge_width(*p)).sum::<usize>() + providers.len().saturating_sub(1);
+
+        let len = providers.len();
+        let (start, end) = if total_width <= max_width {
+            (0, len)
+        } else {
+            let sel_pos = providers.iter().position(|(idx, _)| *idx == self.selected_variant_idx).unwrap_or(0);
+
+            let fit_end_from = |start: usize, left_overflow_w: usize| -> usize {
+                let mut used = left_overflow_w;
+                let mut end = start;
+                while end < len {
+                    let bw = badge_width(providers[end].1);
+                    let sep = usize::from(used > 0);
+                    let remaining_after = len - (end + 1);
+                    let right_overflow_w = if remaining_after > 0 { 1 + format!("+{remaining_after}").len() } else { 0 };
+                    if used + sep + bw + right_overflow_w <= max_width {
+                        used += sep + bw;
+                        end += 1;
+                    } else {
+                        break;
+                    }
+                }
+                end
+            };
+
+            let prefix_end = fit_end_from(0, 0);
+            if sel_pos < prefix_end {
+                (0, prefix_end.max(1))
+            } else {
+                let mut chosen_start = sel_pos;
+                let mut chosen_end = sel_pos + 1;
+                for s in 1..=sel_pos {
+                    let left_w = format!("+{s}").len();
+                    let e = fit_end_from(s, left_w);
+                    if e > sel_pos {
+                        chosen_start = s;
+                        chosen_end = e;
+                        break;
+                    }
+                }
+                (chosen_start, chosen_end)
+            }
+        };
+
+        let mut spans = Vec::new();
+        if start > 0 {
+            spans.push(Span::styled(format!("+{start}"), Style::default().fg(t.text_dim).bg(row_bg).bold()));
+            spans.push(Span::styled(" ", Style::default().bg(row_bg)));
+        }
+        for (offset, (idx, p)) in providers[start..end].iter().enumerate() {
+            if offset > 0 {
+                spans.push(Span::styled(" ", Style::default().bg(row_bg)));
+            }
+            spans.push(make_badge(*idx, *p));
+        }
+        if end < len {
+            spans.push(Span::styled(format!(" +{}", len - end), Style::default().fg(t.text_dim).bg(row_bg).bold()));
+        }
+        spans
+    }
+}
+
 impl Widget for MangaItem {
     fn render(self, area: Rect, buf: &mut Buffer)
     where
         Self: Sized,
     {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+
         let t = theme();
         let row_bg = if self.is_selected { t.row_selected_bg } else { Color::Reset };
 
@@ -331,51 +455,35 @@ impl Widget for MangaItem {
             Style::default().fg(t.text_muted)
         };
 
-        if self.variants.len() > 1 {
-            let mut badge_spans = Vec::with_capacity(self.variants.len() * 2);
-            for (idx, variant) in self.variants.iter().enumerate() {
-                if let Some(provider) = variant.provider {
-                    let badge_text = format!("[{}]", provider.short_name());
-                    if idx == self.selected_variant_idx {
-                        let (fg, bg) = provider_pill_colors(provider);
-                        badge_spans.push(Span::styled(badge_text, Style::default().fg(fg).bg(bg).bold()));
-                    } else {
-                        let fg = provider_badge_fg(provider);
-                        badge_spans.push(Span::styled(badge_text, Style::default().fg(fg).bg(row_bg)));
-                    }
-                    badge_spans.push(Span::styled(" ", Style::default().bg(row_bg)));
-                }
+        let providers = self.provider_entries();
+        let show_switch_hint = self.is_selected && providers.len() > 1;
+        let badge_spans = self.build_badge_spans(&providers, (area.width as usize).saturating_sub(2), row_bg);
+
+        if area.height >= 2 {
+            let suffix_w = if show_switch_hint { 4 } else { 0 };
+            let max_title_w = (area.width as usize).saturating_sub(2 + suffix_w);
+            let display_title = truncate_title_for_width(&self.manga.title, max_title_w);
+
+            let mut line1_spans = vec![cursor_span, Span::styled(display_title, title_style)];
+            if show_switch_hint {
+                line1_spans.push(Span::styled(" <P>", Style::default().fg(t.accent_highlight).bg(row_bg).bold()));
             }
 
-            if area.height >= 2 {
-                let mut line1_spans = vec![cursor_span, Span::styled(self.manga.title, title_style)];
-                if self.is_selected {
-                    line1_spans.push(Span::styled(" <P>", Style::default().fg(t.accent_highlight).bg(row_bg).bold()));
-                }
+            if badge_spans.is_empty() {
+                Paragraph::new(Line::from(line1_spans)).render(area, buf);
+            } else {
                 let mut line2_spans = vec![Span::styled("  ", Style::default().bg(row_bg))];
                 line2_spans.extend(badge_spans);
                 Paragraph::new(vec![Line::from(line1_spans), Line::from(line2_spans)]).render(area, buf);
-            } else {
-                let mut spans = vec![cursor_span];
-                spans.extend(badge_spans);
-                spans.push(Span::styled(self.manga.title, title_style));
-                Paragraph::new(Line::from(spans)).wrap(Wrap { trim: true }).render(area, buf);
             }
         } else {
-            let line = if let Some(provider) = self.manga.provider {
-                let (fg, bg) = provider_pill_colors(provider);
-                let badge = Span::styled(format!("[{}]", provider.short_name()), Style::default().fg(fg).bg(bg).bold());
-                Line::from(vec![
-                    cursor_span,
-                    badge,
-                    Span::styled(" ", Style::default().bg(row_bg)),
-                    Span::styled(self.manga.title, title_style),
-                ])
-            } else {
-                Line::from(vec![cursor_span, Span::styled(self.manga.title, title_style)])
-            };
-
-            Paragraph::new(line).wrap(Wrap { trim: true }).render(area, buf);
+            let mut spans = vec![cursor_span];
+            if !badge_spans.is_empty() {
+                spans.extend(badge_spans);
+                spans.push(Span::styled(" ", Style::default().bg(row_bg)));
+            }
+            spans.push(Span::styled(self.manga.title, title_style));
+            Paragraph::new(Line::from(spans)).render(area, buf);
         }
     }
 }
@@ -387,7 +495,7 @@ impl PreRender for MangaItem {
             self.style = *CURRENT_LIST_ITEM_STYLE;
         }
 
-        if self.variants.len() > 1 { 2 } else { 1 }
+        if self.provider_entries().is_empty() { 1 } else { 2 }
     }
 }
 
@@ -469,5 +577,130 @@ impl StatefulWidgetRef for ListMangasFoundWidget {
     fn render_ref(&self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let list = tui_widget_list::List::new(self.mangas.clone());
         StatefulWidget::render(list, area, buf, state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line_text(buf: &Buffer, y: u16, width: u16) -> String {
+        (0..width).map(|x| buf[(x, y)].symbol()).collect()
+    }
+
+    #[test]
+    fn single_provider_item_uses_same_two_line_structure_as_grouped_items() {
+        let widget = ListMangasFoundWidget::from_grouped_response(vec![
+            GroupedSearchManga::new(vec![
+                SearchManga {
+                    id: "inm_1".to_string(),
+                    title: "One Piece".to_string(),
+                    provider: Some(MangaProviders::Inmanga),
+                    ..Default::default()
+                },
+                SearchManga {
+                    id: "md_1".to_string(),
+                    title: "One Piece".to_string(),
+                    provider: Some(MangaProviders::Mangadex),
+                    ..Default::default()
+                },
+            ]),
+            GroupedSearchManga::new(vec![SearchManga {
+                id: "one_shot".to_string(),
+                title: "One Piece Oneshot Collection".to_string(),
+                provider: Some(MangaProviders::Inmanga),
+                ..Default::default()
+            }]),
+        ]);
+
+        let mut state = tui_widget_list::ListState::default();
+        state.select(Some(1));
+        let area = Rect::new(0, 0, 60, 4);
+        let mut buf = Buffer::empty(area);
+        widget.render_ref(area, &mut buf, &mut state);
+
+        // Multi-variant card (rows 0..2)
+        let row0 = line_text(&buf, 0, 60);
+        let row1 = line_text(&buf, 1, 60);
+        assert!(row0.contains("One Piece"), "row0: {row0}");
+        assert!(row1.starts_with("  [InManga] [MangaDex]"), "row1: {row1}");
+
+        // Single-variant card (rows 2..4) uses the exact same 2-line layout
+        let row2 = line_text(&buf, 2, 60);
+        let row3 = line_text(&buf, 3, 60);
+        assert!(row2.contains("▸ One Piece Oneshot Collection"), "row2: {row2}");
+        assert!(!row2.contains("[InManga]"), "provider badge must be on line 2, not line 1: {row2}");
+        assert!(!row2.contains("<P>"), "single provider must not show <P>: {row2}");
+        assert!(row3.starts_with("  [InManga]"), "row3 must start with indented badge: {row3}");
+    }
+
+    #[test]
+    fn long_selected_title_keeps_switch_hint_visible_and_truncates_cleanly() {
+        let mut item = MangaItem::from_grouped(GroupedSearchManga::new(vec![
+            SearchManga {
+                id: "1".to_string(),
+                title: "A Very Long Manga Title That Should Truncate Before Hiding The Hint".to_string(),
+                provider: Some(MangaProviders::Inmanga),
+                ..Default::default()
+            },
+            SearchManga {
+                id: "2".to_string(),
+                title: "A Very Long Manga Title That Should Truncate Before Hiding The Hint".to_string(),
+                provider: Some(MangaProviders::Mangadex),
+                ..Default::default()
+            },
+        ]));
+        item.is_selected = true;
+
+        let area = Rect::new(0, 0, 40, 2);
+        let mut buf = Buffer::empty(area);
+        item.render(area, &mut buf);
+
+        let line1 = line_text(&buf, 0, 40);
+        assert!(line1.contains('…'), "expected ellipsis on truncated title: {line1}");
+        assert!(line1.trim_end().ends_with("<P>"), "expected <P> hint to remain visible: {line1}");
+    }
+
+    #[test]
+    fn overflowing_provider_badges_never_chop_mid_tag_and_keep_selected_visible() {
+        let variants = [
+            MangaProviders::Inmanga,
+            MangaProviders::Mangaoni,
+            MangaProviders::Leercapitulo,
+            MangaProviders::Mangadex,
+            MangaProviders::Weebcentral,
+            MangaProviders::Mangapill,
+            MangaProviders::Comizy,
+        ]
+        .into_iter()
+        .map(|p| SearchManga {
+            id: format!("{p:?}"),
+            title: "One Piece".to_string(),
+            provider: Some(p),
+            ..Default::default()
+        })
+        .collect();
+
+        let mut item = MangaItem::from_grouped(GroupedSearchManga::new(variants));
+        item.is_selected = true;
+
+        let area = Rect::new(0, 0, 68, 2);
+        let mut buf = Buffer::empty(area);
+        item.clone().render(area, &mut buf);
+
+        let line2_first = line_text(&buf, 1, 68);
+        assert!(!line2_first.contains("[Co "), "must not chop [Comizy]: {line2_first}");
+        assert!(!line2_first.contains("[Ma "), "must not chop [MangaPill]: {line2_first}");
+        assert!(line2_first.contains("[InManga]"), "expected active badge visible: {line2_first}");
+        assert!(line2_first.contains('+'), "expected +N overflow indicator: {line2_first}");
+
+        // Cycle selection to the last provider ([Comizy]) and verify it slides into view
+        for _ in 0..6 {
+            assert!(item.cycle_provider());
+        }
+        let mut buf_last = Buffer::empty(area);
+        item.render(area, &mut buf_last);
+        let line2_last = line_text(&buf_last, 1, 68);
+        assert!(line2_last.contains("[Comizy]"), "expected selected [Comizy] visible: {line2_last}");
     }
 }

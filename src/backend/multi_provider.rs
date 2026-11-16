@@ -301,22 +301,46 @@ impl GroupedSearchManga {
 
 fn fold_accent(c: char) -> char {
     match c {
-        'á' | 'à' | 'ä' | 'â' | 'ã' => 'a',
-        'é' | 'è' | 'ë' | 'ê' => 'e',
-        'í' | 'ì' | 'ï' | 'î' => 'i',
-        'ó' | 'ò' | 'ö' | 'ô' | 'õ' => 'o',
-        'ú' | 'ù' | 'ü' | 'û' => 'u',
+        'á' | 'à' | 'ä' | 'â' | 'ã' | 'ā' => 'a',
+        'é' | 'è' | 'ë' | 'ê' | 'ē' => 'e',
+        'í' | 'ì' | 'ï' | 'î' | 'ī' => 'i',
+        'ó' | 'ò' | 'ö' | 'ô' | 'õ' | 'ō' | 'ø' => 'o',
+        'ú' | 'ù' | 'ü' | 'û' | 'ū' => 'u',
         'ñ' => 'n',
         'ç' => 'c',
         other => other,
     }
 }
 
+fn is_apostrophe(c: char) -> bool {
+    matches!(c, '\'' | '’' | '‘' | 'ʼ' | '`')
+}
+
+fn strip_trailing_bracketed_manga_tag(title: &str) -> &str {
+    let trimmed = title.trim();
+    let lower = trimmed.to_lowercase();
+    for suffix in ["(the manga)", "[the manga]", "(manga)", "[manga]"] {
+        if lower.ends_with(suffix) {
+            let prefix_len = trimmed.len().saturating_sub(suffix.len());
+            if let Some(prefix) = trimmed.get(..prefix_len)
+                && !prefix.trim().is_empty()
+            {
+                return prefix.trim();
+            }
+        }
+    }
+    trimmed
+}
+
 pub fn normalize_title_for_grouping(title: &str) -> String {
-    let mut out = String::with_capacity(title.len());
+    let base = strip_trailing_bracketed_manga_tag(title);
+    let mut out = String::with_capacity(base.len());
     let mut prev_space = true;
-    for ch in title.chars() {
+    for ch in base.chars() {
         for lower in ch.to_lowercase() {
+            if is_apostrophe(lower) {
+                continue;
+            }
             let folded = fold_accent(lower);
             if folded.is_alphanumeric() {
                 out.push(folded);
@@ -327,8 +351,43 @@ pub fn normalize_title_for_grouping(title: &str) -> String {
             }
         }
     }
-    let trimmed = out.trim();
-    if trimmed.is_empty() { title.trim().to_lowercase() } else { trimmed.to_string() }
+
+    let mut tokens: Vec<&str> = out.split_whitespace().collect();
+    if tokens.is_empty() {
+        return title.trim().to_lowercase();
+    }
+
+    if tokens.len() >= 4 && tokens[tokens.len() - 2] == "the" && tokens[tokens.len() - 1] == "manga" {
+        tokens.truncate(tokens.len() - 2);
+    }
+
+    let mut canonical: Vec<&str> = Vec::with_capacity(tokens.len());
+    let mut i = 0;
+    while i < tokens.len() {
+        if i > 0
+            && i + 1 < tokens.len()
+            && matches!(tokens[i], "full" | "official" | "digital")
+            && matches!(tokens[i + 1], "color" | "colored")
+        {
+            canonical.push("color");
+            i += 2;
+        } else if i > 0 && tokens[i] == "colored" {
+            canonical.push("color");
+            i += 1;
+        } else {
+            canonical.push(tokens[i]);
+            i += 1;
+        }
+    }
+
+    if canonical.len() >= 3
+        && canonical[canonical.len() - 2] == "color"
+        && matches!(canonical[canonical.len() - 1], "edition" | "comics" | "version")
+    {
+        canonical.pop();
+    }
+
+    canonical.join(" ")
 }
 
 pub fn provider_priority_rank(provider: Option<MangaProviders>, lang: MultiSearchLanguage) -> u8 {
@@ -1124,6 +1183,67 @@ mod tests {
         assert_eq!(normalize_title_for_grouping("Kaguya-Sama Love Is War"), "kaguya sama love is war");
         assert_eq!(normalize_title_for_grouping("  BERSERK  "), "berserk");
         assert_ne!(normalize_title_for_grouping("Berserk"), normalize_title_for_grouping("Berserk: The Prototype"));
+
+        // Color editions collapse to the same key while staying distinct from the B&W series
+        let color_full = normalize_title_for_grouping("One Piece (Full Color)");
+        let color_official = normalize_title_for_grouping("One Piece (Official Colored)");
+        let color_short = normalize_title_for_grouping("One Piece (Color)");
+        let color_digital = normalize_title_for_grouping("One Piece (Digital Colored Comics)");
+        assert_eq!(color_full, "one piece color");
+        assert_eq!(color_official, color_full);
+        assert_eq!(color_short, color_full);
+        assert_eq!(color_digital, color_full);
+        assert_ne!(normalize_title_for_grouping("One Piece"), color_full);
+        assert_ne!(normalize_title_for_grouping("One Piece English Digital Color"), color_full);
+        assert_eq!(normalize_title_for_grouping("Full Color World"), "full color world");
+
+        // Format suffixes and apostrophes
+        assert_eq!(normalize_title_for_grouping("One Piece: Ace's Story-The Manga"), "one piece aces story");
+        assert_eq!(normalize_title_for_grouping("One Piece: Ace's Story"), "one piece aces story");
+        assert_eq!(normalize_title_for_grouping("One Piece: Aces Story"), "one piece aces story");
+        assert_eq!(normalize_title_for_grouping("Chainsaw Man (Manga)"), "chainsaw man");
+        assert_eq!(normalize_title_for_grouping("How to Draw Manga"), "how to draw manga");
+    }
+
+    #[test]
+    fn test_group_search_results_merges_color_editions_and_manga_suffix() {
+        let raw = vec![
+            SearchManga {
+                id: "oni_color".to_string(),
+                title: "One Piece (Full Color)".to_string(),
+                provider: Some(MangaProviders::Mangaoni),
+                ..Default::default()
+            },
+            SearchManga {
+                id: "md_color".to_string(),
+                title: "One Piece (Official Colored)".to_string(),
+                provider: Some(MangaProviders::Mangadex),
+                ..Default::default()
+            },
+            SearchManga {
+                id: "wc_color".to_string(),
+                title: "One Piece (Color)".to_string(),
+                provider: Some(MangaProviders::Weebcentral),
+                ..Default::default()
+            },
+            SearchManga {
+                id: "oni_ace".to_string(),
+                title: "One Piece: Ace's Story".to_string(),
+                provider: Some(MangaProviders::Mangaoni),
+                ..Default::default()
+            },
+            SearchManga {
+                id: "md_ace".to_string(),
+                title: "One Piece: Ace's Story-The Manga".to_string(),
+                provider: Some(MangaProviders::Mangadex),
+                ..Default::default()
+            },
+        ];
+
+        let grouped = group_search_results(raw, "One Piece", MultiSearchLanguage::All);
+        assert_eq!(grouped.len(), 2);
+        assert_eq!(grouped[0].variants.len(), 3);
+        assert_eq!(grouped[1].variants.len(), 2);
     }
 
     #[test]
