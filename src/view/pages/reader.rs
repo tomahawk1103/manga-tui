@@ -371,6 +371,11 @@ where
 
         self.render_reader_top_bar(top_bar_area, buf);
 
+        let index = self.current_page_index();
+        if let Some((raw_w, raw_h)) = self.pages.get(index).and_then(|p| p.dimensions) {
+            self.resize_based_on_image_size(raw_w, raw_h);
+        }
+
         let left_w = if body_area.width >= 120 {
             22
         } else if body_area.width >= 85 {
@@ -398,7 +403,7 @@ where
         self.center_image_area = center;
 
         let total_pages = self.pages_list.pages.len().max(self.pages.len());
-        let current_page_num = if total_pages == 0 { 0 } else { (self.current_page_index() + 1).min(total_pages) };
+        let current_page_num = if total_pages == 0 { 0 } else { (index + 1).min(total_pages) };
         t.rounded_block()
             .title(Span::styled(
                 format!(" 📄 {} ({current_page_num}/{total_pages}) ", tr("Páginas", "Pages")),
@@ -406,23 +411,26 @@ where
             ))
             .render(left, buf);
 
-        let index = self.current_page_index();
         let page_loaded = self.pages.get(index).map(|page| page.is_loaded()).unwrap_or(false);
         let show_reload = if page_loaded {
-            let (width, height) = {
-                let font_size = self.picker.font_size;
-                let page = &mut self.pages[index];
-                let (raw_w, raw_h) = page.dimensions.unwrap_or((0, 0));
-                let display_h = if page.is_tall_strip() { page.viewport_height() } else { raw_h };
-                let draw_area = centered_image_rect(center, raw_w, display_h, font_size.0, font_size.1);
-                let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
-                let image = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
-                if let Some(protocol) = page.get_or_create_protocol(&mut self.picker) {
-                    StatefulWidget::render(image, draw_area, buf, protocol);
-                }
-                (raw_w, raw_h)
+            let font_size = self.picker.font_size;
+            let image_canvas = if center.width > 2 && center.height > 2 {
+                center.inner(Margin {
+                    horizontal: 1,
+                    vertical: 1,
+                })
+            } else {
+                center
             };
-            self.resize_based_on_image_size(width, height);
+            let page = &mut self.pages[index];
+            let (raw_w, raw_h) = page.dimensions.unwrap_or((0, 0));
+            let display_h = if page.is_tall_strip() { page.viewport_height() } else { raw_h };
+            let draw_area = centered_image_rect(image_canvas, raw_w, display_h, font_size.0, font_size.1);
+            let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
+            let image = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
+            if let Some(protocol) = page.get_or_create_protocol(&mut self.picker) {
+                StatefulWidget::render(image, draw_area, buf, protocol);
+            }
 
             false
         } else {
@@ -527,10 +535,16 @@ where
                         {
                             let inner_y = (pos.y - self.left_panel_area.y - 1) as usize;
                             let curr = self.current_page_index();
-                            let offset = if curr >= inner_h { curr + 1 - inner_h } else { 0 };
+                            let offset = self.page_list_state.list_state.scroll_offset_index();
                             let target = (offset + inner_y).min(total - 1);
-                            self.page_list_state.list_state.select(Some(target));
-                            self.fetch_pages();
+                            if target != curr {
+                                self.page_list_state.list_state.select(Some(target));
+                                if let Some(page) = self.pages.get_mut(target) {
+                                    page.scroll_y = 0;
+                                }
+                                self.needs_terminal_clear = true;
+                                self.fetch_pages();
+                            }
                         }
                     } else if self.center_image_area.contains(pos) {
                         self.local_action_tx.send(MangaReaderActions::NextPage).ok();
@@ -638,9 +652,14 @@ where
                 if page.scroll_y < max_scroll {
                     let step = page.scroll_step();
                     page.scroll_y = (page.scroll_y + step).min(max_scroll);
+                    self.needs_terminal_clear = true;
                     return;
                 }
             }
+        }
+        let total = self.pages.len().max(self.pages_list.pages.len());
+        if self.page_list_state.list_state.selected.is_some_and(|i| i + 1 >= total) {
+            return;
         }
         self.page_list_state.list_state.next();
         let new_index = self.current_page_index();
@@ -648,6 +667,7 @@ where
             if let Some(page) = self.pages.get_mut(new_index) {
                 page.scroll_y = 0;
             }
+            self.needs_terminal_clear = true;
         }
         self.fetch_pages();
     }
@@ -658,6 +678,7 @@ where
             if page.is_tall_strip() && page.scroll_y > 0 {
                 let step = page.scroll_step();
                 page.scroll_y = page.scroll_y.saturating_sub(step);
+                self.needs_terminal_clear = true;
                 return;
             }
         }
@@ -670,6 +691,7 @@ where
                         page.scroll_y = page.max_scroll_y();
                     }
                 }
+                self.needs_terminal_clear = true;
             }
             self.fetch_pages();
         }
@@ -728,9 +750,14 @@ where
     fn go_to_first_page(&mut self) {
         let total = self.pages.len().max(self.pages_list.pages.len());
         if total > 0 {
+            let prev = self.current_page_index();
+            let prev_scroll = self.pages.get(prev).map(|p| p.scroll_y).unwrap_or(0);
             self.page_list_state.list_state.select(Some(0));
             if let Some(page) = self.pages.get_mut(0) {
                 page.scroll_y = 0;
+            }
+            if prev != 0 || prev_scroll != 0 {
+                self.needs_terminal_clear = true;
             }
             self.fetch_pages();
         }
@@ -740,13 +767,20 @@ where
         let total = self.pages.len().max(self.pages_list.pages.len());
         if total > 0 {
             let last = total.saturating_sub(1);
+            let prev = self.current_page_index();
+            let prev_scroll = self.pages.get(prev).map(|p| p.scroll_y).unwrap_or(0);
             self.page_list_state.list_state.select(Some(last));
+            let mut new_scroll = 0;
             if let Some(page) = self.pages.get_mut(last) {
                 if page.is_tall_strip() {
-                    page.scroll_y = page.max_scroll_y();
+                    new_scroll = page.max_scroll_y();
+                    page.scroll_y = new_scroll;
                 } else {
                     page.scroll_y = 0;
                 }
+            }
+            if prev != last || prev_scroll != new_scroll {
+                self.needs_terminal_clear = true;
             }
             self.fetch_pages();
         }
@@ -787,6 +821,9 @@ where
                 // Todo! indicate with an x that some page didnt load
             },
         }
+        if data.index == self.current_page_index() {
+            self.needs_terminal_clear = true;
+        }
     }
 
     fn resize_based_on_image_size(&mut self, width: u32, height: u32) {
@@ -799,6 +836,7 @@ where
 
     fn load_chapter(&mut self, chapter: ChapterToRead) {
         self.clean_up();
+        self.needs_terminal_clear = true;
 
         self.current_chapter = chapter;
         self.local_source = LocalChapterSource::find(&self.manga_title, &self.current_chapter.id);
@@ -1336,6 +1374,8 @@ where
             }
         }
         let page_count = self.current_chapter.pages_url.len();
+        self.pages.clear();
+        self.pages_list.pages.clear();
         for index in 0..page_count {
             self.pages.push(Page::new());
             self.pages_list.pages.push(PagesItem::new(index));
@@ -2185,5 +2225,72 @@ mod test {
         assert_eq!(manga_reader.picker.protocol_type, ProtocolType::Halfblocks);
 
         crate::view::widgets::settings::set_active_image_protocol(crate::config::ImageProtocol::Auto);
+    }
+
+    #[tokio::test]
+    async fn test_page_navigation_does_not_wrap_clears_terminal_and_resizes_before_layout() {
+        use image::DynamicImage;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        use crate::backend::manga_provider::MangaPanel;
+
+        let chapter = ChapterToRead {
+            pages_url: vec!["http://localhost/1".parse().unwrap(), "http://localhost/2".parse().unwrap()],
+            ..Default::default()
+        };
+
+        let mut picker = Picker::new((8, 16));
+        picker.protocol_type = ProtocolType::Halfblocks;
+
+        let mut manga_reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(chapter, "manga-1".into(), picker, ReaderPageProvierMock::new().into());
+        manga_reader.init_fetching_pages();
+
+        // Page 0: portrait (Normal), Page 1: double-page spread (Wide)
+        manga_reader.load_page(PageData {
+            panel: MangaPanel {
+                image_decoded: DynamicImage::new_rgb8(400, 600),
+                dimensions: (400, 600),
+            },
+            index: 0,
+        });
+        manga_reader.load_page(PageData {
+            panel: MangaPanel {
+                image_decoded: DynamicImage::new_rgb8(1200, 600),
+                dimensions: (1200, 600),
+            },
+            index: 1,
+        });
+
+        manga_reader.render_page_list(Rect::new(0, 0, 22, 20), &mut Buffer::empty(Rect::new(0, 0, 22, 20)));
+        manga_reader.page_list_state.list_state.select(Some(0));
+        manga_reader.needs_terminal_clear = false;
+
+        // Advancing from page 0 to page 1 sets needs_terminal_clear
+        manga_reader.next_page();
+        assert_eq!(manga_reader.current_page_index(), 1);
+        assert!(manga_reader.needs_terminal_clear);
+
+        // Advancing past last page must NOT wrap back to page 0
+        manga_reader.needs_terminal_clear = false;
+        manga_reader.next_page();
+        assert_eq!(manga_reader.current_page_index(), 1);
+        assert!(!manga_reader.needs_terminal_clear);
+
+        // Render while current_page_size is still Normal: render must update current_page_size to Wide BEFORE layout
+        assert_eq!(manga_reader.current_page_size, PageSize::Normal);
+        let backend = TestBackend::new(140, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 140, 40);
+        terminal
+            .draw(|f| {
+                manga_reader.render(area, f);
+            })
+            .unwrap();
+
+        assert_eq!(manga_reader.current_page_size, PageSize::Wide);
+        // Right panel width for Wide at 140 cols is 26; left is 22 -> center width is 140 - 22 - 26 = 92
+        assert_eq!(manga_reader.center_image_area.width, 92);
     }
 }

@@ -164,35 +164,116 @@ pub fn is_running_in_modern_windows_terminal() -> bool {
     }
 }
 
+/// Parses a terminal CSI 16t cell-pixel-size report (`CSI 6 ; <height> ; <width> t`) and
+/// returns `(cell_width, cell_height)` when both dimensions are within sane bounds.
+pub fn parse_csi_cell_size_response(buf: &str) -> Option<(u16, u16)> {
+    let start = buf.find("\x1b[6;")?;
+    let rest = &buf[start + 4..];
+    let end = rest.find('t')?;
+    let body = &rest[..end];
+    let (h_str, w_str) = body.split_once(';')?;
+    let h: u16 = h_str.trim().parse().ok()?;
+    let w: u16 = w_str.trim().parse().ok()?;
+    if (4..=64).contains(&w) && (8..=128).contains(&h) { Some((w, h)) } else { None }
+}
+
 #[cfg(target_os = "windows")]
-/// Default font width for Windows console on 96 DPI
-const DEFAULT_FONT_SIZE_WIDTH: u16 = 10;
+/// Safe default cell width in pixels when CSI 16t query is unavailable (never over-estimates height).
+const DEFAULT_FONT_SIZE_WIDTH: u16 = 8;
 #[cfg(target_os = "windows")]
-/// Default font height for Windows console on 96 DPI
-const DEFAULT_FONT_SIZE_HEIGHT: u16 = 22;
+/// Safe default cell height in pixels when CSI 16t query is unavailable (never over-estimates height).
+const DEFAULT_FONT_SIZE_HEIGHT: u16 = 16;
+
+#[cfg(target_os = "windows")]
+fn query_windows_terminal_cell_size() -> Option<(u16, u16)> {
+    use std::io::Write;
+    use std::thread;
+
+    use windows_sys::Win32::Foundation::INVALID_HANDLE_VALUE;
+    use windows_sys::Win32::System::Console::{
+        GetNumberOfConsoleInputEvents, GetStdHandle, INPUT_RECORD, KEY_EVENT, PeekConsoleInputW, ReadConsoleInputW,
+        STD_INPUT_HANDLE,
+    };
+
+    let stdin_handle = unsafe { GetStdHandle(STD_INPUT_HANDLE) };
+    if stdin_handle.is_null() || stdin_handle == INVALID_HANDLE_VALUE {
+        return None;
+    }
+
+    let mut stdout = std::io::stdout();
+    stdout.write_all(b"\x1b[16t").ok()?;
+    stdout.flush().ok()?;
+
+    let mut count = 0u32;
+    for _ in 0..15 {
+        if unsafe { GetNumberOfConsoleInputEvents(stdin_handle, &mut count) } == 0 {
+            return None;
+        }
+        if count > 0 {
+            break;
+        }
+        thread::sleep(Duration::from_millis(2));
+    }
+    if count == 0 {
+        return None;
+    }
+
+    let mut first_record: INPUT_RECORD = unsafe { std::mem::zeroed() };
+    let mut read_count = 0u32;
+    if unsafe { PeekConsoleInputW(stdin_handle, &mut first_record, 1, &mut read_count) } == 0 || read_count == 0 {
+        return None;
+    }
+    if first_record.EventType as u32 != KEY_EVENT as u32 {
+        return None;
+    }
+    let first_ch = unsafe { first_record.Event.KeyEvent.uChar.UnicodeChar };
+    if first_ch != 0x1b {
+        return None;
+    }
+
+    let mut response = String::new();
+    for _ in 0..32 {
+        let mut avail = 0u32;
+        if unsafe { GetNumberOfConsoleInputEvents(stdin_handle, &mut avail) } == 0 {
+            break;
+        }
+        if avail == 0 {
+            thread::sleep(Duration::from_millis(2));
+            if unsafe { GetNumberOfConsoleInputEvents(stdin_handle, &mut avail) } == 0 || avail == 0 {
+                break;
+            }
+        }
+        let mut record: INPUT_RECORD = unsafe { std::mem::zeroed() };
+        let mut got = 0u32;
+        if unsafe { ReadConsoleInputW(stdin_handle, &mut record, 1, &mut got) } == 0 || got == 0 {
+            break;
+        }
+        if record.EventType as u32 == KEY_EVENT as u32 && unsafe { record.Event.KeyEvent.bKeyDown } != 0 {
+            let code_unit = unsafe { record.Event.KeyEvent.uChar.UnicodeChar };
+            if let Some(ch) = char::from_u32(code_unit as u32)
+                && ch != '\0'
+            {
+                response.push(ch);
+                if ch == 't' {
+                    break;
+                }
+            }
+        }
+    }
+
+    parse_csi_cell_size_response(&response)
+}
 
 #[cfg(target_os = "windows")]
 pub fn get_picker() -> Option<Picker> {
-    use windows_sys::Win32::System::Console::GetConsoleWindow;
-    use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
-
-    let window_dpi = unsafe { GetConsoleWindow() };
-    let window_dpi = unsafe { GetDpiForWindow(window_dpi) };
-    // In some terminals (ConPTY, Windows Terminal) there is no classic console window and GetDpiForWindow returns 0;
-    // fall back to system DPI so HiDPI displays get sharp cell pixel dimensions.
-    let dpi = if window_dpi == 0 {
-        let sys_dpi = unsafe { GetDpiForSystem() };
-        if sys_dpi == 0 { 96 } else { sys_dpi }
+    let is_modern_terminal = is_running_in_modern_windows_terminal();
+    let size: (u16, u16) = if is_modern_terminal {
+        query_windows_terminal_cell_size().unwrap_or((DEFAULT_FONT_SIZE_WIDTH, DEFAULT_FONT_SIZE_HEIGHT))
     } else {
-        window_dpi
+        (DEFAULT_FONT_SIZE_WIDTH, DEFAULT_FONT_SIZE_HEIGHT)
     };
-    let scale = dpi as f32 / 96.0;
-    let size: (u16, u16) = (
-        ((DEFAULT_FONT_SIZE_WIDTH as f32 * scale).round() as u16).max(1),
-        ((DEFAULT_FONT_SIZE_HEIGHT as f32 * scale).round() as u16).max(1),
-    );
 
-    let mut picker = Picker::new((size.0, size.1));
+    let mut picker = Picker::new(size);
 
     let env_proto = std::env::var("MANGA_TUI_PROTOCOL").ok();
     let config_proto = crate::view::widgets::settings::active_image_protocol();
@@ -208,7 +289,6 @@ pub fn get_picker() -> Option<Picker> {
     let protocol = picker.guess_protocol();
 
     let is_vscode_conpty = std::env::var("TERM_PROGRAM").map(|v| v.eq_ignore_ascii_case("vscode")).unwrap_or(false);
-    let is_modern_terminal = is_running_in_modern_windows_terminal();
 
     if is_vscode_conpty || (protocol == ProtocolType::Halfblocks && is_modern_terminal) {
         picker.protocol_type = ProtocolType::Sixel;
@@ -253,6 +333,7 @@ pub async fn run_app<T: MangaProvider>(
         app.listen_to_event().await;
 
         app.update_based_on_action();
+        app.drain_pending_events();
     }
 
     main_event_handle.abort();
@@ -349,5 +430,14 @@ mod tests {
         assert_eq!(resolve_protocol_override(Some("   "), ImageProtocol::Sixel), Some(Some(ProtocolType::Sixel)));
         assert_eq!(resolve_protocol_override(Some("invalid"), ImageProtocol::Halfblocks), Some(Some(ProtocolType::Halfblocks)));
         assert_eq!(resolve_protocol_override(None, ImageProtocol::None), Some(None));
+    }
+
+    #[test]
+    fn parse_csi_cell_size_response_handles_valid_and_invalid_reports() {
+        assert_eq!(parse_csi_cell_size_response("\x1b[6;16;8t"), Some((8, 16)));
+        assert_eq!(parse_csi_cell_size_response("noise\x1b[6;19;9tmore"), Some((9, 19)));
+        assert_eq!(parse_csi_cell_size_response("\x1b[6;0;8t"), None);
+        assert_eq!(parse_csi_cell_size_response("\x1b[6;16;200t"), None);
+        assert_eq!(parse_csi_cell_size_response("not a csi response"), None);
     }
 }

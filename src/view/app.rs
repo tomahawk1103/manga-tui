@@ -1511,48 +1511,69 @@ where
         self.current_tab = SelectedPage::Feed;
     }
 
+    pub fn process_global_event(&mut self, event: Events) {
+        let was_displaying_modal = self.is_displaying_modal();
+
+        self.handle_events(event.clone());
+
+        if event == Events::Tick && self.last_new_chapter_check.elapsed() >= NEW_CHAPTER_CHECK_INTERVAL {
+            self.global_event_tx.send(Events::CheckForNewDownloadedChapters).ok();
+        }
+
+        // If a modal was already open, route key events to the modal handler;
+        // if handle_events just opened a modal on this event, consume the event without closing it immediately.
+        if was_displaying_modal {
+            if let Events::Key(key_event) = event {
+                self.key_events_modal(key_event);
+            }
+            return;
+        } else if self.is_displaying_modal() {
+            return;
+        }
+
+        match self.current_tab {
+            SelectedPage::Search => {
+                self.search_page.handle_events(event);
+            },
+            SelectedPage::MangaTab => {
+                if let Some(manga_page) = self.manga_page.as_mut() {
+                    manga_page.handle_events(event);
+                }
+            },
+            SelectedPage::ReaderTab => {
+                if let Some(reader_page) = self.manga_reader_page.as_mut() {
+                    reader_page.handle_events(event);
+                }
+            },
+            SelectedPage::Home => {
+                self.home_page.handle_events(event);
+            },
+            SelectedPage::Feed => {
+                self.feed_page.handle_events(event);
+            },
+        };
+    }
+
     pub async fn listen_to_event(&mut self) {
         if let Some(event) = self.global_event_rx.recv().await {
-            let was_displaying_modal = self.is_displaying_modal();
+            self.process_global_event(event);
+        }
+    }
 
-            self.handle_events(event.clone());
-
-            if event == Events::Tick && self.last_new_chapter_check.elapsed() >= NEW_CHAPTER_CHECK_INTERVAL {
-                self.global_event_tx.send(Events::CheckForNewDownloadedChapters).ok();
-            }
-
-            // If a modal was already open, route key events to the modal handler;
-            // if handle_events just opened a modal on this event, consume the event without closing it immediately.
-            if was_displaying_modal {
-                if let Events::Key(key_event) = event {
-                    self.key_events_modal(key_event);
-                }
-                return;
-            } else if self.is_displaying_modal() {
-                return;
-            }
-
-            match self.current_tab {
-                SelectedPage::Search => {
-                    self.search_page.handle_events(event);
-                },
-                SelectedPage::MangaTab => {
-                    if let Some(manga_page) = self.manga_page.as_mut() {
-                        manga_page.handle_events(event);
-                    }
-                },
-                SelectedPage::ReaderTab => {
-                    if let Some(reader_page) = self.manga_reader_page.as_mut() {
-                        reader_page.handle_events(event);
-                    }
-                },
-                SelectedPage::Home => {
-                    self.home_page.handle_events(event);
-                },
-                SelectedPage::Feed => {
-                    self.feed_page.handle_events(event);
-                },
+    pub fn drain_pending_events(&mut self) {
+        let mut drained = 0usize;
+        while drained < 32 && self.state == AppState::Runnning {
+            let Ok(event) = self.global_event_rx.try_recv() else {
+                break;
             };
+            // Skip redundant Tick events when draining a backlog of input events
+            if event == Events::Tick && !self.global_event_rx.is_empty() {
+                drained += 1;
+                continue;
+            }
+            self.process_global_event(event);
+            self.update_based_on_action();
+            drained += 1;
         }
     }
 
