@@ -204,30 +204,44 @@ fn query_windows_terminal_cell_size() -> Option<(u16, u16)> {
     stdout.write_all(b"\x1b[16t").ok()?;
     stdout.flush().ok()?;
 
-    let mut count = 0u32;
-    for _ in 0..15 {
+    let mut found_escape = false;
+    // Drain unrelated startup events (FOCUS_EVENT, WINDOW_BUFFER_SIZE_EVENT, key-up from Enter)
+    // until the CSI 16t ESC prefix arrives or the short polling budget expires.
+    for _ in 0..25 {
+        let mut count = 0u32;
         if unsafe { GetNumberOfConsoleInputEvents(stdin_handle, &mut count) } == 0 {
             return None;
         }
-        if count > 0 {
+        if count == 0 {
+            thread::sleep(Duration::from_millis(2));
+            continue;
+        }
+        let mut peek_record: INPUT_RECORD = unsafe { std::mem::zeroed() };
+        let mut read_count = 0u32;
+        if unsafe { PeekConsoleInputW(stdin_handle, &mut peek_record, 1, &mut read_count) } == 0 || read_count == 0 {
+            return None;
+        }
+        if peek_record.EventType as u32 != KEY_EVENT as u32 {
+            let mut discard: INPUT_RECORD = unsafe { std::mem::zeroed() };
+            let mut got = 0u32;
+            let _ = unsafe { ReadConsoleInputW(stdin_handle, &mut discard, 1, &mut got) };
+            continue;
+        }
+        let is_key_down = unsafe { peek_record.Event.KeyEvent.bKeyDown } != 0;
+        let ch_u16 = unsafe { peek_record.Event.KeyEvent.uChar.UnicodeChar };
+        if !is_key_down {
+            let mut discard: INPUT_RECORD = unsafe { std::mem::zeroed() };
+            let mut got = 0u32;
+            let _ = unsafe { ReadConsoleInputW(stdin_handle, &mut discard, 1, &mut got) };
+            continue;
+        }
+        if ch_u16 == 0x1b {
+            found_escape = true;
             break;
         }
-        thread::sleep(Duration::from_millis(2));
-    }
-    if count == 0 {
         return None;
     }
-
-    let mut first_record: INPUT_RECORD = unsafe { std::mem::zeroed() };
-    let mut read_count = 0u32;
-    if unsafe { PeekConsoleInputW(stdin_handle, &mut first_record, 1, &mut read_count) } == 0 || read_count == 0 {
-        return None;
-    }
-    if first_record.EventType as u32 != KEY_EVENT as u32 {
-        return None;
-    }
-    let first_ch = unsafe { first_record.Event.KeyEvent.uChar.UnicodeChar };
-    if first_ch != 0x1b {
+    if !found_escape {
         return None;
     }
 
@@ -266,9 +280,28 @@ fn query_windows_terminal_cell_size() -> Option<(u16, u16)> {
 
 #[cfg(target_os = "windows")]
 pub fn get_picker() -> Option<Picker> {
+    const FALLBACK_CELL_WIDTH: u16 = 10;
+    const FALLBACK_CELL_HEIGHT: u16 = 22;
+
     let is_modern_terminal = is_running_in_modern_windows_terminal();
     let size: (u16, u16) = if is_modern_terminal {
-        query_windows_terminal_cell_size().unwrap_or((DEFAULT_FONT_SIZE_WIDTH, DEFAULT_FONT_SIZE_HEIGHT))
+        query_windows_terminal_cell_size().unwrap_or_else(|| {
+            use windows_sys::Win32::System::Console::GetConsoleWindow;
+            use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
+
+            let window_dpi = unsafe { GetDpiForWindow(GetConsoleWindow()) };
+            let dpi = if window_dpi == 0 {
+                let sys_dpi = unsafe { GetDpiForSystem() };
+                if sys_dpi == 0 { 96 } else { sys_dpi }
+            } else {
+                window_dpi
+            };
+            let scale = dpi as f32 / 96.0;
+            (
+                ((FALLBACK_CELL_WIDTH as f32 * scale).round() as u16).max(1),
+                ((FALLBACK_CELL_HEIGHT as f32 * scale).round() as u16).max(1),
+            )
+        })
     } else {
         (DEFAULT_FONT_SIZE_WIDTH, DEFAULT_FONT_SIZE_HEIGHT)
     };

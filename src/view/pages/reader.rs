@@ -429,17 +429,50 @@ where
             let (raw_w, raw_h) = page.dimensions.unwrap_or((0, 0));
             let display_h = if page.is_tall_strip() { page.viewport_height() } else { raw_h };
             let draw_area = centered_image_rect(image_canvas, raw_w, display_h, font_size.0, font_size.1);
-            for y in center.top()..center.bottom() {
-                for x in center.left()..center.right() {
-                    if !draw_area.contains(Position::new(x, y)) {
-                        buf[(x, y)].set_symbol(" ").set_fg(margin_fg);
-                    }
-                }
-            }
             let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
             let image = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
             if let Some(protocol) = page.get_or_create_protocol(&mut self.picker) {
                 StatefulWidget::render(image, draw_area, buf, protocol);
+            }
+
+            let is_graphical_escape = draw_area.width > 0
+                && draw_area.height > 0
+                && center.contains(Position::new(draw_area.x, draw_area.y))
+                && buf[(draw_area.x, draw_area.y)].symbol().starts_with('\x1b');
+
+            if is_graphical_escape {
+                use std::fmt::Write as _;
+
+                let mut prefix = String::with_capacity((center.height as usize) * (center.width as usize + 12) + 24);
+                prefix.push_str("\x1b[0m");
+                let blanks = " ".repeat(center.width as usize);
+                for row in center.top()..center.bottom() {
+                    let _ = write!(prefix, "\x1b[{};{}H{blanks}", row + 1, center.x + 1);
+                }
+                let _ = write!(prefix, "\x1b[{};{}H", draw_area.y + 1, draw_area.x + 1);
+                let combined = format!("{prefix}{}", buf[(draw_area.x, draw_area.y)].symbol());
+                let origin = &mut buf[(draw_area.x, draw_area.y)];
+                origin.set_style(Style::reset());
+                origin.set_symbol(&combined);
+                origin.set_skip(false);
+
+                for y in center.top()..center.bottom() {
+                    for x in center.left()..center.right() {
+                        if x != draw_area.x || y != draw_area.y {
+                            let cell = &mut buf[(x, y)];
+                            cell.reset();
+                            cell.set_skip(true);
+                        }
+                    }
+                }
+            } else {
+                for y in center.top()..center.bottom() {
+                    for x in center.left()..center.right() {
+                        if !draw_area.contains(Position::new(x, y)) {
+                            buf[(x, y)].set_symbol(" ").set_fg(margin_fg);
+                        }
+                    }
+                }
             }
 
             false
@@ -2331,5 +2364,81 @@ mod test {
                 .any(|line| line.contains("v") && (line.contains("Visor Web HD") || line.contains("Web Viewer HD"))),
             "Controls shortcut 'v' and description must stay on a single line"
         );
+    }
+
+    #[tokio::test]
+    async fn test_sixel_render_prepends_center_canvas_clear_and_skips_other_center_cells() {
+        use image::DynamicImage;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        use crate::backend::manga_provider::MangaPanel;
+
+        let chapter = ChapterToRead {
+            pages_url: vec!["http://localhost/1".parse().unwrap(), "http://localhost/2".parse().unwrap()],
+            ..Default::default()
+        };
+
+        let mut picker = Picker::new((10, 22));
+        picker.protocol_type = ProtocolType::Sixel;
+
+        let mut manga_reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(chapter, "manga-1".into(), picker, ReaderPageProvierMock::new().into());
+        manga_reader.init_fetching_pages();
+
+        // Page 0: double-page spread, Page 1: narrower portrait page
+        manga_reader.load_page(PageData {
+            panel: MangaPanel {
+                image_decoded: DynamicImage::new_rgb8(1200, 600),
+                dimensions: (1200, 600),
+            },
+            index: 0,
+        });
+        manga_reader.load_page(PageData {
+            panel: MangaPanel {
+                image_decoded: DynamicImage::new_rgb8(600, 900),
+                dimensions: (600, 900),
+            },
+            index: 1,
+        });
+
+        manga_reader.render_page_list(Rect::new(0, 0, 22, 20), &mut Buffer::empty(Rect::new(0, 0, 22, 20)));
+        manga_reader.page_list_state.list_state.select(Some(0));
+
+        let backend = TestBackend::new(140, 40);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 140, 40);
+
+        // Render page 0, then advance to page 1 and render
+        terminal.draw(|f| manga_reader.render(area, f)).unwrap();
+        manga_reader.next_page();
+        assert!(!manga_reader.needs_terminal_clear);
+
+        let mut origin_count = 0usize;
+        terminal
+            .draw(|f| {
+                manga_reader.render(area, f);
+                let center = manga_reader.center_image_area;
+                let buf = f.buffer_mut();
+                for y in center.top()..center.bottom() {
+                    for x in center.left()..center.right() {
+                        let cell = &buf[(x, y)];
+                        if cell.symbol().starts_with("\x1b[0m") {
+                            origin_count += 1;
+                            assert!(!cell.skip, "origin cell must not be skipped");
+                            assert!(
+                                cell.symbol().contains("\x1bP"),
+                                "origin cell should carry the Sixel escape sequence after clearing center"
+                            );
+                            let row_marker = format!("\x1b[{};{}H", center.top() + 1, center.x + 1);
+                            assert!(cell.symbol().contains(&row_marker), "prefix should clear top row of center");
+                        } else {
+                            assert!(cell.skip, "non-origin center cell ({x},{y}) must be skipped after atomic clear");
+                        }
+                    }
+                }
+            })
+            .unwrap();
+        assert_eq!(origin_count, 1, "exactly one origin cell in center should emit atomic clear + Sixel");
     }
 }
