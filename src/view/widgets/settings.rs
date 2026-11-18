@@ -586,6 +586,21 @@ impl SettingsModalState {
                 self.cursor = 4;
                 SettingsOutcome::Noop
             },
+            KeyCode::Char('o') | KeyCode::Char('O') => {
+                let target_dir = crate::backend::AppDirectories::MangaDownloads.get_full_path();
+                #[cfg(not(test))]
+                let _ = open::that(&target_dir);
+                self.status_message = Some(format!("📂 {}: {}", tr("Abriendo carpeta", "Opening folder"), target_dir.display()));
+                SettingsOutcome::Noop
+            },
+            KeyCode::Char('u') | KeyCode::Char('U') => {
+                let url = crate::backend::release_notifier::GITHUB_RELEASES_PAGE_URL;
+                #[cfg(not(test))]
+                let _ = open::that(url);
+                self.status_message =
+                    Some(format!("🌐 {}: {url}", tr("Abriendo releases en navegador", "Opening releases in browser")));
+                SettingsOutcome::Noop
+            },
             KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::F(5) | KeyCode::Char('q') | KeyCode::Esc => SettingsOutcome::Close,
             _ => SettingsOutcome::Noop,
         }
@@ -773,9 +788,13 @@ impl<'a> Widget for SettingsModal<'a> {
                 Line::from(vec![
                     Span::raw(" "),
                     t.key_chip("j/k · ↑/↓"),
-                    Span::styled(tr(" Elegir ajuste  ", " Select  "), Style::default().fg(t.text_muted)),
-                    t.highlight_key_chip("h/l · ←/→ · Enter"),
-                    Span::styled(tr(" Cambiar valor  ", " Change value  "), Style::default().fg(t.text_muted)),
+                    Span::styled(tr(" Elegir  ", " Select  "), Style::default().fg(t.text_muted)),
+                    t.highlight_key_chip("h/l · Enter"),
+                    Span::styled(tr(" Cambiar  ", " Change  "), Style::default().fg(t.text_muted)),
+                    t.key_chip("o"),
+                    Span::styled(tr(" Carpeta  ", " Folder  "), Style::default().fg(t.text_muted)),
+                    t.key_chip("u"),
+                    Span::styled(tr(" Releases  ", " Releases  "), Style::default().fg(t.text_muted)),
                     t.key_chip("c / F5 / Esc"),
                     Span::styled(tr(" Cerrar ", " Close "), Style::default().fg(t.text_muted)),
                 ])
@@ -878,16 +897,18 @@ impl<'a> Widget for SettingsModal<'a> {
             }
         }
 
+        let storage_mode = crate::backend::current_storage_mode().label();
         let footer_line = if let Some(msg) = &self.state.status_message {
             Line::from(vec![Span::styled(msg.as_str(), Style::default().fg(t.status_success).add_modifier(Modifier::BOLD))])
         } else {
             Line::from(vec![Span::styled(
                 format!(
-                    "📡 {}  │  📦 {}  │  🌐 {}  │  🎨 {}",
+                    "📡 {}  │  📦 {}  │  🌐 {}  │  🎨 {}  │  💾 {}",
                     active_default_provider(),
                     active_download_type().to_string().to_uppercase(),
                     active_chapter_language(),
-                    current_theme().label()
+                    current_theme().label(),
+                    storage_mode,
                 ),
                 Style::default().fg(t.text_muted),
             )])
@@ -982,5 +1003,21 @@ client_id = "123"
         set_active_chapter_language(Languages::English);
         set_active_ui_language(UiLanguage::Es);
         set_theme(ThemeVariant::TokyoNight);
+    }
+
+    #[test]
+    fn test_settings_modal_folder_and_release_shortcuts() {
+        let mut state = SettingsModalState::new();
+
+        assert_eq!(state.handle_key_event(KeyCode::Char('o').into()), SettingsOutcome::Noop);
+        assert!(state.status_message.as_deref().is_some_and(|m| m.contains("mangaDownloads")));
+
+        assert_eq!(state.handle_key_event(KeyCode::Char('u').into()), SettingsOutcome::Noop);
+        assert!(
+            state
+                .status_message
+                .as_deref()
+                .is_some_and(|m| m.contains("tomahawk1103/manga-tui/releases/latest"))
+        );
     }
 }

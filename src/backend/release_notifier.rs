@@ -16,7 +16,8 @@ pub struct ReleaseNotifier {
     client: Client,
 }
 
-pub static GITHUB_URL: &str = "https://api.github.com/repos/josueBarretogit/manga-tui";
+pub static GITHUB_URL: &str = "https://api.github.com/repos/tomahawk1103/manga-tui";
+pub static GITHUB_RELEASES_PAGE_URL: &str = "https://github.com/tomahawk1103/manga-tui/releases/latest";
 
 impl ReleaseNotifier {
     pub fn new(github_url: Url) -> Self {
@@ -89,7 +90,7 @@ impl ReleaseNotifier {
         let current_version = format!("v{}", env!("CARGO_PKG_VERSION"));
 
         if self.new_version(&latest_release, &current_version) {
-            let github_url = format!("https://github.com/josueBarretogit/manga-tui/releases/tag/{latest_release}");
+            let github_url = format!("https://github.com/tomahawk1103/manga-tui/releases/tag/{latest_release}");
             logger.inform(format!(
                 "{} : {latest_release} → {github_url} ",
                 tr("Hay una nueva versión disponible", "There is a new version available")

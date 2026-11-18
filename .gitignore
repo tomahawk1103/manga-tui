@@ -21,4 +21,5 @@ result
 *.db
 *~
 test_results/
+dist/
 *.code-workspace

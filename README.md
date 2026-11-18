@@ -125,7 +125,21 @@ nix profile install 'github:josueBarretogit/manga-tui'
 
 ## Binary release
 
-Download a binary from the [releases page](https://github.com/josueBarretogit/manga-tui/releases/latest)
+Download a binary (including the **Windows Portable `.zip`**) from the [releases page](https://github.com/tomahawk1103/manga-tui/releases/latest).
+
+### Windows Portable Mode
+
+Extract `manga-tui-*-windows-msvc-portable.zip` to any folder and double-click `manga-tui.exe` (it automatically launches maximized in Windows Terminal if installed).
+
+Data directory precedence:
+1. `MANGA_TUI_DATA_DIR` environment variable
+2. `./data/` next to `manga-tui.exe` (activated automatically when `portable.txt` or `data/` exists next to the executable)
+3. Standard OS directories (`%APPDATA%` / `%LOCALAPPDATA%`)
+
+To update in portable mode, simply replace `manga-tui.exe` and keep `portable.txt` and `data/` intact (`config.toml`, reading history, and `mangaDownloads/` are preserved).
+
+> [!NOTE]
+> AniList credentials set via CLI are stored in the operating system's credential manager (`keyring`), so when moving a portable folder to a new PC you will need to set them again on that PC or configure `[anilist]` directly inside `data/config.toml`.
 
 ## Image rendering
 

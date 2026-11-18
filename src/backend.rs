@@ -78,13 +78,70 @@ impl AppDirectories {
     }
 }
 
+pub const PORTABLE_MARKER_FILE: &str = "portable.txt";
+pub const PORTABLE_DATA_DIR_NAME: &str = "data";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StorageMode {
+    EnvOverride,
+    Portable,
+    System,
+}
+
+impl StorageMode {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::EnvOverride => "MANGA_TUI_DATA_DIR",
+            Self::Portable => "Portable (data/)",
+            Self::System => "Sistema / System",
+        }
+    }
+}
+
+/// Returns `true` if `exe_dir` contains a `portable.txt` marker file or an existing `data/` directory.
+pub fn is_portable_next_to_exe(exe_dir: &Path) -> bool {
+    exe_dir.join(PORTABLE_MARKER_FILE).is_file() || exe_dir.join(PORTABLE_DATA_DIR_NAME).is_dir()
+}
+
+/// Resolves the active data/config directory following strict precedence:
+/// 1. `MANGA_TUI_DATA_DIR` environment variable (if non-empty)
+/// 2. `<exe_dir>/data` if `portable.txt` or `data/` exists next to the executable
+/// 3. OS system directory (`directories::ProjectDirs`)
+pub fn resolve_data_dir_with_precedence(
+    env_data_dir: Option<&str>,
+    exe_dir: Option<&Path>,
+    system_dir: Option<PathBuf>,
+) -> (Option<PathBuf>, StorageMode) {
+    if let Some(raw_env) = env_data_dir.map(str::trim).filter(|s| !s.is_empty()) {
+        return (Some(PathBuf::from(raw_env)), StorageMode::EnvOverride);
+    }
+
+    if let Some(dir) = exe_dir
+        && is_portable_next_to_exe(dir)
+    {
+        return (Some(dir.join(PORTABLE_DATA_DIR_NAME)), StorageMode::Portable);
+    }
+
+    (system_dir, StorageMode::System)
+}
+
+pub fn current_executable_dir() -> Option<PathBuf> {
+    std::env::current_exe().ok().and_then(|p| p.parent().map(Path::to_path_buf))
+}
+
+pub fn current_storage_mode() -> StorageMode {
+    let env_dir = std::env::var("MANGA_TUI_DATA_DIR").ok();
+    let exe_dir = current_executable_dir();
+    let (_, mode) = resolve_data_dir_with_precedence(env_dir.as_deref(), exe_dir.as_deref(), None);
+    mode
+}
+
 #[cfg(not(test))]
 pub static APP_DATA_DIR: Lazy<Option<PathBuf>> = Lazy::new(|| {
-    // `MANGA_TUI_DATA_DIR` must be honored even when no home directory can be found
-    match std::env::var("MANGA_TUI_DATA_DIR").ok().filter(|dir| !dir.trim().is_empty()) {
-        Some(data_dir) => Some(PathBuf::from(data_dir)),
-        None => directories::ProjectDirs::from("", "", "manga-tui").map(|dirs| dirs.data_dir().to_path_buf()),
-    }
+    let env_dir = std::env::var("MANGA_TUI_DATA_DIR").ok();
+    let exe_dir = current_executable_dir();
+    let system_dir = directories::ProjectDirs::from("", "", "manga-tui").map(|dirs| dirs.data_dir().to_path_buf());
+    resolve_data_dir_with_precedence(env_dir.as_deref(), exe_dir.as_deref(), system_dir).0
 });
 
 #[cfg(test)]
@@ -161,5 +218,84 @@ mod test {
         fs::File::open(error_logs_path).expect("Could not open error logs file");
 
         Ok(())
+    }
+
+    #[test]
+    fn portable_precedence_respects_env_then_portable_then_system() {
+        let base = PathBuf::from("./test_results/portable_precedence_test");
+        let _ = fs::remove_dir_all(&base);
+        let exe_dir_with_marker = base.join("with_marker");
+        let exe_dir_with_data_folder = base.join("with_data_folder");
+        let exe_dir_plain = base.join("plain");
+        fs::create_dir_all(&exe_dir_with_marker).unwrap();
+        fs::create_dir_all(exe_dir_with_data_folder.join("data")).unwrap();
+        fs::create_dir_all(&exe_dir_plain).unwrap();
+        fs::write(exe_dir_with_marker.join(PORTABLE_MARKER_FILE), "portable").unwrap();
+
+        let system_dir = Some(PathBuf::from("C:/System/AppData/manga-tui"));
+
+        // 1. MANGA_TUI_DATA_DIR wins even when portable.txt exists
+        let (resolved, mode) =
+            resolve_data_dir_with_precedence(Some("E:/Custom/MangaData"), Some(&exe_dir_with_marker), system_dir.clone());
+        assert_eq!(mode, StorageMode::EnvOverride);
+        assert_eq!(resolved, Some(PathBuf::from("E:/Custom/MangaData")));
+
+        // 2. Empty/whitespace env var falls back to portable.txt -> <exe_dir>/data
+        let (resolved, mode) = resolve_data_dir_with_precedence(Some("   "), Some(&exe_dir_with_marker), system_dir.clone());
+        assert_eq!(mode, StorageMode::Portable);
+        assert_eq!(resolved, Some(exe_dir_with_marker.join("data")));
+
+        // 3. Existing data/ directory activates portable mode even without portable.txt
+        let (resolved, mode) = resolve_data_dir_with_precedence(None, Some(&exe_dir_with_data_folder), system_dir.clone());
+        assert_eq!(mode, StorageMode::Portable);
+        assert_eq!(resolved, Some(exe_dir_with_data_folder.join("data")));
+
+        // 4. Without env override or portable markers, falls back to system dir
+        let (resolved, mode) = resolve_data_dir_with_precedence(None, Some(&exe_dir_plain), system_dir.clone());
+        assert_eq!(mode, StorageMode::System);
+        assert_eq!(resolved, system_dir);
+
+        let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn portable_mode_handles_paths_with_spaces_and_accents_and_survives_exe_upgrade() {
+        let base = PathBuf::from("./test_results/Álvaro Mis Mangas Portable/Versión 1");
+        let _ = fs::remove_dir_all("./test_results/Álvaro Mis Mangas Portable");
+        fs::create_dir_all(&base).unwrap();
+
+        let marker = base.join(PORTABLE_MARKER_FILE);
+        let exe_path = base.join("manga-tui.exe");
+        fs::write(&marker, "portable mode enabled\n").unwrap();
+        fs::write(&exe_path, b"binary-v0.10.0").unwrap();
+
+        let (resolved, mode) =
+            resolve_data_dir_with_precedence(None, Some(&base), Some(PathBuf::from("./test_results/unused_system_dir")));
+        assert_eq!(mode, StorageMode::Portable);
+        let data_dir = resolved.expect("portable data dir should resolve");
+        assert_eq!(data_dir, base.join("data"));
+
+        fs::create_dir_all(&data_dir).unwrap();
+        AppDirectories::build_if_not_exists(&data_dir).unwrap();
+
+        let config_path = data_dir.join("config.toml");
+        let cbz_path = data_dir.join("mangaDownloads").join("Mi Manga Cap 1.cbz");
+        let db_path = data_dir.join("history").join(DATABASE_FILE);
+
+        fs::write(&config_path, "ui_language = \"es\"\n").unwrap();
+        fs::write(&cbz_path, b"fake-cbz-archive").unwrap();
+        fs::write(&db_path, b"sqlite-history-marker").unwrap();
+
+        // Simulate updating the executable in place
+        fs::write(&exe_path, b"binary-v0.10.1").unwrap();
+
+        let (resolved_after, mode_after) = resolve_data_dir_with_precedence(None, Some(&base), None);
+        assert_eq!(mode_after, StorageMode::Portable);
+        assert_eq!(resolved_after, Some(data_dir.clone()));
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), "ui_language = \"es\"\n");
+        assert_eq!(fs::read(&cbz_path).unwrap(), b"fake-cbz-archive");
+        assert_eq!(fs::read(&db_path).unwrap(), b"sqlite-history-marker");
+
+        let _ = fs::remove_dir_all("./test_results/Álvaro Mis Mangas Portable");
     }
 }

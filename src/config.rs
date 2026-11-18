@@ -28,7 +28,11 @@ static CONFIG_FILE_NAME_BACKUP: &str = "config_backup.toml";
 static CONFIG: OnceCell<MangaTuiConfig> = OnceCell::new();
 
 static CONFIG_DIR_PATH: LazyLock<Option<PathBuf>> = LazyLock::new(|| {
-    directories::ProjectDirs::from("", "", "manga-tui").map(|project_dirs| project_dirs.config_dir().to_path_buf())
+    let env_dir = std::env::var("MANGA_TUI_DATA_DIR").ok();
+    let exe_dir = crate::backend::current_executable_dir();
+    let system_config_dir =
+        directories::ProjectDirs::from("", "", "manga-tui").map(|project_dirs| project_dirs.config_dir().to_path_buf());
+    crate::backend::resolve_data_dir_with_precedence(env_dir.as_deref(), exe_dir.as_deref(), system_config_dir).0
 });
 
 /// Trait for a single configuration parameter.
