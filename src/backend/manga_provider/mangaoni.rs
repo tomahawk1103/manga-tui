@@ -632,10 +632,30 @@ mod tests {
         let result = provider
             .search_mangas(SearchTerm::trimmed("one piece"), MangaoniFilterState::default(), Pagination::from_first_page(30))
             .await;
-        assert!(result.is_ok());
+        if let Err(ref e) = result {
+            eprintln!("MangaOni search ERROR: {:?}", e);
+        }
+        assert!(result.is_ok(), "Search failed: {:?}", result.err());
         let res = result.unwrap();
         assert!(!res.mangas.is_empty());
         println!("MangaOni search found: {}", res.mangas.len());
+    }
+
+    #[tokio::test]
+    #[ignore]
+    async fn test_mangaoni_live_home() {
+        let provider = MangaoniProvider::new(EmptyCache::new_arc());
+        let popular = provider.get_popular_mangas().await;
+        println!("Popular: {:?}", popular.as_ref().map(|p| p.len()));
+        assert!(popular.is_ok());
+        let p_list = popular.unwrap();
+        assert!(!p_list.is_empty(), "Popular mangas list is empty!");
+
+        let recent = provider.get_recently_added_mangas().await;
+        println!("Recent: {:?}", recent.as_ref().map(|r| r.len()));
+        assert!(recent.is_ok());
+        let r_list = recent.unwrap();
+        assert!(!r_list.is_empty(), "Recent mangas list is empty!");
     }
 
     #[tokio::test]
