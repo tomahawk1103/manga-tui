@@ -10,7 +10,7 @@ use ratatui::layout::{Alignment, Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, StatefulWidget, Widget, Wrap};
-use ratatui_image::picker::Picker;
+use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
 use ratatui_image::{Resize, StatefulImage};
 use throbber_widgets_tui::{Throbber, ThrobberState};
@@ -53,6 +53,7 @@ pub enum MangaReaderActions {
     GoToFirstPage,
     GoToLastPage,
     OpenInWebViewer,
+    ToggleImageProtocol,
 }
 
 #[derive(Clone, Debug)]
@@ -293,6 +294,10 @@ impl Page {
                     self.cached_y = self.scroll_y;
                 }
             }
+        } else if self.cached_protocol.is_none()
+            && let Some(ref raw) = self.raw_image
+        {
+            self.cached_protocol = Some(picker.new_resize_protocol((**raw).clone()));
         }
         self.cached_protocol.as_mut()
     }
@@ -325,6 +330,7 @@ where
     pub local_event_tx: UnboundedSender<MangaReaderEvents>,
     pub local_event_rx: UnboundedReceiver<MangaReaderEvents>,
     pub local_source: Option<LocalChapterSource>,
+    pub needs_terminal_clear: bool,
     left_panel_area: Rect,
     center_image_area: Rect,
 }
@@ -495,6 +501,7 @@ where
             MangaReaderActions::GoToFirstPage => self.go_to_first_page(),
             MangaReaderActions::GoToLastPage => self.go_to_last_page(),
             MangaReaderActions::OpenInWebViewer => self.open_in_web_viewer(),
+            MangaReaderActions::ToggleImageProtocol => self.toggle_image_protocol(),
         }
     }
 
@@ -579,9 +586,18 @@ where
             api_client,
             provider: None,
             local_source: None,
+            needs_terminal_clear: false,
             left_panel_area: Rect::default(),
             center_image_area: Rect::default(),
         }
+    }
+
+    pub fn set_picker(&mut self, picker: Picker) {
+        self.picker = picker;
+        for page in &mut self.pages {
+            page.cached_protocol = None;
+        }
+        self.needs_terminal_clear = true;
     }
 
     pub fn with_global_sender(mut self, sender: UnboundedSender<Events>) -> Self {
@@ -663,6 +679,35 @@ where
         self.fetch_page(self.current_page_index());
     }
 
+    fn toggle_image_protocol(&mut self) {
+        let next_proto = match self.picker.protocol_type {
+            ProtocolType::Halfblocks => ProtocolType::Sixel,
+            _ => ProtocolType::Halfblocks,
+        };
+        self.picker.protocol_type = next_proto;
+        let config_proto = match next_proto {
+            ProtocolType::Sixel => crate::config::ImageProtocol::Sixel,
+            ProtocolType::Halfblocks => crate::config::ImageProtocol::Halfblocks,
+            ProtocolType::Kitty => crate::config::ImageProtocol::Kitty,
+            ProtocolType::Iterm2 => crate::config::ImageProtocol::Iterm2,
+        };
+        crate::view::widgets::settings::set_active_image_protocol(config_proto);
+        let _ = crate::view::widgets::settings::persist_setting_to_disk("image_protocol", config_proto.toml_value());
+        for page in &mut self.pages {
+            page.cached_protocol = None;
+        }
+        self.needs_terminal_clear = true;
+    }
+
+    fn protocol_label(proto: ProtocolType) -> &'static str {
+        match proto {
+            ProtocolType::Sixel => "SIXEL",
+            ProtocolType::Halfblocks => "HALFBLOCKS",
+            ProtocolType::Kitty => "KITTY",
+            ProtocolType::Iterm2 => "ITERM2",
+        }
+    }
+
     fn open_in_web_viewer(&mut self) {
         let session = crate::backend::web_viewer::WebViewerSession {
             manga_id: self.manga_id.clone(),
@@ -722,12 +767,14 @@ where
                 page.dimensions = Some((width, height));
                 page.scroll_y = 0;
                 page.cached_y = u32::MAX;
-                if width > 0 && (height as f64) > (width as f64) * 1.6 {
+                let is_tall = width > 0 && (height as f64) > (width as f64) * 1.6;
+                if is_tall {
                     page.raw_image = Some(Arc::new(data.panel.image_decoded));
                     page.cached_protocol = None;
                 } else {
-                    page.raw_image = None;
-                    page.cached_protocol = Some(self.picker.new_resize_protocol(data.panel.image_decoded));
+                    let protocol = self.picker.new_resize_protocol(data.panel.image_decoded.clone());
+                    page.raw_image = Some(Arc::new(data.panel.image_decoded));
+                    page.cached_protocol = Some(protocol);
                 }
             },
             None => {
@@ -1029,6 +1076,8 @@ where
             Span::styled(format!(" {}  ", tr("Inicio/Fin", "Start/End")), Style::default().fg(t.text_muted).bg(t.bar_bg)),
             t.highlight_key_chip("v"),
             Span::styled(format!(" {}  ", tr("Visor Web HD", "Web HD")), Style::default().fg(t.text_muted).bg(t.bar_bg)),
+            t.key_chip("p"),
+            Span::styled(format!(" {}  ", tr("Protocolo", "Protocol")), Style::default().fg(t.text_muted).bg(t.bar_bg)),
         ];
 
         if show_reload {
@@ -1047,8 +1096,13 @@ where
 
         Paragraph::new(Line::from(left_spans)).render(area, buf);
 
-        let right_spans =
-            vec![Span::styled(format!(" 🎨 {} ", current_theme().label()), Style::default().fg(t.text_muted).bg(t.bar_bg))];
+        let right_spans = vec![
+            Span::styled(
+                format!(" 🖼 {}  ", Self::protocol_label(self.picker.protocol_type)),
+                Style::default().fg(t.accent_secondary).bg(t.bar_bg).bold(),
+            ),
+            Span::styled(format!("🎨 {} ", current_theme().label()), Style::default().fg(t.text_muted).bg(t.bar_bg)),
+        ];
         Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right).render(area, buf);
     }
 
@@ -1178,6 +1232,7 @@ where
             shortcut_row("w", tr("Cap. siguiente", "Next chapter")),
             shortcut_row("b", tr("Cap. anterior", "Prev chapter")),
             shortcut_row("v", tr("Visor Web HD", "Web Viewer HD")),
+            shortcut_row("p", tr("Protocolo img.", "Img protocol")),
         ];
 
         if show_reload {
@@ -1254,6 +1309,9 @@ where
             },
             KeyCode::Char('v') => {
                 self.local_action_tx.send(MangaReaderActions::OpenInWebViewer).ok();
+            },
+            KeyCode::Char('p') => {
+                self.local_action_tx.send(MangaReaderActions::ToggleImageProtocol).ok();
             },
             KeyCode::Char('m') if !self.auto_bookmark => {
                 self.local_action_tx.send(MangaReaderActions::BookMarkCurrentChapter).ok();
@@ -1434,6 +1492,10 @@ mod test {
         press_key(&mut reader_page, KeyCode::Char('v'));
         let action = reader_page.local_action_rx.recv().await.unwrap();
         assert_eq!(MangaReaderActions::OpenInWebViewer, action);
+
+        press_key(&mut reader_page, KeyCode::Char('p'));
+        let action = reader_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(MangaReaderActions::ToggleImageProtocol, action);
 
         press_key(&mut reader_page, KeyCode::Esc);
         let action = reader_page.local_action_rx.recv().await.unwrap();
@@ -2079,5 +2141,49 @@ mod test {
         let fitted = centered_image_rect(center, 800, 1200, 8, 16);
         assert!(fitted.x > center.x + 20, "portrait image should be horizontally centered, got x={}", fitted.x);
         assert!(fitted.width < center.width, "portrait image should preserve aspect ratio without stretching full width");
+    }
+
+    #[tokio::test]
+    async fn test_toggle_image_protocol_with_p_regenerates_protocol_from_raw_image() {
+        use image::DynamicImage;
+
+        use crate::backend::manga_provider::MangaPanel;
+
+        let chapter = ChapterToRead {
+            pages_url: vec!["http://localhost/1".parse().unwrap()],
+            ..Default::default()
+        };
+        let mut picker = Picker::new((8, 16));
+        picker.protocol_type = ProtocolType::Halfblocks;
+
+        let mut manga_reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(chapter, "manga-1".into(), picker, ReaderPageProvierMock::new().into());
+        manga_reader.init_fetching_pages();
+
+        let panel = MangaPanel {
+            image_decoded: DynamicImage::new_rgb8(100, 140),
+            dimensions: (100, 140),
+        };
+        manga_reader.load_page(PageData { panel, index: 0 });
+
+        assert!(manga_reader.pages[0].raw_image.is_some());
+        assert!(manga_reader.pages[0].cached_protocol.is_some());
+
+        // Toggle with 'p': Halfblocks -> Sixel
+        press_key(&mut manga_reader, KeyCode::Char('p'));
+        let action = manga_reader.local_action_rx.recv().await.unwrap();
+        assert_eq!(action, MangaReaderActions::ToggleImageProtocol);
+        manga_reader.update(action);
+
+        assert_eq!(manga_reader.picker.protocol_type, ProtocolType::Sixel);
+        assert!(manga_reader.needs_terminal_clear);
+        assert!(manga_reader.pages[0].cached_protocol.is_none());
+        assert!(manga_reader.pages[0].get_or_create_protocol(&mut manga_reader.picker).is_some());
+
+        // Toggle again: Sixel -> Halfblocks
+        manga_reader.update(MangaReaderActions::ToggleImageProtocol);
+        assert_eq!(manga_reader.picker.protocol_type, ProtocolType::Halfblocks);
+
+        crate::view::widgets::settings::set_active_image_protocol(crate::config::ImageProtocol::Auto);
     }
 }

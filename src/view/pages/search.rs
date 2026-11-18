@@ -724,6 +724,10 @@ where
         self.active_provider = provider;
     }
 
+    pub fn set_picker(&mut self, picker: Option<Picker>) {
+        self.picker = picker;
+    }
+
     pub fn with_global_sender(mut self, sender: UnboundedSender<Events>) -> Self {
         self.global_event_tx = Some(sender);
         self

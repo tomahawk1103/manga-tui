@@ -1174,8 +1174,18 @@ where
         }
     }
 
+    pub fn set_picker(&mut self, picker: Option<Picker>) {
+        self.picker = picker;
+        if self.picker.is_none() {
+            self.image_state = None;
+        }
+    }
+
     fn read_chapter(&mut self) {
         if self.picker.is_none() {
+            if tokio::runtime::Handle::try_current().is_ok() {
+                self.open_chapter_in_web_viewer();
+            }
             return;
         }
         self.state = PageState::SearchingChapterData;

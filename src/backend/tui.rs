@@ -62,8 +62,46 @@ pub enum Events {
     },
 }
 
+pub fn resolve_protocol_override(
+    env_proto: Option<&str>,
+    config_proto: crate::config::ImageProtocol,
+) -> Option<Option<ProtocolType>> {
+    if let Some(raw) = env_proto.map(str::trim).filter(|s| !s.is_empty()) {
+        match raw.to_ascii_lowercase().as_str() {
+            "sixel" => return Some(Some(ProtocolType::Sixel)),
+            "iterm2" | "iterm" => return Some(Some(ProtocolType::Iterm2)),
+            "kitty" => return Some(Some(ProtocolType::Kitty)),
+            "halfblocks" => return Some(Some(ProtocolType::Halfblocks)),
+            "none" | "off" => return Some(None),
+            "auto" => return None,
+            _ => {},
+        }
+    }
+
+    match config_proto {
+        crate::config::ImageProtocol::Auto => None,
+        crate::config::ImageProtocol::Sixel => Some(Some(ProtocolType::Sixel)),
+        crate::config::ImageProtocol::Halfblocks => Some(Some(ProtocolType::Halfblocks)),
+        crate::config::ImageProtocol::Kitty => Some(Some(ProtocolType::Kitty)),
+        crate::config::ImageProtocol::Iterm2 => Some(Some(ProtocolType::Iterm2)),
+        crate::config::ImageProtocol::None => Some(None),
+    }
+}
+
 #[cfg(unix)]
-fn get_picker() -> Option<Picker> {
+pub fn get_picker() -> Option<Picker> {
+    let env_proto = std::env::var("MANGA_TUI_PROTOCOL").ok();
+    let config_proto = crate::view::widgets::settings::active_image_protocol();
+    match resolve_protocol_override(env_proto.as_deref(), config_proto) {
+        Some(Some(proto)) => {
+            let mut picker = Picker::from_termios().unwrap_or_else(|_| Picker::new((8, 16)));
+            picker.protocol_type = proto;
+            return Some(picker);
+        },
+        Some(None) => return None,
+        None => {},
+    }
+
     Picker::from_termios()
         .ok()
         .map(|mut picker| {
@@ -92,14 +130,38 @@ pub fn is_modern_windows_terminal_env(wt_session: Option<&str>, term_program: Op
         .is_some_and(|prog| MODERN_TERM_PROGRAMS.iter().any(|known| prog.eq_ignore_ascii_case(known)))
 }
 
-/// Checks current process environment variables to detect whether the app is running inside a
-/// modern Windows terminal emulator.
+/// Detects ConPTY / Windows 11 DefTerm sessions where `WT_SESSION` may not be present (e.g.
+/// double-clicking an executable from Explorer when Windows Terminal is the default terminal).
+/// Classic `conhost.exe` attaches a visible console window (`GetConsoleWindow` non-null and visible),
+/// whereas ConPTY uses no console window or a hidden pseudo-console window.
+#[cfg(target_os = "windows")]
+pub fn is_conpty_or_pseudo_console() -> bool {
+    use windows_sys::Win32::System::Console::GetConsoleWindow;
+    use windows_sys::Win32::UI::WindowsAndMessaging::IsWindowVisible;
+
+    let hwnd = unsafe { GetConsoleWindow() };
+    hwnd.is_null() || unsafe { IsWindowVisible(hwnd) } == 0
+}
+
+/// Checks current process environment variables (and ConPTY window state on Windows) to detect
+/// whether the app is running inside a modern Windows terminal emulator.
 pub fn is_running_in_modern_windows_terminal() -> bool {
     let wt_session = std::env::var("WT_SESSION").ok();
     let term_program = std::env::var("TERM_PROGRAM").ok();
     let wezterm_exe = std::env::var("WEZTERM_EXECUTABLE").ok();
 
-    is_modern_windows_terminal_env(wt_session.as_deref(), term_program.as_deref(), wezterm_exe.as_deref())
+    if is_modern_windows_terminal_env(wt_session.as_deref(), term_program.as_deref(), wezterm_exe.as_deref()) {
+        return true;
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        is_conpty_or_pseudo_console()
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        false
+    }
 }
 
 #[cfg(target_os = "windows")]
@@ -110,11 +172,12 @@ const DEFAULT_FONT_SIZE_WIDTH: u16 = 10;
 const DEFAULT_FONT_SIZE_HEIGHT: u16 = 22;
 
 #[cfg(target_os = "windows")]
-fn get_picker() -> Option<Picker> {
+pub fn get_picker() -> Option<Picker> {
     use windows_sys::Win32::System::Console::GetConsoleWindow;
     use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
 
-    let window_dpi = unsafe { GetDpiForWindow(GetConsoleWindow()) };
+    let window_dpi = unsafe { GetConsoleWindow() };
+    let window_dpi = unsafe { GetDpiForWindow(window_dpi) };
     // In some terminals (ConPTY, Windows Terminal) there is no classic console window and GetDpiForWindow returns 0;
     // fall back to system DPI so HiDPI displays get sharp cell pixel dimensions.
     let dpi = if window_dpi == 0 {
@@ -131,18 +194,15 @@ fn get_picker() -> Option<Picker> {
 
     let mut picker = Picker::new((size.0, size.1));
 
-    if let Ok(override_proto) = std::env::var("MANGA_TUI_PROTOCOL") {
-        match override_proto.trim().to_ascii_lowercase().as_str() {
-            "sixel" => picker.protocol_type = ProtocolType::Sixel,
-            "iterm2" | "iterm" => picker.protocol_type = ProtocolType::Iterm2,
-            "kitty" => picker.protocol_type = ProtocolType::Kitty,
-            "halfblocks" => picker.protocol_type = ProtocolType::Halfblocks,
-            "none" | "off" => return None,
-            _ => {
-                picker.guess_protocol();
-            },
-        }
-        return Some(picker);
+    let env_proto = std::env::var("MANGA_TUI_PROTOCOL").ok();
+    let config_proto = crate::view::widgets::settings::active_image_protocol();
+    match resolve_protocol_override(env_proto.as_deref(), config_proto) {
+        Some(Some(proto)) => {
+            picker.protocol_type = proto;
+            return Some(picker);
+        },
+        Some(None) => return None,
+        None => {},
     }
 
     let protocol = picker.guess_protocol();
@@ -180,7 +240,7 @@ pub async fn run_app<T: MangaProvider>(
         let is_overlay_open = app.is_overlay_open();
         // Force a full terminal clear when opening/closing overlays or switching tabs so
         // graphics-protocol cells (which ratatui-image marks as `skip`) don't retain stale modal text.
-        if was_overlay_open != is_overlay_open || app.current_tab != last_tab {
+        if was_overlay_open != is_overlay_open || app.current_tab != last_tab || app.take_needs_terminal_clear() {
             terminal.clear()?;
         }
         was_overlay_open = is_overlay_open;
@@ -269,5 +329,25 @@ mod tests {
         assert!(!is_modern_windows_terminal_env(None, None, None));
         assert!(!is_modern_windows_terminal_env(Some("   "), Some(""), Some("")));
         assert!(!is_modern_windows_terminal_env(None, Some("cmd"), None));
+    }
+
+    #[test]
+    fn resolve_protocol_override_respects_env_precedence_and_config_fallback() {
+        use crate::config::ImageProtocol;
+
+        // MANGA_TUI_PROTOCOL overrides config.toml
+        assert_eq!(resolve_protocol_override(Some("halfblocks"), ImageProtocol::Sixel), Some(Some(ProtocolType::Halfblocks)));
+        assert_eq!(resolve_protocol_override(Some("SIXEL"), ImageProtocol::Auto), Some(Some(ProtocolType::Sixel)));
+        assert_eq!(resolve_protocol_override(Some("kitty"), ImageProtocol::Auto), Some(Some(ProtocolType::Kitty)));
+        assert_eq!(resolve_protocol_override(Some("iterm2"), ImageProtocol::Auto), Some(Some(ProtocolType::Iterm2)));
+        assert_eq!(resolve_protocol_override(Some("none"), ImageProtocol::Sixel), Some(None));
+        assert_eq!(resolve_protocol_override(Some("off"), ImageProtocol::Sixel), Some(None));
+        assert_eq!(resolve_protocol_override(Some("auto"), ImageProtocol::Sixel), None);
+
+        // Blank or unknown env var falls back to config.toml
+        assert_eq!(resolve_protocol_override(None, ImageProtocol::Auto), None);
+        assert_eq!(resolve_protocol_override(Some("   "), ImageProtocol::Sixel), Some(Some(ProtocolType::Sixel)));
+        assert_eq!(resolve_protocol_override(Some("invalid"), ImageProtocol::Halfblocks), Some(Some(ProtocolType::Halfblocks)));
+        assert_eq!(resolve_protocol_override(None, ImageProtocol::None), Some(None));
     }
 }

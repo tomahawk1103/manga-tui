@@ -13,7 +13,7 @@ use strum::IntoEnumIterator;
 
 use crate::backend::manga_provider::{Languages, MangaProviders};
 use crate::backend::multi_provider::{ProviderHealthStatus, get_provider_health_status};
-use crate::config::{DownloadType, MangaTuiConfig, UiLanguage};
+use crate::config::{DownloadType, ImageProtocol, MangaTuiConfig, UiLanguage};
 use crate::i18n::tr;
 use crate::theme::{ThemeVariant, current_theme, set_theme, theme};
 use crate::utils::centered_rect;
@@ -22,6 +22,7 @@ static ACTIVE_PROVIDER: AtomicU8 = AtomicU8::new(u8::MAX);
 static ACTIVE_DOWNLOAD_TYPE: AtomicU8 = AtomicU8::new(u8::MAX);
 static ACTIVE_CHAPTER_LANG: AtomicU8 = AtomicU8::new(u8::MAX);
 static ACTIVE_UI_LANG: AtomicU8 = AtomicU8::new(u8::MAX);
+static ACTIVE_IMAGE_PROTOCOL: AtomicU8 = AtomicU8::new(u8::MAX);
 
 pub const ALL_PROVIDERS: [MangaProviders; 7] = [
     MangaProviders::Mangadex,
@@ -38,6 +39,15 @@ pub const ALL_DOWNLOAD_FORMATS: [DownloadType; 4] = [DownloadType::Cbz, Download
 pub const ALL_UI_LANGUAGES: [UiLanguage; 2] = [UiLanguage::Es, UiLanguage::En];
 
 pub const ALL_THEMES: [ThemeVariant; 3] = [ThemeVariant::TokyoNight, ThemeVariant::Catppuccin, ThemeVariant::Classic];
+
+pub const ALL_IMAGE_PROTOCOLS: [ImageProtocol; 6] = [
+    ImageProtocol::Auto,
+    ImageProtocol::Sixel,
+    ImageProtocol::Halfblocks,
+    ImageProtocol::Kitty,
+    ImageProtocol::Iterm2,
+    ImageProtocol::None,
+];
 
 /// Returns the ordered list of chapter languages with the most common ones first for quick cycling.
 pub fn ordered_chapter_languages() -> Vec<Languages> {
@@ -88,6 +98,14 @@ fn ui_lang_from_u8(val: u8) -> UiLanguage {
         1 => UiLanguage::En,
         _ => UiLanguage::Es,
     }
+}
+
+fn image_protocol_to_u8(proto: ImageProtocol) -> u8 {
+    ALL_IMAGE_PROTOCOLS.iter().position(|&item| item == proto).unwrap_or(0) as u8
+}
+
+fn image_protocol_from_u8(val: u8) -> ImageProtocol {
+    ALL_IMAGE_PROTOCOLS.get(val as usize).copied().unwrap_or_default()
 }
 
 fn language_to_u8(lang: Languages) -> u8 {
@@ -225,6 +243,23 @@ pub fn set_active_theme(variant: ThemeVariant) {
     let _ = persist_setting_to_disk("theme", theme_toml_value(variant));
 }
 
+#[inline]
+pub fn active_image_protocol() -> ImageProtocol {
+    let raw = ACTIVE_IMAGE_PROTOCOL.load(Ordering::Relaxed);
+    if raw == u8::MAX {
+        let initial = MangaTuiConfig::try_get().map(|c| c.image_protocol).unwrap_or_default();
+        ACTIVE_IMAGE_PROTOCOL.store(image_protocol_to_u8(initial), Ordering::Relaxed);
+        initial
+    } else {
+        image_protocol_from_u8(raw)
+    }
+}
+
+#[inline]
+pub fn set_active_image_protocol(proto: ImageProtocol) {
+    ACTIVE_IMAGE_PROTOCOL.store(image_protocol_to_u8(proto), Ordering::Relaxed);
+}
+
 /// Initializes the live atomic settings from a `MangaTuiConfig`.
 pub fn init_runtime_settings(config: &MangaTuiConfig) {
     set_active_default_provider(config.default_manga_provider);
@@ -232,6 +267,7 @@ pub fn init_runtime_settings(config: &MangaTuiConfig) {
     set_active_chapter_language(config.default_language);
     set_active_ui_language(config.ui_language);
     set_theme(config.theme);
+    set_active_image_protocol(config.image_protocol);
 }
 
 /// Updates a root-level TOML key (`key = "value"`) in `contents` while preserving comments and tables.
@@ -345,15 +381,17 @@ pub enum SettingsField {
     ChapterLanguage,
     UiLanguage,
     Theme,
+    ImageProtocol,
 }
 
 impl SettingsField {
-    pub const ALL: [SettingsField; 5] = [
+    pub const ALL: [SettingsField; 6] = [
         SettingsField::DefaultProvider,
         SettingsField::DownloadFormat,
         SettingsField::ChapterLanguage,
         SettingsField::UiLanguage,
         SettingsField::Theme,
+        SettingsField::ImageProtocol,
     ];
 
     pub fn from_index(index: usize) -> Self {
@@ -367,6 +405,7 @@ impl SettingsField {
             Self::ChapterLanguage => tr("🌐 Idioma de capítulos", "🌐 Chapter Language"),
             Self::UiLanguage => tr("🗣 Idioma de la interfaz", "🗣 Interface Language"),
             Self::Theme => tr("🎨 Tema visual", "🎨 Visual Theme"),
+            Self::ImageProtocol => tr("🖼 Protocolo gráfico", "🖼 Graphics Protocol"),
         }
     }
 
@@ -392,6 +431,10 @@ impl SettingsField {
                 "Paleta de colores en vivo para toda la interfaz sin reiniciar la aplicación",
                 "Live color palette applied across the entire interface without restarting",
             ),
+            Self::ImageProtocol => tr(
+                "Protocolo de renderizado TUI (Auto, Sixel, Halfblocks o Web HD sin TUI)",
+                "Terminal graphics rendering protocol (Auto, Sixel, Halfblocks, or Web HD only)",
+            ),
         }
     }
 }
@@ -405,6 +448,7 @@ pub enum SettingsOutcome {
     ChapterLanguageChanged(Languages),
     UiLanguageChanged(UiLanguage),
     ThemeChanged(ThemeVariant),
+    ImageProtocolChanged(ImageProtocol),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -551,6 +595,27 @@ impl SettingsModalState {
                 ));
                 SettingsOutcome::ThemeChanged(next_theme)
             },
+            SettingsField::ImageProtocol => {
+                let current = active_image_protocol();
+                let idx = ALL_IMAGE_PROTOCOLS.iter().position(|&p| p == current).unwrap_or(0);
+                let next_idx = if forward {
+                    (idx + 1) % ALL_IMAGE_PROTOCOLS.len()
+                } else if idx == 0 {
+                    ALL_IMAGE_PROTOCOLS.len() - 1
+                } else {
+                    idx - 1
+                };
+                let next_proto = ALL_IMAGE_PROTOCOLS[next_idx];
+                set_active_image_protocol(next_proto);
+                let _ = persist_setting_to_disk("image_protocol", next_proto.toml_value());
+                self.status_message = Some(format!(
+                    "✓ {}: {} ({})",
+                    tr("Protocolo gráfico", "Graphics protocol"),
+                    next_proto.label(),
+                    tr("guardado en config.toml", "saved to config.toml")
+                ));
+                SettingsOutcome::ImageProtocolChanged(next_proto)
+            },
         }
     }
 
@@ -584,6 +649,10 @@ impl SettingsModalState {
             },
             KeyCode::Char('5') => {
                 self.cursor = 4;
+                SettingsOutcome::Noop
+            },
+            KeyCode::Char('6') => {
+                self.cursor = 5;
                 SettingsOutcome::Noop
             },
             KeyCode::Char('o') | KeyCode::Char('O') => {
@@ -769,12 +838,38 @@ impl<'a> SettingsModal<'a> {
         spans.push(Span::styled(" ▶", arrow_style));
         spans
     }
+
+    fn render_image_protocol_selector(is_focused: bool) -> Vec<Span<'static>> {
+        let t = theme();
+        let current = active_image_protocol();
+        let idx = ALL_IMAGE_PROTOCOLS.iter().position(|&p| p == current).unwrap_or(0) + 1;
+        let total = ALL_IMAGE_PROTOCOLS.len();
+
+        let arrow_style = if is_focused {
+            Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.text_dim)
+        };
+
+        let pill_style = if is_focused {
+            Style::default().fg(Color::Black).bg(t.accent_primary).add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(t.text_primary).bg(t.chip_bg).add_modifier(Modifier::BOLD)
+        };
+
+        vec![
+            Span::styled("◀ ", arrow_style),
+            Span::styled(format!(" {} ", current.label()), pill_style),
+            Span::styled(" ▶", arrow_style),
+            Span::styled(format!("  ({idx}/{total})"), Style::default().fg(t.text_muted)),
+        ]
+    }
 }
 
 impl<'a> Widget for SettingsModal<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         let t = theme();
-        let modal_area = centered_rect(area, 76, 74);
+        let modal_area = centered_rect(area, 78, 86);
         Clear.render(modal_area, buf);
 
         let block = Block::bordered()
@@ -828,10 +923,8 @@ impl<'a> Widget for SettingsModal<'a> {
         ]))
         .render(header_area, buf);
 
-        let mut constraints = Vec::with_capacity(SettingsField::ALL.len());
-        for _ in SettingsField::ALL {
-            constraints.push(Constraint::Length(3));
-        }
+        let row_height = if rows_area.height >= (SettingsField::ALL.len() as u16) * 3 { 3 } else { 2 };
+        let constraints = vec![Constraint::Length(row_height); SettingsField::ALL.len()];
         let row_rects = Layout::default().direction(Direction::Vertical).constraints(constraints).split(rows_area);
 
         for (idx, field) in SettingsField::ALL.iter().enumerate() {
@@ -872,6 +965,7 @@ impl<'a> Widget for SettingsModal<'a> {
                 SettingsField::ChapterLanguage => Self::render_chapter_language_selector(is_focused),
                 SettingsField::UiLanguage => Self::render_ui_language_selector(is_focused),
                 SettingsField::Theme => Self::render_theme_selector(is_focused),
+                SettingsField::ImageProtocol => Self::render_image_protocol_selector(is_focused),
             };
             top_spans.extend(selector_spans);
 
@@ -903,11 +997,12 @@ impl<'a> Widget for SettingsModal<'a> {
         } else {
             Line::from(vec![Span::styled(
                 format!(
-                    "📡 {}  │  📦 {}  │  🌐 {}  │  🎨 {}  │  💾 {}",
+                    "📡 {}  │  📦 {}  │  🌐 {}  │  🎨 {}  │  🖼 {}  │  💾 {}",
                     active_default_provider(),
                     active_download_type().to_string().to_uppercase(),
                     active_chapter_language(),
                     current_theme().label(),
+                    active_image_protocol().label(),
                     storage_mode,
                 ),
                 Style::default().fg(t.text_muted),
@@ -955,6 +1050,7 @@ client_id = "123"
         set_active_chapter_language(Languages::Spanish);
         set_active_ui_language(UiLanguage::Es);
         set_theme(ThemeVariant::TokyoNight);
+        set_active_image_protocol(ImageProtocol::Auto);
 
         let mut state = SettingsModalState::new();
         assert_eq!(state.current_field(), SettingsField::DefaultProvider);
@@ -993,6 +1089,14 @@ client_id = "123"
         assert_eq!(state.handle_key_event(KeyCode::Right.into()), SettingsOutcome::ThemeChanged(ThemeVariant::Catppuccin));
         assert_eq!(current_theme(), ThemeVariant::Catppuccin);
 
+        // Move down to ImageProtocol and cycle: Auto -> Sixel -> Halfblocks
+        state.handle_key_event(KeyCode::Down.into());
+        assert_eq!(state.current_field(), SettingsField::ImageProtocol);
+        assert_eq!(state.handle_key_event(KeyCode::Right.into()), SettingsOutcome::ImageProtocolChanged(ImageProtocol::Sixel));
+        assert_eq!(active_image_protocol(), ImageProtocol::Sixel);
+        assert_eq!(state.handle_key_event(KeyCode::Right.into()), SettingsOutcome::ImageProtocolChanged(ImageProtocol::Halfblocks));
+        assert_eq!(active_image_protocol(), ImageProtocol::Halfblocks);
+
         // Closing with 'c' or F5
         assert_eq!(state.handle_key_event(KeyCode::Char('c').into()), SettingsOutcome::Close);
         assert_eq!(state.handle_key_event(KeyCode::F(5).into()), SettingsOutcome::Close);
@@ -1003,6 +1107,7 @@ client_id = "123"
         set_active_chapter_language(Languages::English);
         set_active_ui_language(UiLanguage::Es);
         set_theme(ThemeVariant::TokyoNight);
+        set_active_image_protocol(ImageProtocol::Auto);
     }
 
     #[test]

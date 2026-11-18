@@ -368,6 +368,27 @@ impl ConfigParam for ImageResizeFilterParam {
 }
 
 #[derive(Debug, Default)]
+struct ImageProtocolParam;
+
+impl ConfigParam for ImageProtocolParam {
+    fn name(&self) -> &'static str {
+        "image_protocol"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Graphics protocol used to render manga images in the terminal.\n# auto selects Sixel in modern Windows terminals and Halfblocks in classic conhost.exe.\n# none disables terminal image rendering and opens chapters directly in the Web HD viewer."
+    }
+
+    fn values(&self) -> &'static str {
+        "auto, sixel, halfblocks, kitty, iterm2, none"
+    }
+
+    fn defaults(&self) -> &'static str {
+        r#""auto""#
+    }
+}
+
+#[derive(Debug, Default)]
 struct AnilistClientId;
 
 impl ConfigParam for AnilistClientId {
@@ -444,6 +465,7 @@ fn config_params() -> Vec<Box<dyn ConfigParam>> {
         Box::new(DownloadDirParam),
         Box::new(ImageQualityParam),
         Box::new(ImageResizeFilterParam),
+        Box::new(ImageProtocolParam),
         Box::new(AmountPagesParam),
         Box::new(AutoBookmarkParam),
         Box::new(TrackReadingWhenDownload),
@@ -667,6 +689,9 @@ pub struct MangaTuiConfig {
     /// Lanczos3 is the default and gives the best quality for text and fine lines.
     #[serde(default)]
     pub image_resize_filter: ImageResizeFilter,
+    /// Graphics protocol used to render manga pages and covers in the terminal.
+    #[serde(default)]
+    pub image_protocol: ImageProtocol,
     /// Whether to automatically bookmark chapters.
     pub auto_bookmark: bool,
     /// Number of pages to prefetch around the current page.
@@ -747,6 +772,45 @@ impl ImageResizeFilter {
     }
 }
 
+/// Graphics protocol used to render images in the terminal UI.
+#[derive(Default, Debug, Serialize, Deserialize, Display, EnumIter, Clone, Copy, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ImageProtocol {
+    #[default]
+    Auto,
+    Sixel,
+    Halfblocks,
+    Kitty,
+    #[serde(alias = "iterm")]
+    Iterm2,
+    #[serde(alias = "off")]
+    None,
+}
+
+impl ImageProtocol {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Auto => "Auto",
+            Self::Sixel => "Sixel",
+            Self::Halfblocks => "Halfblocks",
+            Self::Kitty => "Kitty",
+            Self::Iterm2 => "iTerm2",
+            Self::None => "Web HD (None)",
+        }
+    }
+
+    pub fn toml_value(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Sixel => "sixel",
+            Self::Halfblocks => "halfblocks",
+            Self::Kitty => "kitty",
+            Self::Iterm2 => "iterm2",
+            Self::None => "none",
+        }
+    }
+}
+
 impl Default for MangaTuiConfig {
     fn default() -> Self {
         Self {
@@ -759,6 +823,7 @@ impl Default for MangaTuiConfig {
             download_dir: String::default(),
             image_quality: ImageQuality::default(),
             image_resize_filter: ImageResizeFilter::default(),
+            image_protocol: ImageProtocol::default(),
             track_reading_when_download: false,
             track_reading_history: true,
             default_manga_provider: MangaProviders::default(),
@@ -830,6 +895,7 @@ impl MangaTuiConfig {
         copy.default_language = crate::view::widgets::settings::active_chapter_language();
         copy.ui_language = crate::view::widgets::settings::active_ui_language();
         copy.theme = crate::theme::current_theme();
+        copy.image_protocol = crate::view::widgets::settings::active_image_protocol();
         copy
     }
 }

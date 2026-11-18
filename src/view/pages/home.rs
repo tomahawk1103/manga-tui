@@ -303,6 +303,10 @@ where
         }
     }
 
+    pub fn set_picker(&mut self, picker: Option<Picker>) {
+        self.picker = picker;
+    }
+
     pub fn set_active_provider(&mut self, provider: MangaProviders) {
         self.active_provider = provider;
     }

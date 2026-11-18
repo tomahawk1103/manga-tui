@@ -29,16 +29,17 @@ El binario en Rust ya es autocontenido para ejecutarse sin instalar dependencias
 
 ## Hito 1 · Arranque e imágenes ("Double-Click Ready") ✅
 
-**Implementado en:** [src/main.rs](src/main.rs), [src/backend/tui.rs](src/backend/tui.rs)
+**Implementado en:** [src/main.rs](src/main.rs), [src/backend/tui.rs](src/backend/tui.rs), [src/config.rs](src/config.rs), [src/view/widgets/settings.rs](src/view/widgets/settings.rs), [src/view/pages/reader.rs](src/view/pages/reader.rs), [src/view/pages/manga.rs](src/view/pages/manga.rs), [src/view/app.rs](src/view/app.rs)
 
 - **Codificación UTF-8 y título**: `SetConsoleCP(65001)` / `SetConsoleOutputCP(65001)` y título `Manga TUI v<versión>` mediante `SetTitle`.
-- **Relanzamiento en Windows Terminal (`wt.exe`)**: Si se abre `manga-tui.exe` desde una consola independiente clásica (`GetConsoleProcessList == 1`) fuera de una terminal moderna y sin subcomandos CLI no interactivos, relanza maximizado en `wt.exe`.
-- **Pausa ante errores fatales**: Si ocurre un error en consola independiente (por ejemplo, permisos de carpeta), muestra el mensaje y espera `Enter` antes de cerrar la ventana.
-- **Heurística de protocolo gráfico en Windows**: `src/backend/tui.rs` detecta terminales modernas (`WT_SESSION`, `WEZTERM_EXECUTABLE`, `TERM_PROGRAM`) y puede forzar `Sixel` en VS Code o cuando un terminal identificado como moderno devuelve `Halfblocks`. Al ser una heurística, puede ajustarse con la variable `MANGA_TUI_PROTOCOL` (`sixel`, `halfblocks`, `kitty`, `iterm2`, `none`).
+- **Relanzamiento en Windows Terminal (`wt.exe`) y detección ConPTY**: Si se abre `manga-tui.exe` desde una consola independiente clásica (`GetConsoleProcessList == 1`) fuera de una terminal moderna y sin subcomandos CLI no interactivos, busca `wt.exe` (incluidos alias `WindowsApps\wt.exe` y `PATH`) y relanza maximizado en Windows Terminal. Además, `src/backend/tui.rs` detecta sesiones ConPTY / Windows 11 DefTerm (`GetConsoleWindow` + `IsWindowVisible`) incluso sin `WT_SESSION`.
+- **Restauración de terminal y pausa ante errores fatales**: Un panic hook y el manejador de errores restauran la terminal (`restore_terminal_safely`) antes de imprimir el fallo y, en consola independiente, esperan `Enter` antes de cerrar la ventana.
+- **Protocolo gráfico configurable y conmutable en vivo**: `src/backend/tui.rs` usa `Sixel` automáticamente en terminales modernas (`WT_SESSION`, `WEZTERM_EXECUTABLE`, `TERM_PROGRAM`, VS Code o ConPTY) y mantiene `Halfblocks` en `conhost.exe` clásico sin forzar secuencias de escape incompatibles. Puede ajustarse por `MANGA_TUI_PROTOCOL` (`sixel`, `halfblocks`, `kitty`, `iterm2`, `none`, `auto`), mediante `image_protocol` en `config.toml` / Ajustes (`<c>` / `<F5>`), o alternarse **en vivo dentro del lector con `<p>`** (`Sixel ↔ Halfblocks`). Con `image_protocol = "none"`, abrir un capítulo lanza automáticamente el **Visor Web HD (`<v>`)** sin bloqueo.
 
 ### Criterios de aceptación (Hito 1)
+- [x] Tests unitarios de relanzamiento en Windows Terminal, búsqueda de `wt.exe`, detección de terminales modernos, precedencia de protocolo gráfico (`MANGA_TUI_PROTOCOL` > `config.toml` > `auto`), alternancia en vivo con `<p>` en el lector y fallback automático al **Visor Web HD (`<v>`)** cuando `image_protocol = "none"`.
 - [ ] Probar `manga-tui.exe` abriéndolo con **doble clic desde el Explorador**, dentro de **Windows Terminal**, y desde la **consola clásica (`conhost.exe`)**.
-- [ ] Si en algún terminal aparecen secuencias de escape visibles o no se renderizan imágenes en el lector TUI, usar `Halfblocks` (`MANGA_TUI_PROTOCOL=halfblocks`) o el **Visor Web HD (`<w>`)** permite seguir leyendo sin bloqueo.
+- [ ] Si en algún terminal aparecen secuencias de escape visibles o no se renderizan imágenes en el lector TUI, usar `<p>` en el lector para cambiar a `Halfblocks` (o `MANGA_TUI_PROTOCOL=halfblocks` / Ajustes) o el **Visor Web HD (`<v>`)** permite seguir leyendo sin bloqueo.
 
 ---
 
@@ -85,7 +86,7 @@ Antes de publicar la primera release definitiva, validar el `.zip` generado por 
 1. Extraer el `.zip` en una carpeta con espacios y tildes.
 2. Abrir `manga-tui.exe` mediante **doble clic**.
 3. Buscar un manga en español.
-4. Abrir y leer un capítulo en el **Visor Web HD (`<w>`)**.
+4. Abrir y leer un capítulo en el **Visor Web HD (`<v>`)**.
 5. Descargarlo en formato **CBZ**.
 6. Cerrar la aplicación, **sustituir `manga-tui.exe`**, volver a abrirlo y comprobar que el historial, la configuración y el archivo CBZ descargado siguen intactos.
 

@@ -105,6 +105,7 @@ where
     // terminal font size and the graphics it supports
     // if the terminal doesn't support any graphics protocol the picker is `None`
     picker: Option<Picker>,
+    pub needs_terminal_clear: bool,
     top_tabs_area: Rect,
     tab_hit_boxes: Vec<(u16, u16, SelectedPage)>,
 }
@@ -406,9 +407,22 @@ where
             manga_provider: Arc::clone(&provider),
             active_provider: which_provider,
             is_checking_provider: false,
+            needs_terminal_clear: false,
             top_tabs_area: Rect::default(),
             tab_hit_boxes: Vec::new(),
         }
+    }
+
+    pub fn take_needs_terminal_clear(&mut self) -> bool {
+        let mut should_clear = self.needs_terminal_clear;
+        self.needs_terminal_clear = false;
+        if let Some(reader) = self.manga_reader_page.as_mut()
+            && reader.needs_terminal_clear
+        {
+            reader.needs_terminal_clear = false;
+            should_clear = true;
+        }
+        should_clear
     }
 
     pub fn spawn_startup_provider_check(&mut self) {
@@ -1144,6 +1158,19 @@ where
                         manga_page.apply_preferred_language(new_lang);
                     }
                 },
+                SettingsOutcome::ImageProtocolChanged(_) => {
+                    let new_picker = crate::backend::tui::get_picker();
+                    self.picker = new_picker;
+                    self.home_page.set_picker(new_picker);
+                    self.search_page.set_picker(new_picker);
+                    if let Some(manga_page) = self.manga_page.as_mut() {
+                        manga_page.set_picker(new_picker);
+                    }
+                    if let (Some(picker), Some(reader_page)) = (new_picker, self.manga_reader_page.as_mut()) {
+                        reader_page.set_picker(picker);
+                    }
+                    self.needs_terminal_clear = true;
+                },
                 _ => {},
             }
             return;
@@ -1410,9 +1437,30 @@ where
 
     fn go_to_read_chapter(&mut self, chapter_to_read: ChapterToRead, manga_to_read: MangaToRead, manga_tracker: Option<S>) {
         let Some(picker) = self.picker.as_ref().cloned() else {
-            self.display_error_message(
-                tr("El visor gráfico de imágenes no está disponible", "Image picker is not available").to_string(),
-            );
+            let local_source = crate::view::pages::reader::LocalChapterSource::find(&manga_to_read.title, &chapter_to_read.id);
+            let session = crate::backend::web_viewer::WebViewerSession {
+                manga_id: manga_to_read.manga_id,
+                manga_title: manga_to_read.title,
+                manga_cover_url: None,
+                provider: manga_to_read.provider.unwrap_or_else(|| self.manga_provider.name()),
+                chapter: chapter_to_read,
+                list_of_chapters: manga_to_read.list,
+                local_source,
+            };
+            let tx = self.global_event_tx.clone();
+            tokio::spawn(async move {
+                if let Err(e) = crate::backend::web_viewer::open_chapter_in_browser(session).await {
+                    let _ = tx.send(Events::Error(e));
+                }
+            });
+            self.queue_status_toast = Some((
+                tr(
+                    "🌐 Protocolo TUI desactivado: abriendo capítulo en Visor Web HD...",
+                    "🌐 TUI protocol disabled: opening chapter in Web HD Viewer...",
+                )
+                .to_string(),
+                Instant::now(),
+            ));
             return;
         };
         self.home_page.clean_up();
@@ -1881,6 +1929,14 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         let area = Rect::new(0, 0, 110, 32);
         terminal.draw(|f| app.render(area, f)).unwrap();
+        let rendered: String = (0..32)
+            .map(|y| (0..110).map(|x| terminal.backend().buffer()[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            rendered.contains("Protocolo") || rendered.contains("Protocol"),
+            "Settings modal should render the 6th ImageProtocol row"
+        );
 
         // Cycle default provider right ('l') inside settings modal
         let initial_provider = crate::view::widgets::settings::active_default_provider();
@@ -1891,6 +1947,16 @@ mod tests {
         assert_eq!(app.active_provider, updated_provider);
         assert_eq!(app.home_page.active_provider, updated_provider);
         assert_eq!(app.search_page.active_provider, updated_provider);
+
+        // Jump to row 6 (ImageProtocol) and cycle right ('l')
+        let initial_proto = crate::view::widgets::settings::active_image_protocol();
+        app.global_event_tx.send(Events::Key(KeyCode::Char('6').into())).unwrap();
+        app.listen_to_event().await;
+        app.global_event_tx.send(Events::Key(KeyCode::Char('l').into())).unwrap();
+        app.listen_to_event().await;
+        assert_ne!(initial_proto, crate::view::widgets::settings::active_image_protocol());
+        assert!(app.take_needs_terminal_clear());
+        assert!(!app.take_needs_terminal_clear());
 
         // Close with 'c'
         app.global_event_tx.send(Events::Key(KeyCode::Char('c').into())).unwrap();
@@ -1905,5 +1971,36 @@ mod tests {
         app.global_event_tx.send(Events::Key(KeyCode::Esc.into())).unwrap();
         app.listen_to_event().await;
         assert!(!app.is_settings_modal_open);
+    }
+
+    #[tokio::test]
+    async fn test_reader_falls_back_to_web_viewer_when_picker_is_none() {
+        let mut app: App<MockMangaPageProvider, TrackerTest> =
+            App::new(MockMangaPageProvider::new(), None, None, MockFiltersHandler::new(MockFilterState {}), MockWidgetFilter {});
+
+        let chapter_to_read = ChapterToRead {
+            id: "ch-1".to_string(),
+            title: "Capitulo 1".to_string(),
+            number: 1.0,
+            volume_number: None,
+            num_page_bookmarked: None,
+            language: Languages::Spanish,
+            pages_url: vec!["http://localhost/page1.jpg".parse().unwrap()],
+        };
+
+        app.go_to_read_chapter(
+            chapter_to_read,
+            MangaToRead {
+                title: "Test Manga".to_string(),
+                manga_id: "m-1".to_string(),
+                list: ListOfChapters::default(),
+                provider: Some(MangaProviders::Inmanga),
+            },
+            None,
+        );
+
+        assert!(app.error_message.is_none(), "must not block with an error modal when picker is None");
+        assert!(app.queue_status_toast.is_some(), "should show informative Web HD fallback toast");
+        assert_ne!(app.current_tab, SelectedPage::ReaderTab);
     }
 }

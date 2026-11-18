@@ -104,6 +104,39 @@ mod tests {
         let provider_args = vec!["manga-tui.exe".to_string(), "-p".to_string(), "inmanga".to_string()];
         assert!(should_relaunch_in_windows_terminal(true, false, false, &provider_args));
     }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn windows_terminal_binary_lookup_finds_windowsapps_or_path_and_returns_none_when_missing() {
+        let base = std::path::PathBuf::from("./test_results/wt_lookup_test");
+        let _ = std::fs::remove_dir_all(&base);
+        let local_app_data = base.join("local");
+        let win_apps = local_app_data.join("Microsoft").join("WindowsApps");
+        let path_dir = base.join("path_bin");
+        std::fs::create_dir_all(&win_apps).unwrap();
+        std::fs::create_dir_all(&path_dir).unwrap();
+
+        // Missing everywhere -> None
+        assert_eq!(find_windows_terminal_binary_in(Some(local_app_data.to_str().unwrap()), Some(path_dir.as_os_str()),), None);
+
+        // Present in PATH -> found in PATH
+        let path_wt = path_dir.join("wt.exe");
+        std::fs::write(&path_wt, b"").unwrap();
+        assert_eq!(
+            find_windows_terminal_binary_in(Some(local_app_data.to_str().unwrap()), Some(path_dir.as_os_str()),),
+            Some(path_wt)
+        );
+
+        // Present in WindowsApps -> WindowsApps wins
+        let app_wt = win_apps.join("wt.exe");
+        std::fs::write(&app_wt, b"").unwrap();
+        assert_eq!(
+            find_windows_terminal_binary_in(Some(local_app_data.to_str().unwrap()), Some(path_dir.as_os_str()),),
+            Some(app_wt)
+        );
+
+        let _ = std::fs::remove_dir_all(&base);
+    }
 }
 
 mod backend;
@@ -130,10 +163,14 @@ impl TerminalGuard {
     }
 }
 
+fn restore_terminal_safely() {
+    let _ = stdout().execute(DisableMouseCapture);
+    ratatui::restore();
+}
+
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
-        let _ = stdout().execute(DisableMouseCapture);
-        ratatui::restore();
+        restore_terminal_safely();
     }
 }
 
@@ -174,17 +211,36 @@ fn is_standalone_console_launch() -> bool {
 }
 
 #[cfg(target_os = "windows")]
-fn find_windows_terminal_binary() -> Option<std::path::PathBuf> {
-    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
-        let wt_path = std::path::PathBuf::from(local_app_data)
-            .join("Microsoft")
-            .join("WindowsApps")
-            .join("wt.exe");
-        if wt_path.is_file() {
+fn is_existing_executable_or_alias(path: &std::path::Path) -> bool {
+    path.is_file() || std::fs::symlink_metadata(path).is_ok()
+}
+
+#[cfg(target_os = "windows")]
+fn find_windows_terminal_binary_in(local_app_data: Option<&str>, path_env: Option<&std::ffi::OsStr>) -> Option<std::path::PathBuf> {
+    if let Some(local) = local_app_data.filter(|s| !s.trim().is_empty()) {
+        let wt_path = std::path::PathBuf::from(local).join("Microsoft").join("WindowsApps").join("wt.exe");
+        if is_existing_executable_or_alias(&wt_path) {
             return Some(wt_path);
         }
     }
-    Some(std::path::PathBuf::from("wt.exe"))
+
+    if let Some(paths) = path_env {
+        for dir in std::env::split_paths(paths) {
+            let candidate = dir.join("wt.exe");
+            if is_existing_executable_or_alias(&candidate) {
+                return Some(candidate);
+            }
+        }
+    }
+
+    None
+}
+
+#[cfg(target_os = "windows")]
+fn find_windows_terminal_binary() -> Option<std::path::PathBuf> {
+    let local_app_data = std::env::var("LOCALAPPDATA").ok();
+    let path_env = std::env::var_os("PATH");
+    find_windows_terminal_binary_in(local_app_data.as_deref(), path_env.as_deref())
 }
 
 #[cfg(target_os = "windows")]
@@ -242,6 +298,7 @@ fn main() {
         Ok(runtime) => match runtime.block_on(async_main()) {
             Ok(()) => 0,
             Err(err) => {
+                restore_terminal_safely();
                 eprintln!("Error: {err}");
                 pause_before_exit_if_standalone();
                 1
@@ -346,6 +403,12 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     drop(connection);
 
     color_eyre::install()?;
+    let prev_panic_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        restore_terminal_safely();
+        prev_panic_hook(panic_info);
+        pause_before_exit_if_standalone();
+    }));
 
     let cache_provider: Arc<dyn Cacher> = InMemoryCache::init(8);
 
