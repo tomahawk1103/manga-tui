@@ -894,10 +894,11 @@ where
             match self.current_tab {
                 SelectedPage::Home => vec![
                     ("w/b", tr("Popular", "Popular")),
-                    ("j/k", tr("Recientes", "Recent")),
-                    ("r", tr("Abrir", "Open")),
+                    ("h/l", tr("Recientes", "Recent")),
+                    ("r/Enter", tr("Abrir", "Open")),
                     ("i", tr("Buscar", "Search")),
                     ("o", tr("Biblioteca", "Library")),
+                    ("g", "GitHub"),
                 ],
                 SelectedPage::Search => vec![
                     ("s", tr("Buscar", "Search")),
@@ -910,14 +911,31 @@ where
                     ("l", tr("Idioma", "Lang")),
                     ("f", tr("Filtros", "Filters")),
                 ],
-                SelectedPage::Feed => vec![
-                    ("Tab", tr("Pestaña", "Tab")),
-                    ("j/k", tr("Mover", "Move")),
-                    ("r", tr("Abrir", "Open")),
-                    ("s", tr("Filtrar", "Filter")),
-                    ("w/b", tr("Estado", "State")),
-                    ("Del", tr("Borrar", "Delete")),
-                ],
+                SelectedPage::Feed => {
+                    if self.feed_page.tabs == crate::view::widgets::feed::FeedTabs::Timeline {
+                        vec![
+                            ("Tab/1-3", tr("Pestaña", "Tab")),
+                            ("j/k", tr("Mover", "Move")),
+                            ("Enter", tr("Leer", "Read")),
+                            ("r", tr("Ficha", "Manga")),
+                            ("d", tr("Descargar", "Download")),
+                            ("f", tr("Favorito", "Favorite")),
+                            ("s", tr("Filtrar", "Filter")),
+                            ("u", tr("Actualizar", "Refresh")),
+                        ]
+                    } else {
+                        vec![
+                            ("Tab/1-3", tr("Pestaña", "Tab")),
+                            ("j/k", tr("Mover", "Move")),
+                            ("r/Enter", tr("Abrir", "Open")),
+                            ("w/b", tr("Pág.", "Page")),
+                            ("s", tr("Filtrar", "Filter")),
+                            ("f", tr("Favorito", "Favorite")),
+                            ("d", tr("Quitar", "Remove")),
+                            ("X", tr("Vaciar", "Clear")),
+                        ]
+                    }
+                },
                 SelectedPage::MangaTab => {
                     if let Some(page) = &self.manga_page {
                         if page.is_provider_switcher_open {
@@ -929,21 +947,26 @@ where
                         } else {
                             vec![
                                 ("j/k", tr("Capítulos", "Chapters")),
-                                ("r", tr("Leer", "Read")),
+                                ("r/v", tr("Leer/Web", "Read/Web")),
                                 ("Space", tr("Selec.", "Select")),
-                                ("d", tr("Descargar", "Download")),
+                                ("d/a", tr("Descargar", "Download")),
                                 ("f", tr("Favorito", "Favorite")),
-                                ("P", tr("Proveedor", "Provider")),
+                                ("t", tr("Orden", "Order")),
                                 ("l", tr("Idioma", "Lang")),
+                                ("P", tr("Proveedor", "Provider")),
                             ]
                         }
                     } else {
                         vec![]
                     }
                 },
-                SelectedPage::ReaderTab => {
-                    vec![("j/k", tr("Pág.", "Page")), ("w/b", tr("Cap.", "Chap.")), ("Backspace", tr("Volver", "Back"))]
-                },
+                SelectedPage::ReaderTab => vec![
+                    ("j/k", tr("Pág.", "Page")),
+                    ("g/G", tr("Inicio/Fin", "Start/End")),
+                    ("w/b", tr("Cap.", "Chap.")),
+                    ("v", tr("Visor Web", "Web HD")),
+                    ("Esc/q", tr("Volver", "Back")),
+                ],
             }
         };
 

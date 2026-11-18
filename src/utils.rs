@@ -1,9 +1,9 @@
 use chrono::NaiveDate;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
+use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, BorderType, Paragraph, Widget};
+use ratatui::widgets::{Block, BorderType, Paragraph, Widget, Wrap};
 use tui_input::Input;
 
 use crate::i18n::tr;
@@ -94,5 +94,120 @@ pub fn render_search_bar(is_typing: bool, input_help: Line<'_>, input: &Input, f
 
     if is_typing {
         frame.set_cursor_position((area.x + ((input.visual_cursor()).max(scroll) - scroll) as u16 + 1, area.y + 1));
+    }
+}
+
+/// Renders a themed informational card inside the advanced filters modal for providers that use direct search.
+pub fn render_no_advanced_filters_card(provider_name: &str, area: Rect, buf: &mut ratatui::buffer::Buffer) {
+    let t = crate::theme::theme();
+    let card_area = area.inner(Margin {
+        horizontal: 3,
+        vertical: 2,
+    });
+    if card_area.width < 12 || card_area.height < 4 {
+        return;
+    }
+
+    let title = Line::from(vec![
+        Span::styled(format!(" ℹ {provider_name} "), Style::default().fg(t.accent_primary).bold()),
+        Span::styled(tr("— Búsqueda directa ", "— Direct search "), Style::default().fg(t.text_muted)),
+    ]);
+
+    let block = t.rounded_block().title(title);
+    let inner = block.inner(card_area).inner(Margin {
+        horizontal: 2,
+        vertical: 1,
+    });
+    block.render(card_area, buf);
+
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    let header_msg = if crate::i18n::is_es() {
+        format!("{provider_name} utiliza búsqueda directa por título sin filtros remotos de etiquetas.")
+    } else {
+        format!("{provider_name} uses direct title search without remote tag filters.")
+    };
+
+    let lines = vec![
+        Line::from(Span::styled(header_msg, Style::default().fg(t.text_primary).bold())),
+        Line::raw(""),
+        Line::from(Span::styled(
+            tr(
+                "Filtros rápidos disponibles directamente en la barra de búsqueda:",
+                "Quick filters available right in the search bar:",
+            ),
+            Style::default().fg(t.accent_highlight).bold(),
+        )),
+        Line::raw(""),
+        Line::from(vec![
+            t.key_chip("Tab / m"),
+            Span::styled(
+                format!(
+                    "  {}",
+                    tr(
+                        "Alternar alcance entre Todos los proveedores y el proveedor activo",
+                        "Toggle scope between All Providers and active provider"
+                    )
+                ),
+                Style::default().fg(t.text_secondary),
+            ),
+        ]),
+        Line::from(vec![
+            t.key_chip("l"),
+            Span::styled(
+                format!(
+                    "  {}",
+                    tr("Filtrar resultados por idioma (Todos / 🇪🇸 ES / 🇬🇧 EN)", "Filter results by language (All / 🇪🇸 ES / 🇬🇧 EN)")
+                ),
+                Style::default().fg(t.text_secondary),
+            ),
+        ]),
+        Line::from(vec![
+            t.key_chip("c / F5"),
+            Span::styled(
+                format!(
+                    "  {}",
+                    tr("Abrir Ajustes para cambiar el proveedor predeterminado", "Open Settings to change default provider")
+                ),
+                Style::default().fg(t.text_secondary),
+            ),
+        ]),
+    ];
+
+    Paragraph::new(lines)
+        .alignment(Alignment::Left)
+        .wrap(Wrap { trim: true })
+        .render(inner, buf);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::buffer::Buffer;
+
+    use super::*;
+
+    #[test]
+    fn no_advanced_filters_card_renders_themed_instructions() {
+        let area = Rect::new(0, 0, 80, 20);
+        let mut buf = Buffer::empty(area);
+
+        render_no_advanced_filters_card("InManga", area, &mut buf);
+
+        let rendered: String = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains('╭'), "card should use rounded border");
+        assert!(rendered.contains("InManga"));
+        assert!(rendered.contains("Tab / m"));
+        assert!(rendered.contains("c / F5"));
+
+        // Small area should safely no-op without panicking
+        let tiny = Rect::new(0, 0, 8, 4);
+        let mut tiny_buf = Buffer::empty(tiny);
+        render_no_advanced_filters_card("InManga", tiny, &mut tiny_buf);
     }
 }

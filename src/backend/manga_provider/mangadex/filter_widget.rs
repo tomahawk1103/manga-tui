@@ -4,12 +4,13 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, HighlightSpacing, List, ListItem, ListState, Paragraph, StatefulWidget, Tabs, Widget, Wrap};
+use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState, Paragraph, StatefulWidget, Tabs, Widget, Wrap};
 
 use super::StatefulWidgetFrame;
 use super::filters::*;
 use crate::backend::manga_provider::FiltersWidget;
-use crate::global::CURRENT_LIST_ITEM_STYLE;
+use crate::i18n::tr;
+use crate::theme::theme;
 use crate::utils::render_search_bar;
 
 #[derive(Clone)]
@@ -29,26 +30,48 @@ impl From<MangaFilters> for Line<'_> {
 
 impl From<FilterListItem> for ListItem<'_> {
     fn from(value: FilterListItem) -> Self {
-        let line =
-            if value.is_selected { Line::from(format!("🟡 {} ", value.name)).fg(Color::Yellow) } else { Line::from(value.name) };
+        let t = theme();
+        let line = if value.is_selected {
+            Line::from(vec![
+                Span::styled(" ✓ ", Style::default().fg(t.status_success).bold()),
+                Span::styled(value.name, Style::default().fg(t.accent_highlight).bold()),
+            ])
+        } else {
+            Line::from(vec![Span::raw("   "), Span::styled(value.name, Style::default().fg(t.text_secondary))])
+        };
         ListItem::new(line)
     }
 }
 
 impl From<ListItemId> for ListItem<'_> {
     fn from(value: ListItemId) -> Self {
-        let line =
-            if value.is_selected { Line::from(format!("🟡 {} ", value.name)).fg(Color::Yellow) } else { Line::from(value.name) };
+        let t = theme();
+        let line = if value.is_selected {
+            Line::from(vec![
+                Span::styled(" ✓ ", Style::default().fg(t.status_success).bold()),
+                Span::styled(value.name, Style::default().fg(t.accent_highlight).bold()),
+            ])
+        } else {
+            Line::from(vec![Span::raw("   "), Span::styled(value.name, Style::default().fg(t.text_secondary))])
+        };
         ListItem::new(line)
     }
 }
 
 impl From<TagListItem> for ListItem<'_> {
     fn from(value: TagListItem) -> Self {
+        let t = theme();
         let line = match value.state {
-            TagListItemState::Included => Line::from(format!(" {} ", value.name).black().on_green()),
-            TagListItemState::Excluded => Line::from(format!(" {} ", value.name).black().on_red()),
-            TagListItemState::NotSelected => Line::from(value.name),
+            TagListItemState::Included => Line::from(Span::styled(
+                format!(" + {} ", value.name),
+                Style::default().fg(Color::Black).bg(t.status_success).bold(),
+            )),
+            TagListItemState::Excluded => {
+                Line::from(Span::styled(format!(" - {} ", value.name), Style::default().fg(Color::White).bg(t.status_error).bold()))
+            },
+            TagListItemState::NotSelected => {
+                Line::from(Span::styled(format!("   {}", value.name), Style::default().fg(t.text_secondary)))
+            },
         };
 
         ListItem::new(line)
@@ -59,10 +82,9 @@ impl StatefulWidgetFrame for MangadexFilterWidget {
     type State = MangadexFilterProvider;
 
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>, state: &mut Self::State) {
+        let t = theme();
         let buf = frame.buffer_mut();
-        let [tabs_area, current_filter_area] = Layout::vertical([Constraint::Percentage(20), Constraint::Percentage(80)])
-            .margin(2)
-            .areas(area);
+        let [tabs_area, current_filter_area] = Layout::vertical([Constraint::Length(3), Constraint::Min(4)]).margin(2).areas(area);
 
         let tabs: Vec<Line<'_>> = FILTERS
             .iter()
@@ -78,21 +100,25 @@ impl StatefulWidgetFrame for MangadexFilterWidget {
                     MangaFilters::Artists => state.artist_state.num_filters_active(),
                 };
 
-                Line::from(vec![
-                    filters.to_string().into(),
-                    " ".into(),
-                    if num_filters != 0 {
-                        Span::raw(format!("{num_filters}+")).bold().underlined().style(Color::Yellow)
-                    } else {
-                        "".into()
-                    },
-                ])
+                let mut spans = vec![Span::raw(format!(" {} ", filters))];
+                if num_filters != 0 {
+                    spans.push(Span::styled(format!("({num_filters}) "), Style::default().fg(t.accent_highlight).bold()));
+                }
+                Line::from(spans)
             })
             .collect();
 
+        let tabs_block = t.rounded_block().title(Span::styled(
+            tr(" Categorías (<Tab> / <Shift+Tab>) ", " Categories (<Tab> / <Shift+Tab>) "),
+            Style::default().fg(t.accent_primary).bold(),
+        ));
+
         Tabs::new(tabs)
+            .block(tabs_block)
             .select(state.id_filter)
-            .highlight_style(Style::default().fg(Color::Yellow))
+            .style(Style::default().fg(t.text_muted))
+            .highlight_style(Style::default().fg(Color::Black).bg(t.accent_primary).bold())
+            .divider(Span::styled("│", Style::default().fg(t.border_muted)))
             .render(tabs_area, buf);
 
         if let Some(filter) = FILTERS.get(state.id_filter) {
@@ -134,20 +160,34 @@ impl StatefulWidgetFrame for MangadexFilterWidget {
                             render_filter_list(authors.clone(), list_area, buf, &mut state.author_state.state);
                         },
                         None => {
-                            Paragraph::new("Search authors").render(list_area, buf);
+                            Paragraph::new(tr(
+                                "Busca autores por nombre en el campo de la derecha.",
+                                "Search authors by name on the right.",
+                            ))
+                            .style(Style::default().fg(t.text_muted))
+                            .block(
+                                t.rounded_block().title(Span::styled(
+                                    tr(" Autores ", " Authors "),
+                                    Style::default().fg(t.accent_primary).bold(),
+                                )),
+                            )
+                            .wrap(Wrap { trim: true })
+                            .render(list_area, buf);
                         },
                     }
 
                     let input_help = if state.is_typing {
                         Line::from(vec![
-                            "Press ".into(),
-                            " <Enter> ".bold().yellow(),
-                            "to search ".into(),
-                            " <Esc> ".bold().yellow(),
-                            "to stop typing".into(),
+                            Span::styled(" <Enter> ", Style::default().fg(t.accent_highlight).bold()),
+                            Span::styled(tr("Buscar ", "Search "), Style::default().fg(t.text_muted)),
+                            Span::styled("<Esc> ", Style::default().fg(t.accent_highlight).bold()),
+                            Span::styled(tr("Salir ", "Stop "), Style::default().fg(t.text_muted)),
                         ])
                     } else {
-                        Line::from(vec!["Press".into(), " <l> ".bold().yellow(), "to search authors".into()])
+                        Line::from(vec![
+                            Span::styled(" <l> ", Style::default().fg(t.accent_highlight).bold()),
+                            Span::styled(tr("Buscar autores ", "Search authors "), Style::default().fg(t.text_muted)),
+                        ])
                     };
 
                     render_search_bar(state.is_typing, input_help, &state.author_state.search_bar, frame, input_area);
@@ -161,20 +201,34 @@ impl StatefulWidgetFrame for MangadexFilterWidget {
                             render_filter_list(authors.clone(), list_area, buf, &mut state.artist_state.state);
                         },
                         None => {
-                            Paragraph::new("Search artist").render(list_area, buf);
+                            Paragraph::new(tr(
+                                "Busca artistas por nombre en el campo de la derecha.",
+                                "Search artists by name on the right.",
+                            ))
+                            .style(Style::default().fg(t.text_muted))
+                            .block(
+                                t.rounded_block().title(Span::styled(
+                                    tr(" Artistas ", " Artists "),
+                                    Style::default().fg(t.accent_primary).bold(),
+                                )),
+                            )
+                            .wrap(Wrap { trim: true })
+                            .render(list_area, buf);
                         },
                     }
 
                     let input_help = if state.is_typing {
                         Line::from(vec![
-                            "Press ".into(),
-                            " <Enter> ".bold().yellow(),
-                            "to search ".into(),
-                            " <Esc> ".bold().yellow(),
-                            "to stop typing".into(),
+                            Span::styled(" <Enter> ", Style::default().fg(t.accent_highlight).bold()),
+                            Span::styled(tr("Buscar ", "Search "), Style::default().fg(t.text_muted)),
+                            Span::styled("<Esc> ", Style::default().fg(t.accent_highlight).bold()),
+                            Span::styled(tr("Salir ", "Stop "), Style::default().fg(t.text_muted)),
                         ])
                     } else {
-                        Line::from(vec!["Press".into(), " <l> ".bold().yellow(), "to search artists".into()])
+                        Line::from(vec![
+                            Span::styled(" <l> ", Style::default().fg(t.accent_highlight).bold()),
+                            Span::styled(tr("Buscar artistas ", "Search artists "), Style::default().fg(t.text_muted)),
+                        ])
                     };
 
                     render_search_bar(state.is_typing, input_help, &state.artist_state.search_bar, frame, input_area);
@@ -195,22 +249,37 @@ impl MangadexFilterWidget {
     }
 
     fn render_tags_list(&mut self, area: Rect, frame: &mut Frame<'_>, state: &mut MangadexFilterProvider) {
+        let t = theme();
         let buf = frame.buffer_mut();
         let [list_area, input_area] = Layout::horizontal([Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
 
-        let [input_area, current_tags_area] = Layout::vertical([Constraint::Fill(1), Constraint::Fill(1)]).areas(input_area);
+        let [input_area, current_tags_area] = Layout::vertical([Constraint::Length(3), Constraint::Min(3)]).areas(input_area);
 
         if let Some(tags) = state.tags_state.tags.as_ref().cloned() {
-            let tags_filtered: Vec<Span<'_>> = tags
-                .iter()
-                .filter(|tag| tag.state != TagListItemState::NotSelected)
-                .map(|tag| tag.set_filter_tags_style())
-                .collect();
+            let mut tags_filtered: Vec<Span<'_>> = Vec::new();
+            for tag in tags.iter().filter(|tag| tag.state != TagListItemState::NotSelected) {
+                tags_filtered.push(tag.set_filter_tags_style());
+                tags_filtered.push(Span::raw(" "));
+            }
 
-            Paragraph::new(Line::from(tags_filtered))
-                .block(Block::bordered())
+            let active_tags_block = t
+                .rounded_block()
+                .title(Span::styled(tr(" Etiquetas activas ", " Active tags "), Style::default().fg(t.accent_secondary).bold()));
+
+            if tags_filtered.is_empty() {
+                Paragraph::new(Span::styled(
+                    tr("Ninguna etiqueta seleccionada todavía.", "No tags selected yet."),
+                    Style::default().fg(t.text_dim).italic(),
+                ))
+                .block(active_tags_block)
                 .wrap(Wrap { trim: true })
                 .render(current_tags_area, buf);
+            } else {
+                Paragraph::new(Line::from(tags_filtered))
+                    .block(active_tags_block)
+                    .wrap(Wrap { trim: true })
+                    .render(current_tags_area, buf);
+            }
 
             if state.tags_state.is_filter_empty() {
                 render_tags_list(tags, list_area, buf, &mut state.tags_state.state);
@@ -229,9 +298,15 @@ impl MangadexFilterWidget {
             }
 
             let input_help = if state.is_typing {
-                Line::from(vec!["Press ".into(), " <esc> ".bold().yellow(), "to stop typing".into()])
+                Line::from(vec![
+                    Span::styled(" <Esc> ", Style::default().fg(t.accent_highlight).bold()),
+                    Span::styled(tr("Salir ", "Stop "), Style::default().fg(t.text_muted)),
+                ])
             } else {
-                Line::from(vec!["Press".into(), " <l> ".bold().yellow(), "to filter tags".into()])
+                Line::from(vec![
+                    Span::styled(" <l> ", Style::default().fg(t.accent_highlight).bold()),
+                    Span::styled(tr("Filtrar etiquetas ", "Filter tags "), Style::default().fg(t.text_muted)),
+                ])
             };
 
             render_search_bar(state.is_typing, input_help, &state.tags_state.filter_input, frame, input_area);
@@ -244,16 +319,15 @@ where
     T: IntoIterator,
     T::Item: Into<ListItem<'a>>,
 {
-    let list_block = Block::bordered().title(Line::from(vec![
-        " Up/Down ".into(),
-        " <j>/<k> ".bold().yellow(),
-        " Select ".into(),
-        "<s>".bold().yellow(),
-    ]));
+    let t = theme();
+    let list_block = t.rounded_block().title(Line::from(vec![Span::styled(
+        tr(" <j/k> Mover · <s> Seleccionar ", " <j/k> Move · <s> Toggle "),
+        Style::default().fg(t.accent_highlight).bold(),
+    )]));
     let list = List::new(items)
         .block(list_block)
         .highlight_spacing(HighlightSpacing::Always)
-        .highlight_style(*CURRENT_LIST_ITEM_STYLE);
+        .highlight_style(Style::default().fg(t.text_primary).bg(t.row_selected_bg).bold());
 
     StatefulWidget::render(list, area, buf, state);
 }
@@ -263,17 +337,14 @@ where
     T: IntoIterator,
     T::Item: Into<ListItem<'a>>,
 {
-    let list_block = Block::bordered().title(Line::from(vec![
-        " Up/Down ".into(),
-        " <j>/<k> ".bold().yellow(),
-        " toggle include tag ".into(),
-        "<s>".bold().yellow(),
-        " toggle exclude tag ".into(),
-        "<d>".bold().yellow(),
-    ]));
+    let t = theme();
+    let list_block = t.rounded_block().title(Line::from(vec![Span::styled(
+        tr(" <j/k> Mover · <s> Incluir · <d> Excluir ", " <j/k> Move · <s> Include · <d> Exclude "),
+        Style::default().fg(t.accent_highlight).bold(),
+    )]));
     let list = List::new(items)
         .block(list_block)
         .highlight_spacing(HighlightSpacing::Always)
-        .highlight_style(*CURRENT_LIST_ITEM_STYLE);
+        .highlight_style(Style::default().fg(t.text_primary).bg(t.row_selected_bg).bold());
     StatefulWidget::render(list, area, buf, state);
 }

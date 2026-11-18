@@ -635,10 +635,14 @@ impl WidgetRef for AskConfirmationDeleteAllModalBody {
 
         let [warning_area, options_area] = Layout::vertical([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(inner);
 
-        let warning = format!(
-            "¿Estás seguro de que quieres eliminar TODOS los mangas del proveedor {} en la sección {}?",
-            self.manga_provider, self.tab
-        );
+        let warning = if crate::i18n::is_es() {
+            format!(
+                "¿Estás seguro de que quieres eliminar TODOS los mangas del proveedor {} en la sección {}?",
+                self.manga_provider, self.tab
+            )
+        } else {
+            format!("Are you sure you want to remove ALL mangas from provider {} in the {} section?", self.manga_provider, self.tab)
+        };
 
         Paragraph::new(warning)
             .style(Style::default().fg(t.text_primary).bold())
@@ -647,7 +651,10 @@ impl WidgetRef for AskConfirmationDeleteAllModalBody {
 
         let lines = vec![
             Line::styled(
-                "Tu historial de lectura y descargas se mantendrán pero no se mostrarán en esta página.",
+                tr(
+                    "Tus archivos descargados en disco se mantendrán, pero se vaciará esta lista.",
+                    "Your downloaded files on disk will be kept, but this list will be cleared.",
+                ),
                 Style::default().fg(t.text_muted),
             ),
             Line::from(""),
@@ -693,8 +700,8 @@ impl Widget for AskConfirmationDeleteAllModal {
             tab: self.tab,
         })
         .with_dimensions(super::ModalDimensions {
-            width: 70,
-            height: 60,
+            width: 62,
+            height: 42,
         })
         .build();
 

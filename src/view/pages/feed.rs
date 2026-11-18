@@ -48,11 +48,11 @@
 //! This separation allows for responsive UI while handling async operations.
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use manga_tui::SearchTerm;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span, ToSpan};
 use ratatui::widgets::{Block, BorderType, Paragraph, StatefulWidget, Tabs, Widget, Wrap};
@@ -191,6 +191,9 @@ where
     tasks: JoinSet<()>,
     /// Manga provider for fetching data
     manga_provider: Option<Arc<T>>,
+    tabs_area: Rect,
+    search_bar_area: Rect,
+    content_area: Rect,
 }
 
 impl<T> Feed<T>
@@ -217,6 +220,9 @@ where
             items_per_page: 5,
             is_typing: false,
             manga_provider: None,
+            tabs_area: Rect::default(),
+            search_bar_area: Rect::default(),
+            content_area: Rect::default(),
         }
     }
 
@@ -338,6 +344,8 @@ where
     fn render_tabs_and_search_bar(&mut self, area: Rect, frame: &mut Frame) {
         let t = theme();
         let [tabs_area, search_bar_area] = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(area);
+        self.tabs_area = tabs_area;
+        self.search_bar_area = search_bar_area;
 
         let selected_tab = match self.tabs {
             FeedTabs::Timeline => 0,
@@ -1072,12 +1080,38 @@ where
     }
 
     fn handle_mouse_event(&mut self, mouse_event: MouseEvent) {
+        if self.state == FeedState::AskingDeleteAllConfirmation {
+            return;
+        }
+        let pos = Position::new(mouse_event.column, mouse_event.row);
         match mouse_event.kind {
             MouseEventKind::ScrollUp => {
                 self.local_action_tx.send(FeedActions::ScrollHistoryUp).ok();
             },
             MouseEventKind::ScrollDown => {
                 self.local_action_tx.send(FeedActions::ScrollHistoryDown).ok();
+            },
+            MouseEventKind::Down(MouseButton::Left) => {
+                if self.tabs_area.contains(pos) {
+                    self.is_typing = false;
+                    let idx =
+                        ((pos.x.saturating_sub(self.tabs_area.x) as usize) * 3 / (self.tabs_area.width.max(1) as usize)).min(2);
+                    let tab = match idx {
+                        0 => FeedTabs::Timeline,
+                        1 => FeedTabs::ContinueReading,
+                        _ => FeedTabs::Library,
+                    };
+                    self.local_action_tx.send(FeedActions::SetTab(tab)).ok();
+                } else if self.search_bar_area.contains(pos) {
+                    if !self.is_typing {
+                        self.local_action_tx.send(FeedActions::ToggleSearchBar).ok();
+                    }
+                } else if self.content_area.contains(pos) {
+                    if self.is_typing {
+                        self.is_typing = false;
+                    }
+                    self.local_action_tx.send(FeedActions::GoToMangaPage).ok();
+                }
             },
             _ => {},
         }
@@ -1100,6 +1134,7 @@ where
         let layout = Layout::vertical([Constraint::Length(top_bar_height), Constraint::Fill(1)]);
 
         let [tabs_area, content_area] = layout.areas(area);
+        self.content_area = content_area;
 
         self.render_top_area(tabs_area, frame);
 
@@ -1601,5 +1636,50 @@ mod tests {
         press_key(&mut feed_page, KeyCode::Char('X'));
 
         assert_eq!(FeedState::AskingDeleteAllConfirmation, feed_page.state)
+    }
+
+    #[test]
+    fn mouse_click_on_tabs_switches_feed_tabs() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let mut feed_page: Feed<MockMangaPageProvider> = Feed::new().with_api_client(MockMangaPageProvider::new().into());
+        feed_page.tabs_area = Rect::new(0, 0, 60, 4);
+        assert_eq!(feed_page.tabs, FeedTabs::Timeline);
+
+        // Click middle third -> ContinueReading
+        feed_page.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 30,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        let action = feed_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(action, FeedActions::SetTab(FeedTabs::ContinueReading));
+        feed_page.update(action);
+        assert_eq!(feed_page.tabs, FeedTabs::ContinueReading);
+
+        // Click right third -> Library
+        feed_page.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 50,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        let action = feed_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(action, FeedActions::SetTab(FeedTabs::Library));
+        feed_page.update(action);
+        assert_eq!(feed_page.tabs, FeedTabs::Library);
+
+        // Click left third -> Timeline
+        feed_page.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        let action = feed_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(action, FeedActions::SetTab(FeedTabs::Timeline));
+        feed_page.update(action);
+        assert_eq!(feed_page.tabs, FeedTabs::Timeline);
     }
 }

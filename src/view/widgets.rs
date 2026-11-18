@@ -2,14 +2,12 @@
 use crossterm::event::KeyCode;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
-use ratatui::style::{Color, Modifier, Style, Styled};
+use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::block::Title;
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget, WidgetRef, Wrap};
 
 use crate::backend::manga_provider::LatestChapter;
 use crate::backend::tui::Events;
-use crate::global::INSTRUCTIONS_STYLE;
 use crate::i18n::tr;
 use crate::theme::theme;
 use crate::utils::centered_rect;
@@ -127,22 +125,32 @@ impl<'a> Widget for ErrorModalBody<'a> {
 
 impl<'a> WidgetRef for ErrorModalBody<'a> {
     fn render_ref(&self, area: Rect, buf: &mut ratatui::prelude::Buffer) {
-        Block::bordered()
+        let t = theme();
+        let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(Color::Red))
-            .title(Title::from(Line::from(vec![
-                " ⚠ Error — press ".into(),
-                "<q>".set_style(*INSTRUCTIONS_STYLE),
-                " to close ".into(),
-            ])))
-            .render(area, buf);
+            .border_style(Style::default().fg(t.status_error))
+            .title(Line::from(vec![Span::styled(
+                tr(" ⚠ Error ", " ⚠ Error "),
+                Style::default().fg(t.status_error).add_modifier(Modifier::BOLD),
+            )]))
+            .title_bottom(
+                Line::from(vec![Span::styled(
+                    tr(" Pulsa <q> o <Esc> para cerrar ", " Press <q> or <Esc> to close "),
+                    Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD),
+                )])
+                .alignment(Alignment::Center),
+            );
 
-        let inner = area.inner(Margin {
+        let inner = block.inner(area).inner(Margin {
             horizontal: 2,
-            vertical: 2,
+            vertical: 1,
         });
+        block.render(area, buf);
 
-        Paragraph::new(self.message).wrap(Wrap { trim: true }).render(inner, buf);
+        Paragraph::new(self.message)
+            .style(Style::default().fg(t.text_primary))
+            .wrap(Wrap { trim: true })
+            .render(inner, buf);
     }
 }
 
@@ -163,12 +171,17 @@ impl<'a> Widget for ErrorModal<'a> {
     where
         Self: Sized,
     {
-        let modal = ModalBuilder::new(ErrorModalBody {
-            message: self.message,
-        })
-        .build();
+        let min_w = 42.min(area.width).max(1);
+        let max_w = area.width.saturating_sub(4).max(min_w);
+        let target_width = (area.width.saturating_mul(60) / 100).clamp(min_w, max_w);
+        let desired_height = 9.min(area.height.max(1));
+        let modal_area = centered_modal_rect(area, target_width, desired_height);
 
-        modal.render_ref(area, buf);
+        Clear.render(modal_area, buf);
+        ErrorModalBody {
+            message: self.message,
+        }
+        .render_ref(modal_area, buf);
     }
 }
 
@@ -494,7 +507,7 @@ impl HelpModal {
 impl Widget for HelpModal {
     fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer) {
         let t = theme();
-        let modal_area = centered_rect(area, 78, 78);
+        let modal_area = centered_rect(area, 82, 88);
         Clear.render(modal_area, buf);
 
         let block = Block::bordered()
@@ -532,6 +545,7 @@ impl Widget for HelpModal {
             Self::key_line("u / F1", tr("Ir a Inicio", "Go to Home")),
             Self::key_line("i / F2", tr("Ir a Buscar", "Go to Search")),
             Self::key_line("o / F3", tr("Ir a Seguimiento (Biblioteca)", "Go to Feed (Library)")),
+            Self::key_line("c / F5", tr("Abrir menú de Ajustes", "Open Settings menu")),
             Self::key_line(
                 "T",
                 tr("Alternar tema (Tokyo Night/Catppuccin/Clásico)", "Cycle theme (Tokyo Night/Catppuccin/Classic)"),
@@ -543,6 +557,7 @@ impl Widget for HelpModal {
             Self::section_title(tr("Buscador (Search)", "Search Page")),
             Self::key_line("s", tr("Escribir en barra de búsqueda", "Focus search input")),
             Self::key_line("Enter", tr("Ejecutar búsqueda / Abrir", "Run search / Open")),
+            Self::key_line("1-3 / ←/→", tr("Explorar Ranking Mundial", "Browse Global Ranking")),
             Self::key_line("j / k", tr("Moverse por resultados", "Navigate results")),
             Self::key_line("w / b", tr("Página siguiente / anterior", "Next / previous page")),
             Self::key_line("Tab / m", tr("Alternar Todos / Proveedor actual", "Toggle All / Current provider")),
@@ -551,6 +566,7 @@ impl Widget for HelpModal {
             Self::key_line("P", tr("Cambiar proveedor agrupado (Shift+P)", "Switch grouped provider (Shift+P)")),
             Self::key_line("f", tr("Abrir filtros avanzados", "Open advanced filters")),
             Self::key_line("r / Enter", tr("Abrir ficha del manga", "Open manga page")),
+            Self::key_line("Esc", tr("Volver al Ranking Mundial", "Return to Global Ranking")),
         ];
 
         let right_lines = vec![
@@ -562,15 +578,17 @@ impl Widget for HelpModal {
             Self::key_line("d / a", tr("Descargar selección / todos", "Download selected / all")),
             Self::key_line("f", tr("Marcar/desmarcar Favorito ★", "Toggle Favorite ★")),
             Self::key_line("P", tr("Migrar a otro proveedor", "Switch manga provider")),
-            Self::key_line("l / o", tr("Cambiar idioma / orden", "Change language / order")),
+            Self::key_line("l / t", tr("Cambiar idioma / orden", "Change language / order")),
             Self::key_line("Tab / m", tr("Ir a marcador / Guardar marcador", "Read / Save bookmark")),
             Line::raw(""),
             Self::section_title(tr("Biblioteca y Lector", "Library & Reader")),
             Self::key_line("Tab / 1-3", tr("Cambiar pestaña en Seguimiento", "Switch tab in Feed")),
+            Self::key_line("d / X", tr("Descargar o quitar / Vaciar lista", "Download or remove / Clear list")),
             Self::key_line("j / k", tr("Pasar página en el lector", "Next / prev page in reader")),
+            Self::key_line("g / G", tr("Primera / última pág. en lector", "First / last page in reader")),
             Self::key_line("v", tr("Abrir en navegador (Scroll HD)", "Open in browser (HD Scroll)")),
             Self::key_line("w / b", tr("Siguiente / anterior capítulo", "Next / prev chapter in reader")),
-            Self::key_line("Backspace", tr("Volver atrás", "Go back")),
+            Self::key_line("Esc / q", tr("Volver atrás / Salir del lector", "Go back / Exit reader")),
         ];
 
         Paragraph::new(left_lines).wrap(Wrap { trim: false }).render(left_col, buf);
@@ -629,5 +647,34 @@ mod tests {
             .find(|&x| buf[(x, top_border_y)].symbol() == "╭")
             .expect("top-left corner");
         assert_eq!(buf[(top_left_x, top_border_y)].fg, theme().border_accent);
+    }
+
+    #[test]
+    fn error_modal_renders_rounded_themed_border_and_close_hint() {
+        let area = Rect::new(0, 0, 100, 30);
+        let mut buf = Buffer::empty(area);
+
+        ErrorModal::new("Connection timed out").render(area, &mut buf);
+
+        let rendered: String = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains('╭'), "error modal should use rounded borders");
+        assert!(rendered.contains('╰'), "error modal should use rounded bottom borders");
+        assert!(rendered.contains("Connection timed out"));
+        assert!(
+            rendered.contains("Pulsa <q> o <Esc> para cerrar") || rendered.contains("Press <q> or <Esc> to close"),
+            "error modal should render localized close hint, got:\n{rendered}"
+        );
+
+        let top_border_y = (0..area.height)
+            .find(|&y| (0..area.width).any(|x| buf[(x, y)].symbol() == "╭"))
+            .expect("top border exists");
+        let top_left_x = (0..area.width)
+            .find(|&x| buf[(x, top_border_y)].symbol() == "╭")
+            .expect("top-left corner");
+        assert_eq!(buf[(top_left_x, top_border_y)].fg, theme().status_error);
     }
 }

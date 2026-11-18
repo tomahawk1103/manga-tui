@@ -28,7 +28,7 @@ use crate::backend::manga_provider::{
 use crate::backend::tracker::{MangaTracker, track_manga_plan_to_read};
 use crate::backend::tui::Events;
 use crate::common::ImageState;
-use crate::global::{ERROR_STYLE, INSTRUCTIONS_STYLE};
+use crate::global::ERROR_STYLE;
 use crate::i18n::tr;
 use crate::theme::theme;
 use crate::utils::{centered_rect, render_search_bar};
@@ -497,6 +497,7 @@ where
     all_providers_unfiltered_results: Vec<SearchManga>,
     pub all_providers_groups: Vec<crate::backend::multi_provider::GroupedSearchManga>,
     manga_area: Rect,
+    search_input_area: Rect,
     pub most_read_feed: DiscoveryFeed,
     pub top_rated_feed: DiscoveryFeed,
     pub discovery_personal: Vec<DiscoveryItem>,
@@ -707,6 +708,7 @@ where
             all_providers_unfiltered_results: Vec::new(),
             all_providers_groups: Vec::new(),
             manga_area: Rect::default(),
+            search_input_area: Rect::default(),
             most_read_feed: DiscoveryFeed::new(default_global_most_read()),
             top_rated_feed: DiscoveryFeed::new(default_global_top_rated()),
             discovery_personal,
@@ -727,10 +729,11 @@ where
         self
     }
 
-    fn render_input_area(&self, area: Rect, frame: &mut Frame<'_>) {
+    fn render_input_area(&mut self, area: Rect, frame: &mut Frame<'_>) {
         let t = theme();
         let [input_area, information_area] =
             Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(area);
+        self.search_input_area = input_area;
 
         let input_help = match self.input_mode {
             InputMode::Idle => Line::from(vec![
@@ -1167,20 +1170,25 @@ where
 
         Clear.render(popup_area, buf);
 
-        let filter_instructions = Line::from(vec![
-            " ".into(),
-            tr("Cerrar ", "Close ").into(),
-            Span::raw("<f>").style(*INSTRUCTIONS_STYLE),
-            " • ".into(),
-            tr("Reiniciar filtros ", "Reset filters ").into(),
-            Span::raw("<r>").style(*INSTRUCTIONS_STYLE),
-            " ".into(),
+        let filter_title = Line::from(vec![
+            Span::styled(tr(" ⚙ Filtros Avanzados ", " ⚙ Advanced Filters "), Style::default().fg(t.accent_secondary).bold()),
+            Span::styled(format!("({}) ", self.active_provider), Style::default().fg(t.accent_highlight).bold()),
         ]);
+
+        let filter_instructions = Line::from(vec![
+            Span::raw(" "),
+            t.key_chip("f / Esc"),
+            Span::styled(tr(" Cerrar  ", " Close  "), Style::default().fg(t.text_muted)),
+            t.highlight_key_chip("r"),
+            Span::styled(tr(" Reiniciar filtros ", " Reset filters "), Style::default().fg(t.text_muted)),
+        ])
+        .alignment(Alignment::Center);
 
         Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(t.accent_secondary))
-            .title(filter_instructions)
+            .title_top(filter_title)
+            .title_bottom(filter_instructions)
             .render(popup_area, buf);
 
         self.filter_widget.render(popup_area, frame, &mut self.filter_state);
@@ -1700,11 +1708,25 @@ where
     }
 
     fn handle_mouse_events(&mut self, mouse_event: MouseEvent) {
-        if self.input_mode == InputMode::Typing || self.filter_state.is_open() {
+        if self.filter_state.is_open() {
             return;
         }
 
         let pos = Position::new(mouse_event.column, mouse_event.row);
+        if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+            if self.search_input_area.contains(pos) {
+                self.local_action_tx.send(SearchPageActions::StartTyping).ok();
+                return;
+            } else if self.input_mode == InputMode::Typing {
+                self.local_action_tx.send(SearchPageActions::StopTyping).ok();
+                return;
+            }
+        }
+
+        if self.input_mode == InputMode::Typing {
+            return;
+        }
+
         let focus_hovered_discovery_col = |page: &mut Self| {
             if page.state == PageState::Normal {
                 for (col_idx, col_rect) in page.discovery_cols_area.iter().enumerate() {

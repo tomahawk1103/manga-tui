@@ -3,7 +3,7 @@ use std::marker::PhantomData;
 
 use crossterm::event::{KeyCode, KeyEvent};
 use manga_tui::SearchTerm;
-use ratatui::style::Stylize;
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::Span;
 use ratatui::widgets::*;
 use strum::IntoEnumIterator;
@@ -499,9 +499,14 @@ impl TagListItem {
     }
 
     pub fn set_filter_tags_style(&self) -> Span<'_> {
+        let t = crate::theme::theme();
         match self.state {
-            TagListItemState::Included => format!(" {} ", self.name).black().on_green(),
-            TagListItemState::Excluded => format!(" {} ", self.name).black().on_red(),
+            TagListItemState::Included => {
+                Span::styled(format!(" +{} ", self.name), Style::default().fg(Color::Black).bg(t.status_success).bold())
+            },
+            TagListItemState::Excluded => {
+                Span::styled(format!(" -{} ", self.name), Style::default().fg(Color::White).bg(t.status_error).bold())
+            },
             TagListItemState::NotSelected => Span::from(self.name.clone()),
         }
     }

@@ -2,11 +2,11 @@ use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEventKind};
 use image::{DynamicImage, GenericImageView};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, StatefulWidget, Widget, Wrap};
@@ -325,6 +325,8 @@ where
     pub local_event_tx: UnboundedSender<MangaReaderEvents>,
     pub local_event_rx: UnboundedReceiver<MangaReaderEvents>,
     pub local_source: Option<LocalChapterSource>,
+    left_panel_area: Rect,
+    center_image_area: Rect,
 }
 
 fn centered_image_rect(area: Rect, img_w: u32, img_h: u32, font_w: u16, font_h: u16) -> Rect {
@@ -386,6 +388,8 @@ where
             let [l, c] = Layout::horizontal([Constraint::Length(left_w), Constraint::Min(20)]).areas(body_area);
             (l, c, None)
         };
+        self.left_panel_area = left;
+        self.center_image_area = center;
 
         let total_pages = self.pages_list.pages.len().max(self.pages.len());
         let current_page_num = if total_pages == 0 { 0 } else { (self.current_page_index() + 1).min(total_pages) };
@@ -498,11 +502,32 @@ where
         match events {
             Events::Key(key_event) => self.handle_key_events(key_event),
             Events::Mouse(mouse_event) => match mouse_event.kind {
-                crossterm::event::MouseEventKind::ScrollUp => {
+                MouseEventKind::ScrollUp => {
                     self.local_action_tx.send(MangaReaderActions::PreviousPage).ok();
                 },
-                crossterm::event::MouseEventKind::ScrollDown => {
+                MouseEventKind::ScrollDown => {
                     self.local_action_tx.send(MangaReaderActions::NextPage).ok();
+                },
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let pos = Position::new(mouse_event.column, mouse_event.row);
+                    if self.left_panel_area.contains(pos) {
+                        let total = self.pages_list.pages.len().max(self.pages.len());
+                        let inner_h = self.left_panel_area.height.saturating_sub(2) as usize;
+                        if pos.y > self.left_panel_area.y
+                            && pos.y < self.left_panel_area.bottom().saturating_sub(1)
+                            && inner_h > 0
+                            && total > 0
+                        {
+                            let inner_y = (pos.y - self.left_panel_area.y - 1) as usize;
+                            let curr = self.current_page_index();
+                            let offset = if curr >= inner_h { curr + 1 - inner_h } else { 0 };
+                            let target = (offset + inner_y).min(total - 1);
+                            self.page_list_state.list_state.select(Some(target));
+                            self.fetch_pages();
+                        }
+                    } else if self.center_image_area.contains(pos) {
+                        self.local_action_tx.send(MangaReaderActions::NextPage).ok();
+                    }
                 },
                 _ => {},
             },
@@ -554,6 +579,8 @@ where
             api_client,
             provider: None,
             local_source: None,
+            left_panel_area: Rect::default(),
+            center_image_area: Rect::default(),
         }
     }
 

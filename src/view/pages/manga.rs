@@ -1,11 +1,11 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
+use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKind};
 use image::DynamicImage;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
+use ratatui::layout::{Alignment, Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListState, Paragraph, StatefulWidget, Widget, Wrap};
@@ -142,6 +142,7 @@ where
     pub manga: Manga,
     image_state: Option<Box<dyn StatefulProtocol>>,
     cover_area: Rect,
+    chapters_list_area: Rect,
     global_event_tx: Option<UnboundedSender<Events>>,
     local_action_tx: UnboundedSender<MangaPageActions>,
     pub local_action_rx: UnboundedReceiver<MangaPageActions>,
@@ -235,6 +236,7 @@ where
             selected_chapters: HashMap::new(),
             is_favorite,
             cover_area,
+            chapters_list_area: Rect::default(),
             manga_tracker: None,
             manga_provider: provider,
             chapter_filters: ChapterFilters {
@@ -473,6 +475,7 @@ where
 
     fn render_chapters_area(&mut self, area: Rect, buf: &mut Buffer) {
         if self.download_process_started() {
+            self.chapters_list_area = Rect::default();
             self.render_download_all_chapters_area(area, buf);
             return;
         }
@@ -556,10 +559,12 @@ where
                 block.render(area, buf);
 
                 if inner.height == 0 || inner.width < 10 {
+                    self.chapters_list_area = Rect::default();
                     return;
                 }
 
                 if chapters.widget.chapters.is_empty() {
+                    self.chapters_list_area = Rect::default();
                     let text = vec![
                         Line::from(""),
                         Line::from(Span::styled(
@@ -591,6 +596,7 @@ where
                         .render(inner, buf);
                 } else {
                     let [col_header_area, list_area] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+                    self.chapters_list_area = list_area;
 
                     buf.set_style(col_header_area, Style::default().bg(t.bar_bg));
                     let col_layout = Layout::horizontal([
@@ -642,6 +648,7 @@ where
             },
 
             None => {
+                self.chapters_list_area = Rect::default();
                 let (title_text, title_color) = if self.state == PageState::ChaptersNotFound {
                     (
                         tr(
@@ -1745,6 +1752,16 @@ where
                 },
                 MouseEventKind::ScrollDown => {
                     self.local_action_tx.send(MangaPageActions::ScrollChapterDown).ok();
+                },
+                MouseEventKind::Down(MouseButton::Left) if !self.is_provider_switcher_open && !self.download_process_started() => {
+                    let pos = Position::new(mouse_event.column, mouse_event.row);
+                    if self.chapters_list_area.contains(pos) {
+                        if pos.x < self.chapters_list_area.x.saturating_add(4) {
+                            self.local_action_tx.send(MangaPageActions::ToggleSelectChapter).ok();
+                        } else {
+                            self.local_action_tx.send(MangaPageActions::ReadChapter).ok();
+                        }
+                    }
                 },
                 _ => {},
             }
