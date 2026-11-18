@@ -216,25 +216,40 @@ fn build_personal_and_trending_discovery(search_history: &[String]) -> Vec<Disco
 
     if let Ok(conn) = Database::get_connection() {
         let db = Database::new(&conn);
-        if let Ok(most_read) = db.get_most_read_user_mangas(12) {
-            for (title, provider, count) in most_read {
+        if let Ok(recently_read) = db.get_recently_read_user_mangas(24) {
+            let mut added = 0;
+            for (title, provider, count) in recently_read {
+                if added >= 12 {
+                    break;
+                }
                 if seen.insert(title.to_lowercase()) {
                     items.push(DiscoveryItem::new(title, format!("📖 {count} caps"), provider.to_string()));
+                    added += 1;
                 }
             }
         }
         if let Ok(favs) = db.get_all_favorite_mangas() {
-            for fav in favs.into_iter().take(8) {
+            let mut added = 0;
+            for fav in favs {
+                if added >= 8 {
+                    break;
+                }
                 if seen.insert(fav.title.to_lowercase()) {
                     items.push(DiscoveryItem::new(fav.title, "★ Favorito".to_string(), fav.provider.to_string()));
+                    added += 1;
                 }
             }
         }
     }
 
-    for query in search_history.iter().take(6) {
+    let mut recent_added = 0;
+    for query in search_history {
+        if recent_added >= 6 {
+            break;
+        }
         if seen.insert(query.to_lowercase()) {
             items.push(DiscoveryItem::new(query.clone(), tr("🕒 Reciente", "🕒 Recent"), tr("Búsqueda", "Search")));
+            recent_added += 1;
         }
     }
 
@@ -622,7 +637,7 @@ where
             },
             SearchPageActions::ReturnToDiscovery => {
                 self.clean_up();
-                self.discovery_personal = build_personal_and_trending_discovery(&self.search_history);
+                self.refresh_personal_discovery();
             },
             SearchPageActions::SwitchProvider => self.switch_selected_manga_provider(),
         }
@@ -726,6 +741,20 @@ where
 
     pub fn set_picker(&mut self, picker: Option<Picker>) {
         self.picker = picker;
+    }
+
+    /// Rebuilds the personal discovery column from the database and search history.
+    pub fn refresh_personal_discovery(&mut self) {
+        if let Ok(conn) = Database::get_connection() {
+            if let Ok(recent) = Database::new(&conn).get_recent_searches(30) {
+                self.search_history = recent;
+            }
+        }
+        self.discovery_personal = build_personal_and_trending_discovery(&self.search_history);
+        let max_idx = self.discovery_personal.len().saturating_sub(1);
+        if self.discovery_row[2] > max_idx {
+            self.discovery_row[2] = max_idx;
+        }
     }
 
     pub fn with_global_sender(mut self, sender: UnboundedSender<Events>) -> Self {
@@ -1807,7 +1836,8 @@ where
                 let db = Database::new(&conn);
                 db.save_search_history(&query_str).ok();
             }
-            self.search_history.retain(|q| q != &query_str);
+            let query_lower = query_str.to_lowercase();
+            self.search_history.retain(|q| q.to_lowercase() != query_lower);
             self.search_history.insert(0, query_str);
             self.history_index = None;
             self.stashed_input.clear();
@@ -2805,5 +2835,49 @@ mod test {
         let action = search_page.local_action_rx.try_recv().unwrap();
         search_page.update(action);
         assert_eq!(search_page.mangas_found_list.widget.mangas[0].manga.provider, Some(MangaProviders::Inmanga));
+    }
+
+    #[tokio::test]
+    async fn test_personal_discovery_unique_recent_searches_and_refresh_clamps_row() {
+        use super::*;
+        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
+        use crate::global::test_utils::TrackerTest;
+
+        let history = vec![
+            "Boku no kokoro".to_string(),
+            "Vagabond".to_string(),
+            "boku no kokoro".to_string(),
+            "Dandadan".to_string(),
+            "Kingdom".to_string(),
+            "Vinland Saga".to_string(),
+            "Monster".to_string(),
+            "Slam Dunk".to_string(),
+        ];
+
+        let items = build_personal_and_trending_discovery(&history);
+        let recent_titles: Vec<&str> = items
+            .iter()
+            .filter(|i| i.badge == tr("🕒 Reciente", "🕒 Recent"))
+            .map(|i| i.title.as_str())
+            .collect();
+
+        assert_eq!(recent_titles, vec!["Boku no kokoro", "Vagabond", "Dandadan", "Kingdom", "Vinland Saga", "Monster"]);
+
+        let mut search_page: SearchPage<MockMangaPageProvider, TrackerTest> = SearchPage::new(
+            None,
+            MockMangaPageProvider::new().into(),
+            None,
+            MockFiltersHandler::new(MockFilterState {}),
+            MockWidgetFilter {},
+            Pagination::from_first_page(20),
+        );
+
+        search_page.search_history = history;
+        search_page.discovery_row[2] = 999;
+        search_page.refresh_personal_discovery();
+
+        assert_eq!(search_page.discovery_personal[0].title, "Boku no kokoro");
+        assert_eq!(search_page.discovery_personal[1].title, "Vagabond");
+        assert!(search_page.discovery_row[2] < search_page.discovery_personal.len());
     }
 }

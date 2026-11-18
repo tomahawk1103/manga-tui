@@ -1408,6 +1408,7 @@ where
             self.manga_page = None;
         }
         self.feed_page.clean_up();
+        self.search_page.refresh_personal_discovery();
         self.current_tab = SelectedPage::Search;
     }
 

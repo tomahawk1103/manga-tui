@@ -644,13 +644,11 @@ impl<'a> Database<'a> {
     fn update_or_insert_manga_in_most_recent_reading_history(&self, manga_id: &str) -> rusqlite::Result<()> {
         if !self.manga_is_reading(manga_id)? {
             self.insert_manga_in_reading_history(manga_id)?;
-            Ok(())
-        } else {
-            let now = Utc::now().naive_utc();
-            self.connection
-                .execute("UPDATE mangas SET last_read = ?1 WHERE id = ?2", params![now.to_string(), manga_id])?;
-            Ok(())
         }
+        let now = Utc::now().naive_utc();
+        self.connection
+            .execute("UPDATE mangas SET last_read = ?1 WHERE id = ?2", params![now.to_string(), manga_id])?;
+        Ok(())
     }
 
     /// Marks a chapter as downloaded and read.
@@ -721,7 +719,7 @@ impl<'a> Database<'a> {
                 translated_language: "",
             })?;
 
-            self.insert_manga_in_reading_history(chapter.manga_id)?;
+            self.update_or_insert_manga_in_most_recent_reading_history(chapter.manga_id)?;
 
             Ok(())
         }
@@ -759,6 +757,9 @@ impl<'a> Database<'a> {
     /// ```
     pub fn save_history(&self, data: MangaReadingHistorySave<'_>) -> rusqlite::Result<()> {
         if self.check_chapter_is_already_reading(data.chapter.id)? {
+            if self.check_exists(data.id, Table::Mangas)? {
+                self.update_or_insert_manga_in_most_recent_reading_history(data.id)?;
+            }
             return Ok(());
         }
 
@@ -1036,11 +1037,20 @@ impl<'a> Database<'a> {
             return Ok(());
         }
         let now = Utc::now().timestamp_millis();
-        self.connection.execute(
-            "INSERT INTO search_history (query, searched_at) VALUES (?1, ?2)
-             ON CONFLICT(query) DO UPDATE SET searched_at = ?2",
-            rusqlite::params![trimmed, now],
-        )?;
+        let trimmed_lower = trimmed.to_lowercase();
+        let existing_queries: Vec<String> = {
+            let mut stmt = self.connection.prepare("SELECT query FROM search_history")?;
+            let rows = stmt.query_map([], |row| row.get(0))?;
+            rows.collect::<rusqlite::Result<Vec<String>>>()?
+        };
+        for existing in existing_queries {
+            if existing.to_lowercase() == trimmed_lower {
+                self.connection
+                    .execute("DELETE FROM search_history WHERE query = ?1", rusqlite::params![existing])?;
+            }
+        }
+        self.connection
+            .execute("INSERT INTO search_history (query, searched_at) VALUES (?1, ?2)", rusqlite::params![trimmed, now])?;
         Ok(())
     }
 
@@ -1085,14 +1095,14 @@ impl<'a> Database<'a> {
         rows.collect()
     }
 
-    pub fn get_most_read_user_mangas(&self, limit: u32) -> rusqlite::Result<Vec<(String, MangaProviders, u32)>> {
+    pub fn get_recently_read_user_mangas(&self, limit: u32) -> rusqlite::Result<Vec<(String, MangaProviders, u32)>> {
         let mut statement = self.connection.prepare(
             "SELECT mangas.title, mangas.manga_provider, COUNT(chapters.id) AS read_count
              FROM mangas
              INNER JOIN chapters ON mangas.id = chapters.manga_id
-             WHERE chapters.is_read = 1
+             WHERE chapters.is_read = 1 AND mangas.deleted_at IS NULL
              GROUP BY mangas.id
-             ORDER BY read_count DESC, mangas.last_read DESC
+             ORDER BY mangas.last_read DESC, read_count DESC
              LIMIT ?1",
         )?;
         let rows = statement.query_map(params![limit], |row| {
@@ -3324,6 +3334,116 @@ mod test {
         let now_read_again = database.toggle_chapter_read(save_data)?;
         assert!(!now_read_again);
         assert!(!database.check_chapter_is_already_reading("ch_toggle_1")?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_get_recently_read_user_mangas_orders_by_last_read() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let database = Database::new(&conn);
+        database.setup()?;
+
+        for idx in 1..=3 {
+            let chap_id = format!("older_ch_{idx}");
+            let chap_title = format!("Chapter {idx}");
+            database.save_history(MangaReadingHistorySave {
+                id: "older_many",
+                title: "Older Many Caps",
+                img_url: None,
+                chapter: ChapterToSaveHistory {
+                    id: &chap_id,
+                    title: &chap_title,
+                    translated_language: "es",
+                },
+                provider: MangaProviders::Mangaoni,
+            })?;
+        }
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+
+        database.save_history(MangaReadingHistorySave {
+            id: "newer_few",
+            title: "Newer Few Caps",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "newer_ch_1",
+                title: "Chapter 1",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangaoni,
+        })?;
+
+        let list = database.get_recently_read_user_mangas(12)?;
+        assert_eq!(list.len(), 2);
+        assert_eq!(list[0].0, "Newer Few Caps");
+        assert_eq!(list[0].2, 1);
+        assert_eq!(list[1].0, "Older Many Caps");
+        assert_eq!(list[1].2, 3);
+
+        // Re-reading an already-read chapter bumps `last_read` without inflating count
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        database.save_history(MangaReadingHistorySave {
+            id: "older_many",
+            title: "Older Many Caps",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "older_ch_1",
+                title: "Chapter 1",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangaoni,
+        })?;
+
+        let list_after_reread = database.get_recently_read_user_mangas(12)?;
+        assert_eq!(list_after_reread[0].0, "Older Many Caps");
+        assert_eq!(list_after_reread[0].2, 3);
+        assert_eq!(list_after_reread[1].0, "Newer Few Caps");
+
+        // Transitioning from PlanToRead to ReadingHistory updates `last_read`
+        database.save_plan_to_read(MangaPlanToReadSave {
+            id: "planned_first",
+            title: "Planned First",
+            img_url: None,
+            provider: MangaProviders::Mangadex,
+        })?;
+        conn.execute("UPDATE mangas SET last_read = '2020-01-01 00:00:00' WHERE id = 'planned_first'", [])?;
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        database.save_history(MangaReadingHistorySave {
+            id: "planned_first",
+            title: "Planned First",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "planned_ch_1",
+                title: "Chapter 1",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangadex,
+        })?;
+
+        let list_after_planned = database.get_recently_read_user_mangas(12)?;
+        assert_eq!(list_after_planned.len(), 3);
+        assert_eq!(list_after_planned[0].0, "Planned First");
+        assert_eq!(list_after_planned[0].2, 1);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_search_history_case_insensitive_dedup() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let database = Database::new(&conn);
+        database.setup()?;
+
+        database.save_search_history("Boku no kokoro")?;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        database.save_search_history("Vagabond")?;
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        database.save_search_history("boku no kokoro")?;
+
+        let recent = database.get_recent_searches(10)?;
+        assert_eq!(recent, vec!["boku no kokoro".to_string(), "Vagabond".to_string()]);
 
         Ok(())
     }
