@@ -787,6 +787,19 @@ impl<'a> Database<'a> {
         Ok(())
     }
 
+    /// Toggles the `is_read` status of a chapter in the database.
+    /// Returns `Ok(true)` if the chapter is now marked as read, or `Ok(false)` if it is now unread.
+    pub fn toggle_chapter_read(&self, data: MangaReadingHistorySave<'_>) -> rusqlite::Result<bool> {
+        if self.check_chapter_is_already_reading(data.chapter.id)? {
+            self.connection
+                .execute("UPDATE chapters SET is_read = false WHERE id = ?1", params![data.chapter.id])?;
+            Ok(false)
+        } else {
+            self.save_history(data)?;
+            Ok(true)
+        }
+    }
+
     /// Adds a manga to the "Plan to Read" list.
     ///
     /// This method allows users to bookmark manga they want to read later.
@@ -3270,6 +3283,47 @@ mod test {
         assert!(read_nums.contains("1"));
         assert!(read_nums.contains("2.5"));
         assert!(!read_nums.contains("3"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn toggle_chapter_read_marks_and_unmarks_chapter() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let database = Database::new(&conn);
+        database.setup()?;
+
+        let save_data = MangaReadingHistorySave {
+            id: "manga_toggle_1",
+            title: "Dandadan",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "ch_toggle_1",
+                title: "Capítulo 1",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangadex,
+        };
+
+        assert!(!database.check_chapter_is_already_reading("ch_toggle_1")?);
+
+        let now_read = database.toggle_chapter_read(MangaReadingHistorySave {
+            id: save_data.id,
+            title: save_data.title,
+            img_url: save_data.img_url,
+            chapter: ChapterToSaveHistory {
+                id: save_data.chapter.id,
+                title: save_data.chapter.title,
+                translated_language: save_data.chapter.translated_language,
+            },
+            provider: save_data.provider,
+        })?;
+        assert!(now_read);
+        assert!(database.check_chapter_is_already_reading("ch_toggle_1")?);
+
+        let now_read_again = database.toggle_chapter_read(save_data)?;
+        assert!(!now_read_again);
+        assert!(!database.check_chapter_is_already_reading("ch_toggle_1")?);
 
         Ok(())
     }

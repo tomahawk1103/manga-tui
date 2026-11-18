@@ -861,8 +861,10 @@ where
             buf[(x, area.y)].set_bg(bar_bg).set_symbol(" ");
         }
 
-        let is_typing =
-            self.search_page.input_mode == InputMode::Typing || self.search_page.is_typing_filter() || self.feed_page.is_typing();
+        let is_typing = self.search_page.input_mode == InputMode::Typing
+            || self.search_page.is_typing_filter()
+            || self.feed_page.is_typing()
+            || self.manga_page.as_ref().is_some_and(|p| p.is_typing_chapter_search());
 
         let (mode_label, mode_color) = if self.is_help_modal_open {
             (tr(" ❓ AYUDA ", " ❓ HELP "), t.accent_primary)
@@ -947,7 +949,9 @@ where
                         } else {
                             vec![
                                 ("j/k", tr("Capítulos", "Chapters")),
+                                ("/", tr("Ir a cap.", "Jump")),
                                 ("r/v", tr("Leer/Web", "Read/Web")),
+                                ("x", tr("Leído", "Read")),
                                 ("Space", tr("Selec.", "Select")),
                                 ("d/a", tr("Descargar", "Download")),
                                 ("f", tr("Favorito", "Favorite")),
@@ -1051,7 +1055,7 @@ where
             || self
                 .manga_page
                 .as_ref()
-                .is_some_and(|page| page.is_provider_switcher_open || page.is_list_languages_open)
+                .is_some_and(|page| page.is_provider_switcher_open || page.is_list_languages_open || page.is_chapter_search_open)
     }
 
     pub fn render_pages(&mut self, area: Rect, frame: &mut Frame<'_>) {
@@ -1267,8 +1271,10 @@ where
             return;
         }
 
-        let is_typing =
-            self.search_page.input_mode == InputMode::Typing || self.search_page.is_typing_filter() || self.feed_page.is_typing();
+        let is_typing = self.search_page.input_mode == InputMode::Typing
+            || self.search_page.is_typing_filter()
+            || self.feed_page.is_typing()
+            || self.manga_page.as_ref().is_some_and(|p| p.is_typing_chapter_search());
 
         if !is_typing && key_event.code == KeyCode::Char('T') && self.current_tab != SelectedPage::ReaderTab {
             cycle_theme();

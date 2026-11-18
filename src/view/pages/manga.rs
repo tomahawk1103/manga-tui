@@ -6,7 +6,7 @@ use image::DynamicImage;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Margin, Position, Rect};
-use ratatui::style::{Style, Stylize};
+use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListState, Paragraph, StatefulWidget, Widget, Wrap};
 use ratatui_image::picker::Picker;
@@ -16,6 +16,8 @@ use strum_macros::EnumIs;
 use throbber_widgets_tui::ThrobberState;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinSet;
+use tui_input::Input;
+use tui_input::backend::crossterm::EventHandler as InputEventHandler;
 
 use crate::backend::AppDirectories;
 use crate::backend::database::{
@@ -33,6 +35,7 @@ use crate::common::format_error_message_tracking_reading_history;
 use crate::config::MangaTuiConfig;
 use crate::i18n::tr;
 use crate::theme::theme;
+use crate::utils::render_search_bar;
 use crate::view::app::MangaToRead;
 use crate::view::tasks::manga::{
     DownloadAllChapters, DownloadSelectedChapters, DownloadSingleChapter, download_all_chapters, download_selected_chapters,
@@ -102,6 +105,12 @@ pub enum MangaPageActions {
     ScrollProviderSwitcherDown,
     ScrollProviderSwitcherUp,
     ConfirmSwitchProvider,
+    StartChapterSearch,
+    StopChapterSearch,
+    ConfirmChapterSearch,
+    JumpToFirstChapter,
+    JumpToLastChapter,
+    ToggleChapterRead,
 }
 
 #[derive(Debug, PartialEq, EnumIs)]
@@ -129,6 +138,12 @@ pub enum MangaPageEvents {
     ReadSuccesful(ChapterToRead, ListOfChapters),
     OpenWebViewerSuccesful(ChapterToRead, ListOfChapters),
     LoadChapters(Option<GetChaptersResponse>),
+    LoadChaptersAtTarget {
+        response: Option<GetChaptersResponse>,
+        page: u32,
+        select_index: Option<usize>,
+        not_found_query: Option<String>,
+    },
     TrackingFailed(String),
     LoadAlternativeProviders(Vec<SearchManga>),
     SwitchToProviderManga(Manga),
@@ -157,6 +172,11 @@ where
     available_languages_state: ListState,
     pub is_list_languages_open: bool,
     pub is_provider_switcher_open: bool,
+    pub is_chapter_search_open: bool,
+    pub chapter_search_bar: Input,
+    pub chapter_search_status: Option<String>,
+    pub pending_select_last: bool,
+    pub pending_target_chapter: Option<String>,
     pub is_searching_alternatives: bool,
     pub alternative_providers: Vec<SearchManga>,
     pub alternative_providers_state: ListState,
@@ -166,6 +186,46 @@ where
     pub is_favorite: bool,
     manga_tracker: Option<S>,
     manga_provider: Arc<T>,
+}
+
+fn find_matching_chapter_index(chapters: &[Chapter], query: &str) -> Option<usize> {
+    let q = query.trim();
+    if q.is_empty() {
+        return None;
+    }
+    let q_norm = normalize_chapter_number(q);
+    if !q_norm.is_empty()
+        && let Some(pos) = chapters
+            .iter()
+            .position(|c| !c.chapter_number.is_empty() && normalize_chapter_number(&c.chapter_number) == q_norm)
+    {
+        return Some(pos);
+    }
+    if let Some(pos) = chapters
+        .iter()
+        .position(|c| c.chapter_number.trim().eq_ignore_ascii_case(q) || c.title.trim().eq_ignore_ascii_case(q))
+    {
+        return Some(pos);
+    }
+    let q_lower = q.to_lowercase();
+    chapters.iter().position(|c| {
+        (!q_norm.is_empty() && !c.chapter_number.is_empty() && normalize_chapter_number(&c.chapter_number).starts_with(&q_norm))
+            || c.title.to_lowercase().contains(&q_lower)
+    })
+}
+
+fn parse_page_jump_query(query: &str) -> Option<u32> {
+    let q = query.trim().to_lowercase();
+    let rest = q
+        .strip_prefix("page")
+        .or_else(|| q.strip_prefix("pag."))
+        .or_else(|| q.strip_prefix("pág."))
+        .or_else(|| q.strip_prefix("pag"))
+        .or_else(|| q.strip_prefix("pág"))
+        .or_else(|| q.strip_prefix('p'))
+        .or_else(|| q.strip_prefix('#'))?
+        .trim();
+    rest.parse::<u32>().ok().filter(|&n| n >= 1)
 }
 
 #[derive(Clone, Debug, Default)]
@@ -228,6 +288,11 @@ where
             available_languages_state: ListState::default(),
             is_list_languages_open: false,
             is_provider_switcher_open: false,
+            is_chapter_search_open: false,
+            chapter_search_bar: Input::default(),
+            chapter_search_status: None,
+            pending_select_last: false,
+            pending_target_chapter: None,
             is_searching_alternatives: false,
             alternative_providers: Vec::new(),
             alternative_providers_state: ListState::default(),
@@ -259,6 +324,11 @@ where
     pub fn with_manga_tracker(mut self, tracker: Option<S>) -> Self {
         self.manga_tracker = tracker;
         self
+    }
+
+    #[inline]
+    pub fn is_typing_chapter_search(&self) -> bool {
+        self.is_chapter_search_open
     }
 
     pub fn apply_preferred_language(&mut self, preferred: Languages) {
@@ -473,10 +543,10 @@ where
         }
     }
 
-    fn render_chapters_area(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_chapters_area(&mut self, area: Rect, frame: &mut Frame<'_>) {
         if self.download_process_started() {
             self.chapters_list_area = Rect::default();
-            self.render_download_all_chapters_area(area, buf);
+            self.render_download_all_chapters_area(area, frame.buffer_mut());
             return;
         }
 
@@ -508,7 +578,16 @@ where
                     Span::raw(" "),
                     t.key_chip("l"),
                     Span::raw(" "),
+                    Span::styled("│ ", Style::default().fg(t.border_muted)),
+                    t.highlight_key_chip("/"),
+                    Span::styled(format!(" {} ", tr("Ir a cap.", "Jump")), Style::default().fg(t.text_muted)),
                 ];
+
+                if !self.is_chapter_search_open
+                    && let Some(status) = &self.chapter_search_status
+                {
+                    top_spans.push(Span::styled(format!(" · {status} "), Style::default().fg(t.accent_highlight).bold()));
+                }
 
                 if selected_count > 0 {
                     top_spans.push(Span::styled("│ ", Style::default().fg(t.border_muted)));
@@ -530,6 +609,10 @@ where
                     Span::styled(" · ", Style::default().fg(t.border_muted)),
                     t.key_chip("w/b"),
                     Span::styled(format!(" {} ", tr("Pág.", "Page")), Style::default().fg(t.text_muted)),
+                    t.key_chip("g/G"),
+                    Span::styled(format!(" {} ", tr("Inicio/Fin", "Start/End")), Style::default().fg(t.text_muted)),
+                    t.key_chip("x"),
+                    Span::styled(format!(" {} ", tr("Leído", "Read")), Style::default().fg(t.text_muted)),
                     t.key_chip("V"),
                     Span::styled(format!(" {} ", tr("Selec. todo", "Toggle all")), Style::default().fg(t.text_muted)),
                     t.key_chip("a"),
@@ -556,7 +639,7 @@ where
                     horizontal: 1,
                     vertical: 0,
                 });
-                block.render(area, buf);
+                block.render(area, frame.buffer_mut());
 
                 if inner.height == 0 || inner.width < 10 {
                     self.chapters_list_area = Rect::default();
@@ -593,33 +676,62 @@ where
                     Paragraph::new(text)
                         .alignment(Alignment::Center)
                         .wrap(Wrap { trim: true })
-                        .render(inner, buf);
+                        .render(inner, frame.buffer_mut());
                 } else {
-                    let [col_header_area, list_area] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+                    let (search_bar_area, col_header_area, list_area) = if self.is_chapter_search_open && inner.height >= 5 {
+                        let [sb, hdr, list] =
+                            Layout::vertical([Constraint::Length(3), Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+                        (Some(sb), hdr, list)
+                    } else {
+                        let [hdr, list] = Layout::vertical([Constraint::Length(1), Constraint::Min(1)]).areas(inner);
+                        (None, hdr, list)
+                    };
                     self.chapters_list_area = list_area;
 
-                    buf.set_style(col_header_area, Style::default().bg(t.bar_bg));
-                    let col_layout = Layout::horizontal([
-                        Constraint::Length(4),
-                        Constraint::Length(3),
-                        Constraint::Length(3),
-                        Constraint::Fill(50),
-                        Constraint::Fill(30),
-                        Constraint::Fill(20),
-                    ]);
-                    let [h_sel, h_read, h_dl, h_title, h_scan, h_date] = col_layout.areas(col_header_area);
-                    let hdr_style = Style::default().fg(t.text_muted).bg(t.bar_bg).bold();
-                    Paragraph::new(Span::styled("Sel", hdr_style)).render(h_sel, buf);
-                    Paragraph::new(Span::styled("👁", hdr_style)).render(h_read, buf);
-                    Paragraph::new(Span::styled("📥", hdr_style)).render(h_dl, buf);
-                    Paragraph::new(Span::styled(tr("Capítulo y título", "Chapter & title"), hdr_style)).render(h_title, buf);
-                    Paragraph::new(Span::styled(tr("Scanlator / Fuente", "Scanlator"), hdr_style)).render(h_scan, buf);
-                    Paragraph::new(Span::styled(tr("Publicado", "Released"), hdr_style)).render(h_date, buf);
+                    {
+                        let buf = frame.buffer_mut();
+                        buf.set_style(col_header_area, Style::default().bg(t.bar_bg));
+                        let col_layout = Layout::horizontal([
+                            Constraint::Length(4),
+                            Constraint::Length(3),
+                            Constraint::Length(3),
+                            Constraint::Fill(50),
+                            Constraint::Fill(30),
+                            Constraint::Fill(20),
+                        ]);
+                        let [h_sel, h_read, h_dl, h_title, h_scan, h_date] = col_layout.areas(col_header_area);
+                        let hdr_style = Style::default().fg(t.text_muted).bg(t.bar_bg).bold();
+                        Paragraph::new(Span::styled("Sel", hdr_style)).render(h_sel, buf);
+                        Paragraph::new(Span::styled("👁", hdr_style)).render(h_read, buf);
+                        Paragraph::new(Span::styled("📥", hdr_style)).render(h_dl, buf);
+                        Paragraph::new(Span::styled(tr("Capítulo y título", "Chapter & title"), hdr_style)).render(h_title, buf);
+                        Paragraph::new(Span::styled(tr("Scanlator / Fuente", "Scanlator"), hdr_style)).render(h_scan, buf);
+                        Paragraph::new(Span::styled(tr("Publicado", "Released"), hdr_style)).render(h_date, buf);
 
-                    StatefulWidget::render(chapters.widget.clone(), list_area, buf, &mut chapters.state);
+                        StatefulWidget::render(chapters.widget.clone(), list_area, buf, &mut chapters.state);
+                    }
+
+                    if let Some(sb_area) = search_bar_area {
+                        let mut help_spans = vec![
+                            Span::styled(
+                                tr(" 🔍 Ir a cap. o pág. ", " 🔍 Jump to ch. or page "),
+                                Style::default().fg(Color::Black).bg(t.accent_highlight).bold(),
+                            ),
+                            Span::raw(" "),
+                            Span::styled("<Enter> ", Style::default().fg(t.accent_highlight).bold()),
+                            Span::styled(tr("Saltar (ej: 45, p3) ", "Jump (e.g. 45, p3) "), Style::default().fg(t.text_muted)),
+                            Span::styled("<Esc> ", Style::default().fg(t.accent_highlight).bold()),
+                            Span::styled(tr("Cerrar ", "Close "), Style::default().fg(t.text_muted)),
+                        ];
+                        if let Some(status) = &self.chapter_search_status {
+                            help_spans.push(Span::styled(format!("· {status} "), Style::default().fg(t.status_warning).bold()));
+                        }
+                        render_search_bar(true, Line::from(help_spans), &self.chapter_search_bar, frame, sb_area);
+                    }
                 }
 
                 if self.is_list_languages_open {
+                    let buf = frame.buffer_mut();
                     let lang_w = 34u16.min(inner.width.max(16));
                     let lang_h = (self.manga.languages.len() as u16 + 2).clamp(4, 12).min(inner.height);
                     let lang_area =
@@ -649,6 +761,7 @@ where
 
             None => {
                 self.chapters_list_area = Rect::default();
+                let buf = frame.buffer_mut();
                 let (title_text, title_color) = if self.state == PageState::ChaptersNotFound {
                     (
                         tr(
@@ -675,7 +788,7 @@ where
         }
 
         if self.is_provider_switcher_open {
-            self.render_provider_switcher_modal(area, buf);
+            self.render_provider_switcher_modal(area, frame.buffer_mut());
         }
     }
 
@@ -739,6 +852,11 @@ where
 
     fn search_by_language(&mut self) {
         self.chapters = None;
+        self.is_chapter_search_open = false;
+        self.chapter_search_bar.reset();
+        self.chapter_search_status = None;
+        self.pending_select_last = false;
+        self.pending_target_chapter = None;
         self.chapter_filters.language = self.get_current_selected_language();
         self.search_chapters();
     }
@@ -776,6 +894,19 @@ where
                 },
                 _ => {},
             }
+        } else if self.is_chapter_search_open {
+            match key_event.code {
+                KeyCode::Esc => {
+                    self.local_action_tx.send(MangaPageActions::StopChapterSearch).ok();
+                },
+                KeyCode::Enter => {
+                    self.local_action_tx.send(MangaPageActions::ConfirmChapterSearch).ok();
+                },
+                _ => {
+                    self.chapter_search_status = None;
+                    self.chapter_search_bar.handle_event(&crossterm::event::Event::Key(key_event));
+                },
+            }
         } else if self.state != PageState::SearchingChapterData {
             if self.download_process_started() {
                 match key_event.code {
@@ -806,6 +937,18 @@ where
                     },
                     KeyCode::Char('k') | KeyCode::Up => {
                         self.local_action_tx.send(MangaPageActions::ScrollChapterUp).ok();
+                    },
+                    KeyCode::Char('/') | KeyCode::Char('s') => {
+                        self.local_action_tx.send(MangaPageActions::StartChapterSearch).ok();
+                    },
+                    KeyCode::Char('g') | KeyCode::Home => {
+                        self.local_action_tx.send(MangaPageActions::JumpToFirstChapter).ok();
+                    },
+                    KeyCode::Char('G') | KeyCode::End => {
+                        self.local_action_tx.send(MangaPageActions::JumpToLastChapter).ok();
+                    },
+                    KeyCode::Char('x') => {
+                        self.local_action_tx.send(MangaPageActions::ToggleChapterRead).ok();
                     },
                     KeyCode::Char('t') => {
                         self.local_action_tx.send(MangaPageActions::ToggleOrder).ok();
@@ -838,10 +981,10 @@ where
                     KeyCode::Char('l') => {
                         self.local_action_tx.send(MangaPageActions::ToggleAvailableLanguagesList).ok();
                     },
-                    KeyCode::Char('w') => {
+                    KeyCode::Char('w') | KeyCode::PageDown => {
                         self.local_action_tx.send(MangaPageActions::SearchNextChapterPage).ok();
                     },
-                    KeyCode::Char('b') => {
+                    KeyCode::Char('b') | KeyCode::PageUp => {
                         self.local_action_tx.send(MangaPageActions::SearchPreviousChapterPage).ok();
                     },
                     KeyCode::Char('f') => {
@@ -1375,6 +1518,11 @@ where
         self.image_state = None;
         self.chapters = None;
         self.selected_chapters.clear();
+        self.is_chapter_search_open = false;
+        self.chapter_search_bar.reset();
+        self.chapter_search_status = None;
+        self.pending_select_last = false;
+        self.pending_target_chapter = None;
         self.chapter_filters.language = chapter_language;
         self.state = PageState::SearchingChapters;
         self.local_event_tx.send(MangaPageEvents::SearchChapters).ok();
@@ -1566,7 +1714,10 @@ where
             Some(response) => {
                 let mut list_state = tui_widget_list::ListState::default();
 
-                list_state.select(Some(0));
+                let select_idx =
+                    if self.pending_select_last && !response.chapters.is_empty() { response.chapters.len() - 1 } else { 0 };
+                self.pending_select_last = false;
+                list_state.select(Some(select_idx));
 
                 let mut chapter_widget = ChaptersListWidget::from_response(response.chapters);
                 for item in chapter_widget.chapters.iter_mut() {
@@ -1592,9 +1743,332 @@ where
                 self.local_event_tx.send(MangaPageEvents::CheckChapterStatus).ok();
             },
             None => {
+                self.pending_select_last = false;
                 self.state = PageState::ChaptersNotFound;
                 self.chapters = None;
             },
+        }
+    }
+
+    fn load_chapters_at_target(
+        &mut self,
+        response: Option<GetChaptersResponse>,
+        page: u32,
+        select_index: Option<usize>,
+        not_found_query: Option<String>,
+    ) {
+        let query_fallback = not_found_query.or_else(|| self.pending_target_chapter.take());
+        self.pending_target_chapter = None;
+
+        let Some(res) = response else {
+            if let Some(q) = query_fallback {
+                self.chapter_search_status = Some(format!("⚠ {}: {q}", tr("No encontrado", "Not found")));
+            }
+            self.state = PageState::DisplayingChapters;
+            return;
+        };
+
+        if res.chapters.is_empty() {
+            if let Some(q) = query_fallback {
+                self.chapter_search_status = Some(format!("⚠ {}: {q}", tr("No encontrado", "Not found")));
+            }
+            self.state = PageState::DisplayingChapters;
+            return;
+        }
+
+        let matched_idx =
+            select_index.or_else(|| query_fallback.as_deref().and_then(|q| find_matching_chapter_index(&res.chapters, q)));
+
+        let target_select = matched_idx.unwrap_or(0).min(res.chapters.len().saturating_sub(1));
+        let matched_num = res.chapters[target_select].chapter_number.clone();
+
+        let mut list_state = tui_widget_list::ListState::default();
+        list_state.select(Some(target_select));
+
+        let mut chapter_widget = ChaptersListWidget::from_response(res.chapters);
+        for item in chapter_widget.chapters.iter_mut() {
+            if self.selected_chapters.contains_key(&item.chapter.id) {
+                item.is_selected = true;
+            }
+        }
+
+        let per_page = self
+            .chapters
+            .as_ref()
+            .map(|c| c.pagination.items_per_page)
+            .unwrap_or_else(|| Pagination::default().items_per_page);
+
+        self.chapters = Some(ChaptersData {
+            state: list_state,
+            widget: chapter_widget,
+            pagination: Pagination::new(page, res.total_chapters, per_page),
+        });
+        self.state = PageState::DisplayingChapters;
+        self.local_event_tx.send(MangaPageEvents::CheckChapterStatus).ok();
+
+        if matched_idx.is_some() {
+            self.chapter_search_status = Some(format!("✓ {} {matched_num}", tr("Cap.", "Ch.")));
+        } else if let Some(q) = query_fallback {
+            self.chapter_search_status = Some(format!("⚠ {}: {q}", tr("No encontrado", "Not found")));
+        }
+    }
+
+    fn confirm_chapter_search(&mut self) {
+        let query = self.chapter_search_bar.value().trim().to_string();
+        if query.is_empty() {
+            self.is_chapter_search_open = false;
+            self.chapter_search_status = None;
+            return;
+        }
+
+        if let Some(target_page_raw) = parse_page_jump_query(&query) {
+            if let Some(chapters) = self.chapters.as_mut() {
+                let total_pages = chapters.pagination.get_total_pages().max(1);
+                let target_page = target_page_raw.clamp(1, total_pages);
+                self.is_chapter_search_open = false;
+                self.pending_select_last = false;
+                self.chapter_search_status = Some(format!("{} {target_page}/{total_pages}", tr("Pág.", "Page")));
+                if chapters.pagination.current_page != target_page {
+                    chapters.pagination.current_page = target_page;
+                    self.search_chapters();
+                } else if !chapters.widget.chapters.is_empty() {
+                    chapters.state.select(Some(0));
+                }
+            } else {
+                self.is_chapter_search_open = false;
+            }
+            return;
+        }
+
+        let total_pages = match self.chapters.as_mut() {
+            Some(chapters) => {
+                let current_list: Vec<Chapter> = chapters.widget.chapters.iter().map(|i| i.chapter.clone()).collect();
+                if let Some(idx) = find_matching_chapter_index(&current_list, &query) {
+                    chapters.state.select(Some(idx));
+                    let ch_num = chapters.widget.chapters[idx].chapter.chapter_number.clone();
+                    let label = if ch_num.is_empty() {
+                        chapters.widget.chapters[idx].chapter.title.clone()
+                    } else {
+                        format!("{} {ch_num}", tr("Cap.", "Ch."))
+                    };
+                    self.is_chapter_search_open = false;
+                    self.chapter_search_status = Some(format!("✓ {label}"));
+                    return;
+                }
+                chapters.pagination.get_total_pages().max(1)
+            },
+            None => {
+                self.is_chapter_search_open = false;
+                return;
+            },
+        };
+
+        if total_pages <= 1 {
+            self.is_chapter_search_open = false;
+            self.chapter_search_status = Some(format!("⚠ {}: {query}", tr("No encontrado", "Not found")));
+            return;
+        }
+
+        self.is_chapter_search_open = false;
+        self.pending_target_chapter = Some(query.clone());
+        self.chapter_search_status = Some(tr("⏳ Buscando capítulo...", "⏳ Searching chapter...").to_string());
+
+        let manga_id = self.manga.id.clone();
+        let client = Arc::clone(&self.manga_provider);
+        let provider = self.manga.provider;
+        let tx = self.local_event_tx.clone();
+        let filters = self.chapter_filters.clone();
+        let pagination = self.chapters.as_ref().map(|c| c.pagination.clone()).unwrap_or_default();
+        let lang = filters.language;
+
+        self.tasks.spawn(async move {
+            let all_res = match provider {
+                Some(p) => crate::backend::multi_provider::get_all_chapters_for_provider(p, &manga_id, lang)
+                    .await
+                    .ok(),
+                None => client.get_all_chapters(&manga_id, lang).await.ok(),
+            };
+
+            if let Some(mut all_chapters) = all_res
+                && !all_chapters.is_empty()
+            {
+                match filters.order {
+                    ChapterOrderBy::Ascending => {
+                        all_chapters.sort_by(|a, b| {
+                            let na = a.chapter_number.parse::<f64>().unwrap_or(0.0);
+                            let nb = b.chapter_number.parse::<f64>().unwrap_or(0.0);
+                            na.total_cmp(&nb)
+                        });
+                    },
+                    ChapterOrderBy::Descending => {
+                        all_chapters.sort_by(|a, b| {
+                            let na = a.chapter_number.parse::<f64>().unwrap_or(0.0);
+                            let nb = b.chapter_number.parse::<f64>().unwrap_or(0.0);
+                            nb.total_cmp(&na)
+                        });
+                    },
+                }
+
+                if let Some(global_idx) = find_matching_chapter_index(&all_chapters, &query) {
+                    let per_page = pagination.items_per_page.max(1) as usize;
+                    let target_page = (global_idx / per_page) as u32 + 1;
+                    let in_page_idx = global_idx % per_page;
+                    let start = (target_page.saturating_sub(1) as usize) * per_page;
+                    let end = (start + per_page).min(all_chapters.len());
+                    let page_chapters = all_chapters[start..end].to_vec();
+
+                    tx.send(MangaPageEvents::LoadChaptersAtTarget {
+                        response: Some(GetChaptersResponse {
+                            chapters: page_chapters,
+                            total_chapters: all_chapters.len() as u32,
+                        }),
+                        page: target_page,
+                        select_index: Some(in_page_idx),
+                        not_found_query: None,
+                    })
+                    .ok();
+                } else {
+                    tx.send(MangaPageEvents::LoadChaptersAtTarget {
+                        response: None,
+                        page: pagination.current_page,
+                        select_index: None,
+                        not_found_query: Some(query),
+                    })
+                    .ok();
+                }
+                return;
+            }
+
+            if let Ok(target_num) = query.parse::<f64>() {
+                let total = pagination.total_items.max(1);
+                let n = (target_num.round().max(1.0) as u32).min(total);
+                let est_idx = match filters.order {
+                    ChapterOrderBy::Ascending => n.saturating_sub(1),
+                    ChapterOrderBy::Descending => total.saturating_sub(n),
+                };
+                let per_page = pagination.items_per_page.max(1);
+                let target_page = (est_idx / per_page) + 1;
+                let target_pagination = Pagination::new(target_page, pagination.total_items, per_page);
+
+                let page_res = match provider {
+                    Some(p) => {
+                        crate::backend::multi_provider::get_chapters_for_provider(p, &manga_id, filters, target_pagination).await
+                    },
+                    None => client.get_chapters(&manga_id, filters, target_pagination).await,
+                };
+
+                tx.send(MangaPageEvents::LoadChaptersAtTarget {
+                    response: page_res.ok(),
+                    page: target_page,
+                    select_index: None,
+                    not_found_query: Some(query),
+                })
+                .ok();
+            } else {
+                tx.send(MangaPageEvents::LoadChaptersAtTarget {
+                    response: None,
+                    page: pagination.current_page,
+                    select_index: None,
+                    not_found_query: Some(query),
+                })
+                .ok();
+            }
+        });
+    }
+
+    fn jump_to_first_chapter(&mut self) {
+        if let Some(chapters) = self.chapters.as_mut() {
+            self.pending_select_last = false;
+            if chapters.pagination.current_page > 1 {
+                chapters.pagination.current_page = 1;
+                self.search_chapters();
+            } else if !chapters.widget.chapters.is_empty() {
+                chapters.state.select(Some(0));
+            }
+        }
+    }
+
+    fn jump_to_last_chapter(&mut self) {
+        if let Some(chapters) = self.chapters.as_mut() {
+            let total_pages = chapters.pagination.get_total_pages().max(1);
+            if chapters.pagination.current_page < total_pages {
+                chapters.pagination.current_page = total_pages;
+                self.pending_select_last = true;
+                self.search_chapters();
+            } else if !chapters.widget.chapters.is_empty() {
+                let last = chapters.widget.chapters.len().saturating_sub(1);
+                chapters.state.select(Some(last));
+            }
+        }
+    }
+
+    fn toggle_selected_chapter_read(&mut self) {
+        let manga_id = self.manga.id.clone();
+        let manga_title = self.manga.title.clone();
+        let cover_img_url = self.manga.cover_img_url.clone();
+        let provider = self.manga.provider.unwrap_or_else(|| self.manga_provider.name());
+
+        let Some(chapters) = self.chapters.as_mut() else {
+            return;
+        };
+        let Some(selected_idx) = chapters.state.selected else {
+            return;
+        };
+        let Some(item) = chapters.widget.chapters.get_mut(selected_idx) else {
+            return;
+        };
+
+        let Ok(conn) = Database::get_connection() else {
+            return;
+        };
+        let database = Database::new(&conn);
+        if cfg!(test) {
+            let _ = database.setup();
+        }
+        let desired_read = !item.is_read;
+        let run_toggle = || {
+            database.toggle_chapter_read(MangaReadingHistorySave {
+                id: &manga_id,
+                title: &manga_title,
+                img_url: Some(&cover_img_url),
+                chapter: ChapterToSaveHistory {
+                    id: &item.chapter.id,
+                    title: &item.chapter.title,
+                    translated_language: item.chapter.language.as_iso_code(),
+                },
+                provider,
+            })
+        };
+        let mut res = run_toggle();
+        if let Ok(actual_read) = res
+            && actual_read != desired_read
+        {
+            res = run_toggle();
+        }
+
+        match res {
+            Ok(is_now_read) => {
+                item.is_read = is_now_read;
+                if !item.chapter.chapter_number.is_empty() {
+                    let norm = normalize_chapter_number(&item.chapter.chapter_number);
+                    if is_now_read {
+                        self.migrated_read_chapter_numbers.insert(norm);
+                    } else {
+                        self.migrated_read_chapter_numbers.remove(&norm);
+                    }
+                }
+                let ch_label = if item.chapter.chapter_number.is_empty() {
+                    item.chapter.title.clone()
+                } else {
+                    item.chapter.chapter_number.clone()
+                };
+                self.chapter_search_status = Some(if is_now_read {
+                    format!("✓ {} {ch_label} {}", tr("Cap.", "Ch."), tr("leído", "read"))
+                } else {
+                    format!("○ {} {ch_label} {}", tr("Cap.", "Ch."), tr("no leído", "unread"))
+                });
+            },
+            Err(e) => write_to_error_log(ErrorType::Error(Box::new(e))),
         }
     }
 
@@ -1753,7 +2227,9 @@ where
                 MouseEventKind::ScrollDown => {
                     self.local_action_tx.send(MangaPageActions::ScrollChapterDown).ok();
                 },
-                MouseEventKind::Down(MouseButton::Left) if !self.is_provider_switcher_open && !self.download_process_started() => {
+                MouseEventKind::Down(MouseButton::Left)
+                    if !self.is_provider_switcher_open && !self.is_chapter_search_open && !self.download_process_started() =>
+                {
                     let pos = Position::new(mouse_event.column, mouse_event.row);
                     if self.chapters_list_area.contains(pos) {
                         if pos.x < self.chapters_list_area.x.saturating_add(4) {
@@ -1854,6 +2330,12 @@ where
                 MangaPageEvents::ChapterFinishedDownloading(id_chapter) => self.set_chapter_finished_downloading(&id_chapter),
                 MangaPageEvents::SearchChapters => self.search_chapters(),
                 MangaPageEvents::LoadChapters(response) => self.load_chapters(response),
+                MangaPageEvents::LoadChaptersAtTarget {
+                    response,
+                    page,
+                    select_index,
+                    not_found_query,
+                } => self.load_chapters_at_target(response, page, select_index, not_found_query),
                 MangaPageEvents::CheckChapterStatus => {
                     self.check_chapters_read();
                 },
@@ -1957,7 +2439,7 @@ where
             self.render_manga_information(top_area, frame);
         }
 
-        self.render_chapters_area(chapters_area, frame.buffer_mut());
+        self.render_chapters_area(chapters_area, frame);
     }
 
     fn update(&mut self, action: Self::Actions) {
@@ -2022,6 +2504,20 @@ where
             MangaPageActions::ScrollProviderSwitcherDown => self.scroll_provider_switcher_down(),
             MangaPageActions::ScrollProviderSwitcherUp => self.scroll_provider_switcher_up(),
             MangaPageActions::ConfirmSwitchProvider => self.confirm_switch_provider(),
+
+            MangaPageActions::StartChapterSearch => {
+                self.is_chapter_search_open = true;
+                self.chapter_search_bar.reset();
+                self.chapter_search_status = None;
+            },
+            MangaPageActions::StopChapterSearch => {
+                self.is_chapter_search_open = false;
+                self.chapter_search_status = None;
+            },
+            MangaPageActions::ConfirmChapterSearch => self.confirm_chapter_search(),
+            MangaPageActions::JumpToFirstChapter => self.jump_to_first_chapter(),
+            MangaPageActions::JumpToLastChapter => self.jump_to_last_chapter(),
+            MangaPageActions::ToggleChapterRead => self.toggle_selected_chapter_read(),
 
             MangaPageActions::DownloadChapter => self.download_chapter_selected(),
         }
@@ -2886,5 +3382,182 @@ mod test {
             .expect("chapters block top border should exist");
         let header_rows = chapters_top_y - 2;
         assert!(header_rows <= 16, "header should stay compact, got {header_rows} rows");
+    }
+
+    #[tokio::test]
+    async fn test_chapter_search_in_page_and_page_jump() {
+        let mut manga = Manga::default();
+        manga.id = "manga_jump".into();
+        manga.title = "Jump Test".into();
+
+        let mut manga_page: MangaPage<MockMangaPageProvider, TrackerTest> =
+            MangaPage::new(manga, None, MockMangaPageProvider::new().into());
+
+        manga_page.load_chapters(Some(GetChaptersResponse {
+            chapters: vec![
+                Chapter {
+                    id: "c1".into(),
+                    chapter_number: "1".into(),
+                    title: "Inicio".into(),
+                    ..Default::default()
+                },
+                Chapter {
+                    id: "c2".into(),
+                    chapter_number: "2".into(),
+                    title: "Arco del Bosque".into(),
+                    ..Default::default()
+                },
+                Chapter {
+                    id: "c3".into(),
+                    chapter_number: "3".into(),
+                    title: "El Despertar".into(),
+                    ..Default::default()
+                },
+            ],
+            total_chapters: 3,
+        }));
+
+        // 1. Open chapter search with '/' and jump to chapter number "2"
+        press_key(&mut manga_page, KeyCode::Char('/'));
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(MangaPageActions::StartChapterSearch, action);
+        manga_page.update(action);
+        assert!(manga_page.is_typing_chapter_search());
+
+        press_key(&mut manga_page, KeyCode::Char('2'));
+        assert_eq!(manga_page.chapter_search_bar.value(), "2");
+
+        press_key(&mut manga_page, KeyCode::Enter);
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(MangaPageActions::ConfirmChapterSearch, action);
+        manga_page.update(action);
+
+        assert!(!manga_page.is_typing_chapter_search());
+        assert_eq!(manga_page.chapters.as_ref().unwrap().state.selected, Some(1));
+
+        // 2. Open with 's' and jump by title substring
+        press_key(&mut manga_page, KeyCode::Char('s'));
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        manga_page.update(action);
+        for ch in "despertar".chars() {
+            press_key(&mut manga_page, KeyCode::Char(ch));
+        }
+        press_key(&mut manga_page, KeyCode::Enter);
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        manga_page.update(action);
+        assert_eq!(manga_page.chapters.as_ref().unwrap().state.selected, Some(2));
+
+        // 3. g / G first & last jump on current page
+        press_key(&mut manga_page, KeyCode::Char('g'));
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(MangaPageActions::JumpToFirstChapter, action);
+        manga_page.update(action);
+        assert_eq!(manga_page.chapters.as_ref().unwrap().state.selected, Some(0));
+
+        press_key(&mut manga_page, KeyCode::Char('G'));
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(MangaPageActions::JumpToLastChapter, action);
+        manga_page.update(action);
+        assert_eq!(manga_page.chapters.as_ref().unwrap().state.selected, Some(2));
+
+        // 4. Page jump syntax parser
+        assert_eq!(parse_page_jump_query("p2"), Some(2));
+        assert_eq!(parse_page_jump_query("pag 3"), Some(3));
+        assert_eq!(parse_page_jump_query("page 1"), Some(1));
+        assert_eq!(parse_page_jump_query("#4"), Some(4));
+        assert_eq!(parse_page_jump_query("150"), None);
+        assert_eq!(parse_page_jump_query("p0"), None);
+
+        // 5. Multi-page jump with "p2"
+        manga_page.chapters.as_mut().unwrap().pagination = Pagination::from_total_items(50);
+        while manga_page.local_event_rx.try_recv().is_ok() {}
+        press_key(&mut manga_page, KeyCode::Char('/'));
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        manga_page.update(action);
+        for ch in "p2".chars() {
+            press_key(&mut manga_page, KeyCode::Char(ch));
+        }
+        press_key(&mut manga_page, KeyCode::Enter);
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        manga_page.update(action);
+
+        assert_eq!(manga_page.chapters.as_ref().unwrap().pagination.current_page, 2);
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), manga_page.local_event_rx.recv())
+            .await
+            .expect("should receive LoadChapters for page jump")
+            .unwrap();
+        match evt {
+            MangaPageEvents::LoadChapters(_) => {},
+            other => panic!("expected LoadChapters, got {other:?}"),
+        }
+
+        // 6. Cross-page chapter search ("15") emits LoadChaptersAtTarget
+        press_key(&mut manga_page, KeyCode::Char('/'));
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        manga_page.update(action);
+        for ch in "15".chars() {
+            press_key(&mut manga_page, KeyCode::Char(ch));
+        }
+        press_key(&mut manga_page, KeyCode::Enter);
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        manga_page.update(action);
+
+        let evt = tokio::time::timeout(std::time::Duration::from_secs(2), manga_page.local_event_rx.recv())
+            .await
+            .expect("should receive LoadChaptersAtTarget")
+            .unwrap();
+        match evt {
+            MangaPageEvents::LoadChaptersAtTarget { .. } => {},
+            other => panic!("expected LoadChaptersAtTarget, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn test_toggle_chapter_read_with_x_key() {
+        let mut manga = Manga::default();
+        manga.id = "manga_toggle_read".into();
+        manga.title = "Toggle Read Test".into();
+        manga.provider = Some(crate::backend::manga_provider::MangaProviders::Mangaoni);
+
+        let mut manga_page: MangaPage<MockMangaPageProvider, TrackerTest> =
+            MangaPage::new(manga, None, MockMangaPageProvider::new().into());
+
+        manga_page.load_chapters(Some(GetChaptersResponse {
+            chapters: vec![
+                Chapter {
+                    id: "c1".into(),
+                    chapter_number: "1".into(),
+                    title: "Capítulo 1".into(),
+                    ..Default::default()
+                },
+                Chapter {
+                    id: "c2".into(),
+                    chapter_number: "2".into(),
+                    title: "Capítulo 2".into(),
+                    ..Default::default()
+                },
+            ],
+            total_chapters: 2,
+        }));
+
+        assert!(!manga_page.chapters.as_ref().unwrap().widget.chapters[0].is_read);
+
+        // Toggle read ON with 'x'
+        press_key(&mut manga_page, KeyCode::Char('x'));
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(MangaPageActions::ToggleChapterRead, action);
+        manga_page.update(action);
+
+        assert!(manga_page.chapters.as_ref().unwrap().widget.chapters[0].is_read);
+        assert!(manga_page.migrated_read_chapter_numbers.contains("1"));
+
+        // Toggle read OFF with 'x'
+        press_key(&mut manga_page, KeyCode::Char('x'));
+        let action = manga_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(MangaPageActions::ToggleChapterRead, action);
+        manga_page.update(action);
+
+        assert!(!manga_page.chapters.as_ref().unwrap().widget.chapters[0].is_read);
+        assert!(!manga_page.migrated_read_chapter_numbers.contains("1"));
     }
 }

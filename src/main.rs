@@ -38,6 +38,7 @@ use clap::Parser;
 use cli::{Credentials, check_anilist_credentials_are_stored};
 use crossterm::ExecutableCommand;
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
+use crossterm::terminal::SetTitle;
 use http::StatusCode;
 use log::LevelFilter;
 use logger::{ILogger, Logger};
@@ -80,6 +81,29 @@ mod tests {
         assert_eq!(spanish_provider_candidates(MangaProviders::Mangapill), None);
         assert_eq!(spanish_provider_candidates(MangaProviders::Comizy), None);
     }
+
+    #[test]
+    fn windows_terminal_relaunch_only_triggers_for_interactive_standalone_console() {
+        let exe = vec!["manga-tui.exe".to_string()];
+        assert!(should_relaunch_in_windows_terminal(true, false, false, &exe));
+
+        // Not standalone (launched inside an existing shell like cmd/powershell)
+        assert!(!should_relaunch_in_windows_terminal(false, false, false, &exe));
+        // Already inside a modern terminal (Windows Terminal, WezTerm, VS Code, etc.)
+        assert!(!should_relaunch_in_windows_terminal(true, true, false, &exe));
+        // Anti-loop guard env var is set
+        assert!(!should_relaunch_in_windows_terminal(true, false, true, &exe));
+
+        // Non-interactive CLI arguments should run directly without opening a new tab
+        for flag in ["-h", "--help", "-V", "--version", "lang", "anilist"] {
+            let args = vec!["manga-tui.exe".to_string(), flag.to_string()];
+            assert!(!should_relaunch_in_windows_terminal(true, false, false, &args), "expected no relaunch for CLI arg {flag}");
+        }
+
+        // Interactive provider override should still relaunch when opened standalone
+        let provider_args = vec!["manga-tui.exe".to_string(), "-p".to_string(), "inmanga".to_string()];
+        assert!(should_relaunch_in_windows_terminal(true, false, false, &provider_args));
+    }
 }
 
 mod backend;
@@ -101,6 +125,7 @@ impl TerminalGuard {
     fn init() -> Result<(ratatui::DefaultTerminal, Self), Box<dyn std::error::Error>> {
         let terminal = ratatui::init();
         stdout().execute(EnableMouseCapture)?;
+        let _ = stdout().execute(SetTitle(format!("Manga TUI v{}", env!("CARGO_PKG_VERSION"))));
         Ok((terminal, Self))
     }
 }
@@ -112,8 +137,129 @@ impl Drop for TerminalGuard {
     }
 }
 
-#[tokio::main(flavor = "multi_thread", worker_threads = 7)]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+#[cfg(target_os = "windows")]
+const NO_WT_RELAUNCH_ENV: &str = "MANGA_TUI_NO_WT_RELAUNCH";
+
+/// Returns `true` when the application should relaunch itself inside Windows Terminal (`wt.exe`).
+fn should_relaunch_in_windows_terminal(
+    is_standalone_console: bool,
+    is_modern_terminal: bool,
+    no_relaunch_guard: bool,
+    args: &[String],
+) -> bool {
+    if !is_standalone_console || is_modern_terminal || no_relaunch_guard {
+        return false;
+    }
+
+    const NON_INTERACTIVE_TOKENS: [&str; 6] = ["-h", "--help", "-V", "--version", "lang", "anilist"];
+    !args.iter().skip(1).any(|arg| NON_INTERACTIVE_TOKENS.iter().any(|token| arg == token))
+}
+
+#[cfg(target_os = "windows")]
+fn configure_windows_console() {
+    use windows_sys::Win32::System::Console::{SetConsoleCP, SetConsoleOutputCP};
+    const CP_UTF8: u32 = 65001;
+    unsafe {
+        let _ = SetConsoleCP(CP_UTF8);
+        let _ = SetConsoleOutputCP(CP_UTF8);
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn is_standalone_console_launch() -> bool {
+    use windows_sys::Win32::System::Console::GetConsoleProcessList;
+    let mut pids = [0u32; 2];
+    let count = unsafe { GetConsoleProcessList(pids.as_mut_ptr(), pids.len() as u32) };
+    count == 1
+}
+
+#[cfg(target_os = "windows")]
+fn find_windows_terminal_binary() -> Option<std::path::PathBuf> {
+    if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+        let wt_path = std::path::PathBuf::from(local_app_data)
+            .join("Microsoft")
+            .join("WindowsApps")
+            .join("wt.exe");
+        if wt_path.is_file() {
+            return Some(wt_path);
+        }
+    }
+    Some(std::path::PathBuf::from("wt.exe"))
+}
+
+#[cfg(target_os = "windows")]
+fn try_relaunch_in_windows_terminal() {
+    let args: Vec<String> = std::env::args().collect();
+    let is_standalone = is_standalone_console_launch();
+    let is_modern = backend::tui::is_running_in_modern_windows_terminal();
+    let no_relaunch = std::env::var_os(NO_WT_RELAUNCH_ENV).is_some();
+
+    if !should_relaunch_in_windows_terminal(is_standalone, is_modern, no_relaunch, &args) {
+        return;
+    }
+
+    let Some(wt_path) = find_windows_terminal_binary() else {
+        return;
+    };
+
+    let Ok(current_exe) = std::env::current_exe() else {
+        return;
+    };
+
+    let mut cmd = std::process::Command::new(wt_path);
+    cmd.args(["-M", "new-tab", "--title", "Manga TUI"]);
+    if let Ok(current_dir) = std::env::current_dir() {
+        cmd.arg("-d").arg(current_dir);
+    }
+    cmd.arg("--").arg(&current_exe);
+    for arg in args.iter().skip(1) {
+        cmd.arg(arg);
+    }
+    cmd.env(NO_WT_RELAUNCH_ENV, "1");
+
+    if cmd.spawn().is_ok() {
+        exit(0);
+    }
+}
+
+fn pause_before_exit_if_standalone() {
+    #[cfg(target_os = "windows")]
+    if is_standalone_console_launch() {
+        eprintln!("\nPresiona Enter para cerrar esta ventana... / Press Enter to close this window...");
+        let mut input = String::new();
+        let _ = std::io::stdin().read_line(&mut input);
+    }
+}
+
+fn main() {
+    #[cfg(target_os = "windows")]
+    {
+        configure_windows_console();
+        try_relaunch_in_windows_terminal();
+    }
+
+    let exit_code = match tokio::runtime::Builder::new_multi_thread().worker_threads(7).enable_all().build() {
+        Ok(runtime) => match runtime.block_on(async_main()) {
+            Ok(()) => 0,
+            Err(err) => {
+                eprintln!("Error: {err}");
+                pause_before_exit_if_standalone();
+                1
+            },
+        },
+        Err(err) => {
+            eprintln!("Failed to initialize async runtime: {err}");
+            pause_before_exit_if_standalone();
+            1
+        },
+    };
+
+    if exit_code != 0 {
+        exit(exit_code);
+    }
+}
+
+async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     let logger = Logger;
 
     pretty_env_logger::formatted_builder()
@@ -132,6 +278,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             \n Error details : {e}"
         ).into()
             );
+            pause_before_exit_if_standalone();
             exit(1)
         },
     }

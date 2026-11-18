@@ -572,7 +572,10 @@ impl Widget for HelpModal {
         let right_lines = vec![
             Self::section_title(tr("Ficha del Manga", "Manga Page")),
             Self::key_line("j / k", tr("Subir / bajar en capítulos", "Scroll chapters up / down")),
+            Self::key_line("/ o s", tr("Ir a capítulo o página", "Jump to chapter or page")),
+            Self::key_line("g / G", tr("Primer / último capítulo", "First / last chapter")),
             Self::key_line("r / v", tr("Leer en TUI / Abrir Visor Web HD", "Read in TUI / Open HD Web Viewer")),
+            Self::key_line("x", tr("Marcar/desmarcar como leído", "Toggle chapter read")),
             Self::key_line("Space", tr("Seleccionar capítulo para lote", "Toggle select chapter")),
             Self::key_line("V / c", tr("Seleccionar página / Limpiar", "Select page / Clear selection")),
             Self::key_line("d / a", tr("Descargar selección / todos", "Download selected / all")),

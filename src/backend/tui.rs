@@ -73,6 +73,35 @@ fn get_picker() -> Option<Picker> {
         .filter(|picker| picker.protocol_type != ProtocolType::Halfblocks)
 }
 
+/// Returns `true` when the environment variables indicate a modern Windows terminal emulator
+/// (such as Windows Terminal, VS Code integrated terminal, WezTerm, Alacritty, etc.) rather than
+/// classic `conhost.exe`.
+pub fn is_modern_windows_terminal_env(wt_session: Option<&str>, term_program: Option<&str>, wezterm_exe: Option<&str>) -> bool {
+    if wt_session.is_some_and(|v| !v.trim().is_empty()) {
+        return true;
+    }
+
+    if wezterm_exe.is_some_and(|v| !v.trim().is_empty()) {
+        return true;
+    }
+
+    const MODERN_TERM_PROGRAMS: [&str; 8] = ["vscode", "wezterm", "mintty", "rio", "alacritty", "tabby", "hyper", "kitty"];
+
+    term_program
+        .map(str::trim)
+        .is_some_and(|prog| MODERN_TERM_PROGRAMS.iter().any(|known| prog.eq_ignore_ascii_case(known)))
+}
+
+/// Checks current process environment variables to detect whether the app is running inside a
+/// modern Windows terminal emulator.
+pub fn is_running_in_modern_windows_terminal() -> bool {
+    let wt_session = std::env::var("WT_SESSION").ok();
+    let term_program = std::env::var("TERM_PROGRAM").ok();
+    let wezterm_exe = std::env::var("WEZTERM_EXECUTABLE").ok();
+
+    is_modern_windows_terminal_env(wt_session.as_deref(), term_program.as_deref(), wezterm_exe.as_deref())
+}
+
 #[cfg(target_os = "windows")]
 /// Default font width for Windows console on 96 DPI
 const DEFAULT_FONT_SIZE_WIDTH: u16 = 10;
@@ -119,8 +148,9 @@ fn get_picker() -> Option<Picker> {
     let protocol = picker.guess_protocol();
 
     let is_vscode_conpty = std::env::var("TERM_PROGRAM").map(|v| v.eq_ignore_ascii_case("vscode")).unwrap_or(false);
+    let is_modern_terminal = is_running_in_modern_windows_terminal();
 
-    if protocol == ProtocolType::Halfblocks || is_vscode_conpty {
+    if is_vscode_conpty || (protocol == ProtocolType::Halfblocks && is_modern_terminal) {
         picker.protocol_type = ProtocolType::Sixel;
     }
 
@@ -214,4 +244,30 @@ pub fn handle_events(tick_rate: Duration, event_tx: UnboundedSender<Events>) -> 
             }
         }
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn modern_windows_terminal_detection_recognizes_known_terminals() {
+        assert!(is_modern_windows_terminal_env(Some("guid-123"), None, None));
+        assert!(is_modern_windows_terminal_env(None, None, Some("C:\\Program Files\\WezTerm\\wezterm-gui.exe")));
+        assert!(is_modern_windows_terminal_env(None, Some("vscode"), None));
+        assert!(is_modern_windows_terminal_env(None, Some("WezTerm"), None));
+        assert!(is_modern_windows_terminal_env(None, Some("Alacritty"), None));
+        assert!(is_modern_windows_terminal_env(None, Some("mintty"), None));
+        assert!(is_modern_windows_terminal_env(None, Some("rio"), None));
+        assert!(is_modern_windows_terminal_env(None, Some("tabby"), None));
+        assert!(is_modern_windows_terminal_env(None, Some("hyper"), None));
+        assert!(is_modern_windows_terminal_env(None, Some("kitty"), None));
+    }
+
+    #[test]
+    fn modern_windows_terminal_detection_rejects_classic_console_env() {
+        assert!(!is_modern_windows_terminal_env(None, None, None));
+        assert!(!is_modern_windows_terminal_env(Some("   "), Some(""), Some("")));
+        assert!(!is_modern_windows_terminal_env(None, Some("cmd"), None));
+    }
 }
