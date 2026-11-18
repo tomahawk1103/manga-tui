@@ -5,7 +5,7 @@ use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEvent, MouseEventKin
 use image::DynamicImage;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
-use ratatui::layout::{Constraint, Layout, Margin, Position, Rect};
+use ratatui::layout::{Constraint, Flex, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget};
@@ -49,6 +49,104 @@ pub enum HomeActions {
     SelectNextRecentlyAddedManga,
     SelectPreviousRecentlyAddedManga,
     SupportProject,
+}
+
+/// "ANSI Shadow" glyphs used to compose the big `MANGA-TUI` hero logo.
+const LOGO_GLYPHS: [[&str; 6]; 9] = [
+    ["███╗   ███╗", "████╗ ████║", "██╔████╔██║", "██║╚██╔╝██║", "██║ ╚═╝ ██║", "╚═╝     ╚═╝"],
+    [" █████╗ ", "██╔══██╗", "███████║", "██╔══██║", "██║  ██║", "╚═╝  ╚═╝"],
+    ["███╗   ██╗", "████╗  ██║", "██╔██╗ ██║", "██║╚██╗██║", "██║ ╚████║", "╚═╝  ╚═══╝"],
+    [" ██████╗ ", "██╔════╝ ", "██║  ███╗", "██║   ██║", "╚██████╔╝", " ╚═════╝ "],
+    [" █████╗ ", "██╔══██╗", "███████║", "██╔══██║", "██║  ██║", "╚═╝  ╚═╝"],
+    ["      ", "      ", "█████╗", "╚════╝", "      ", "      "],
+    ["████████╗", "╚══██╔══╝", "   ██║   ", "   ██║   ", "   ██║   ", "   ╚═╝   "],
+    ["██╗   ██╗", "██║   ██║", "██║   ██║", "██║   ██║", "╚██████╔╝", " ╚═════╝ "],
+    ["██╗", "██║", "██║", "██║", "██║", "╚═╝"],
+];
+
+/// Height (in rows) of the big hero logo.
+const LOGO_HEIGHT: u16 = 6;
+
+/// Builds the `MANGA-TUI` hero logo, one `String` per row.
+fn build_logo_lines() -> Vec<String> {
+    (0..LOGO_HEIGHT as usize)
+        .map(|row| LOGO_GLYPHS.iter().map(|glyph| glyph[row]).collect::<String>())
+        .collect()
+}
+
+/// Display width (in columns) of the big hero logo.
+fn logo_width() -> u16 {
+    LOGO_GLYPHS.iter().map(|glyph| glyph[0].chars().count() as u16).sum()
+}
+
+/// Extracts RGB components from a `Color` so the hero gradient adapts to the active theme.
+fn color_to_rgb(color: Color, fallback: (f32, f32, f32)) -> (f32, f32, f32) {
+    match color {
+        Color::Rgb(r, g, b) => (r as f32, g as f32, b as f32),
+        Color::Cyan => (0.0, 210.0, 255.0),
+        Color::Magenta => (210.0, 100.0, 255.0),
+        Color::Yellow => (255.0, 210.0, 80.0),
+        _ => fallback,
+    }
+}
+
+/// Theme-aware horizontal gradient (`accent_primary` → `accent_secondary` → `status_error`).
+fn gradient_color(index: usize, total: usize) -> Color {
+    let t_pal = theme();
+    let stops = [
+        color_to_rgb(t_pal.accent_primary, (0.0, 210.0, 255.0)),
+        color_to_rgb(t_pal.accent_secondary, (168.0, 128.0, 255.0)),
+        color_to_rgb(t_pal.status_error, (255.0, 95.0, 200.0)),
+    ];
+    let t = if total <= 1 { 0.0 } else { index.min(total - 1) as f32 / (total - 1) as f32 };
+    let (from, to, local_t) = if t < 0.5 { (stops[0], stops[1], t * 2.0) } else { (stops[1], stops[2], (t - 0.5) * 2.0) };
+    let lerp = |a: f32, b: f32| (a + (b - a) * local_t).round().clamp(0.0, 255.0) as u8;
+    Color::Rgb(lerp(from.0, to.0), lerp(from.1, to.1), lerp(from.2, to.2))
+}
+
+/// Colors every visible character of `text` with the hero gradient.
+fn gradient_line(text: &str, bold: bool) -> Line<'static> {
+    let total = text.chars().count();
+    let spans: Vec<Span<'static>> = text
+        .chars()
+        .enumerate()
+        .map(|(idx, ch)| {
+            let mut style = Style::default().fg(gradient_color(idx, total));
+            if bold {
+                style = style.bold();
+            }
+            Span::styled(ch.to_string(), style)
+        })
+        .collect();
+    Line::from(spans)
+}
+
+/// Which hero header variant fits in the available area.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeroMode {
+    /// Big gradient ASCII logo + greeting + stat cards / 2x2 pills inside a rounded block.
+    Full,
+    /// Compact 1-2 line rounded top bar for smaller terminals.
+    Compact,
+}
+
+impl HeroMode {
+    fn for_area(area: Rect) -> Self {
+        if area.height >= 24 && area.width >= logo_width() + 34 { Self::Full } else { Self::Compact }
+    }
+
+    fn height(self, area_height: u16) -> u16 {
+        match self {
+            Self::Full => LOGO_HEIGHT + 2,
+            Self::Compact => {
+                if area_height < 18 {
+                    3
+                } else {
+                    4
+                }
+            },
+        }
+    }
 }
 
 /// Returns an icon + greeting for the given local hour (0-23).
@@ -124,7 +222,8 @@ where
     fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
         let buf = frame.buffer_mut();
 
-        let top_bar_height = if area.height < 18 { 3 } else { 4 };
+        let hero_mode = HeroMode::for_area(area);
+        let top_bar_height = hero_mode.height(area.height);
         let [top_bar_area, carrousel_popular_mangas_area, latest_updates_area] =
             Layout::vertical([Constraint::Length(top_bar_height), Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
 
@@ -132,7 +231,7 @@ where
         self.popular_mangas_area = carrousel_popular_mangas_area;
         self.recently_added_area = latest_updates_area;
 
-        self.render_top_bar(top_bar_area, buf);
+        self.render_hero(top_bar_area, buf, hero_mode);
         self.render_popular_mangas_carrousel(carrousel_popular_mangas_area, buf);
         self.render_recently_added_mangas_area(latest_updates_area, buf);
     }
@@ -616,6 +715,116 @@ where
         Line::from(spans)
     }
 
+    fn render_hero(&self, area: Rect, buf: &mut Buffer, mode: HeroMode) {
+        if area.width == 0 || area.height == 0 {
+            return;
+        }
+        match mode {
+            HeroMode::Full => self.render_full_hero(area, buf),
+            HeroMode::Compact => self.render_top_bar(area, buf),
+        }
+    }
+
+    fn render_full_hero(&self, area: Rect, buf: &mut Buffer) {
+        let t = theme();
+        let (icon, greeting) = greeting_for_hour(chrono::Local::now().hour());
+
+        let title_left = Line::from(vec![
+            Span::styled(tr(" 🏠 Inicio ", " 🏠 Home "), Style::default().fg(t.accent_primary).bold()),
+            Span::styled(format!("{icon} {greeting}, "), Style::default().fg(t.status_warning).bold()),
+            Span::styled(format!("{} ", tr("lector", "reader")), Style::default().fg(t.text_primary).bold()),
+        ]);
+
+        let title_right = Line::from(vec![
+            Span::styled("<T> ", Style::default().fg(t.accent_highlight).bold()),
+            Span::styled(format!("{} ", current_theme().label()), Style::default().fg(t.text_muted)),
+            Span::styled("<g> ", Style::default().fg(t.accent_highlight).bold()),
+            Span::styled("GitHub ", Style::default().fg(t.text_muted)),
+        ])
+        .right_aligned();
+
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(t.border))
+            .title(title_left)
+            .title_top(title_right);
+
+        let inner = block.inner(area).inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
+        block.render(area, buf);
+
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        let [logo_area, info_area] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1)])
+            .spacing(3)
+            .areas(inner);
+
+        let logo_lines: Vec<Line<'static>> = build_logo_lines().iter().map(|row| gradient_line(row, false)).collect();
+        Paragraph::new(logo_lines).render(logo_area, buf);
+
+        let [greeting_area, continue_area, tagline_area, cards_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(3)])
+                .areas(info_area);
+
+        Paragraph::new(Line::from(vec![
+            Span::styled(format!("{icon}  "), Style::default().fg(t.status_warning)),
+            Span::styled(format!("{greeting}, "), Style::default().fg(t.text_primary).bold()),
+            Span::styled(tr("lector", "reader").to_string(), Style::default().fg(t.accent_secondary).bold()),
+        ]))
+        .render(greeting_area, buf);
+
+        Paragraph::new(self.continue_reading_line(info_area.width)).render(continue_area, buf);
+        Paragraph::new(Line::from(Span::styled(
+            tr("Tu centro de lectura manga en terminal", "Your terminal manga reading hub"),
+            Style::default().fg(t.text_dim).italic(),
+        )))
+        .render(tagline_area, buf);
+
+        if cards_area.width >= 74 {
+            let card_width = ((cards_area.width.saturating_sub(3)) / 4).min(21);
+            let compact_labels = card_width < 20;
+            let card_areas = Layout::horizontal([Constraint::Length(card_width); 4])
+                .spacing(1)
+                .flex(Flex::Start)
+                .split(cards_area);
+            for ((stat_icon, value, label, color), card_area) in
+                self.stat_entries(compact_labels).into_iter().zip(card_areas.iter())
+            {
+                let card_block = Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(t.border_muted));
+                let card_inner = card_block.inner(*card_area);
+                card_block.render(*card_area, buf);
+                Paragraph::new(Line::from(vec![
+                    Span::styled(format!("{stat_icon} "), Style::default().fg(color)),
+                    Span::styled(value, Style::default().fg(color).bold()),
+                    Span::styled(format!(" {label}"), Style::default().fg(t.text_muted)),
+                ]))
+                .centered()
+                .render(card_inner, buf);
+            }
+        } else {
+            let [_gap, row1, row2] =
+                Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).areas(cards_area);
+            let entries = self.stat_entries(cards_area.width < 46);
+            for (pair, row_area) in entries.chunks(2).zip([row1, row2]) {
+                let [left_col, right_col] =
+                    Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(row_area);
+                for ((stat_icon, value, label, color), cell) in pair.iter().zip([left_col, right_col]) {
+                    Paragraph::new(Line::from(vec![
+                        Span::styled(format!(" {stat_icon} {value} "), Style::default().fg(*color).bg(t.chip_bg).bold()),
+                        Span::styled(format!(" {label}"), Style::default().fg(t.text_muted)),
+                    ]))
+                    .render(cell, buf);
+                }
+            }
+        }
+    }
+
     /// Compact 1-2 line rounded top bar matching the visual style of `SearchPage::render_input_area`.
     fn render_top_bar(&self, area: Rect, buf: &mut Buffer) {
         if area.width == 0 || area.height == 0 {
@@ -805,7 +1014,22 @@ mod tests {
     }
 
     #[test]
-    fn home_renders_compact_top_bar_and_recovers_full_space_without_ascii_logo() {
+    fn hero_mode_and_logo_dimensions() {
+        assert_eq!(HeroMode::for_area(Rect::new(0, 0, 160, 40)), HeroMode::Full);
+        assert_eq!(HeroMode::for_area(Rect::new(0, 0, 118, 27)), HeroMode::Full);
+        assert_eq!(HeroMode::for_area(Rect::new(0, 0, 90, 24)), HeroMode::Compact);
+        assert_eq!(HeroMode::for_area(Rect::new(0, 0, 150, 20)), HeroMode::Compact);
+
+        let lines = build_logo_lines();
+        let expected_width = logo_width() as usize;
+        assert_eq!(lines.len(), LOGO_HEIGHT as usize);
+        for row in &lines {
+            assert_eq!(row.chars().count(), expected_width);
+        }
+    }
+
+    #[test]
+    fn home_renders_full_ascii_hero_on_large_screens_and_compact_bar_on_small_screens() {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
@@ -818,7 +1042,7 @@ mod tests {
             last_read_title: Some("Berserk: Golden Age Arc Edition".to_string()),
         };
 
-        for (width, height) in [(165, 42), (118, 27), (90, 24), (45, 14)] {
+        for (width, height, expected_top_height) in [(165, 42, 8), (118, 27, 8), (90, 24, 4), (45, 14, 3)] {
             let backend = TestBackend::new(width, height);
             let mut terminal = Terminal::new(backend).unwrap();
             let area = Rect::new(0, 0, width, height);
@@ -828,15 +1052,18 @@ mod tests {
                 })
                 .unwrap();
 
-            assert!(home.top_bar_area.height <= 4, "top bar should be at most 4 rows");
+            assert_eq!(home.top_bar_area.height, expected_top_height, "unexpected hero/top_bar height at {width}x{height}");
             assert_eq!(
                 home.top_bar_area.height + home.popular_mangas_area.height + home.recently_added_area.height,
                 height,
-                "popular and recently added sections should occupy all remaining screen height without a bottom status strip"
+                "sections should occupy all screen height at {width}x{height}"
             );
 
             let buf = terminal.backend().buffer();
             let text: String = buf.content().iter().map(|c| c.symbol()).collect::<Vec<_>>().join("");
+            if width >= 118 && height >= 24 {
+                assert!(text.contains("███╗"), "expected big ASCII logo in {width}x{height}");
+            }
             if width >= 90 {
                 assert!(text.contains("1.2K"), "expected formatted chapters_read in {width}x{height}");
                 assert!(text.contains("Berserk"), "expected last read title in top bar in {width}x{height}");
