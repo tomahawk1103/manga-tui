@@ -331,6 +331,7 @@ where
     pub local_event_rx: UnboundedReceiver<MangaReaderEvents>,
     pub local_source: Option<LocalChapterSource>,
     pub needs_terminal_clear: bool,
+    margin_clear_generation: u8,
     left_panel_area: Rect,
     center_image_area: Rect,
 }
@@ -384,9 +385,9 @@ where
             (body_area.width / 4).max(14)
         };
         let right_w = if body_area.width >= 115 {
-            if self.current_page_size == PageSize::Wide { 26 } else { 32 }
-        } else if body_area.width >= 88 && self.current_page_size == PageSize::Normal {
-            26
+            32
+        } else if body_area.width >= 92 && self.current_page_size == PageSize::Normal {
+            28
         } else {
             0
         };
@@ -411,6 +412,8 @@ where
             ))
             .render(left, buf);
 
+        let margin_fg = if self.margin_clear_generation & 1 == 0 { Color::Rgb(1, 1, 1) } else { Color::Rgb(2, 2, 2) };
+
         let page_loaded = self.pages.get(index).map(|page| page.is_loaded()).unwrap_or(false);
         let show_reload = if page_loaded {
             let font_size = self.picker.font_size;
@@ -426,6 +429,13 @@ where
             let (raw_w, raw_h) = page.dimensions.unwrap_or((0, 0));
             let display_h = if page.is_tall_strip() { page.viewport_height() } else { raw_h };
             let draw_area = centered_image_rect(image_canvas, raw_w, display_h, font_size.0, font_size.1);
+            for y in center.top()..center.bottom() {
+                for x in center.left()..center.right() {
+                    if !draw_area.contains(Position::new(x, y)) {
+                        buf[(x, y)].set_symbol(" ").set_fg(margin_fg);
+                    }
+                }
+            }
             let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
             let image = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
             if let Some(protocol) = page.get_or_create_protocol(&mut self.picker) {
@@ -434,6 +444,11 @@ where
 
             false
         } else {
+            for y in center.top()..center.bottom() {
+                for x in center.left()..center.right() {
+                    buf[(x, y)].set_symbol(" ").set_fg(margin_fg);
+                }
+            }
             let show_failed = self
                 .pages_list
                 .pages
@@ -542,7 +557,7 @@ where
                                 if let Some(page) = self.pages.get_mut(target) {
                                     page.scroll_y = 0;
                                 }
-                                self.needs_terminal_clear = true;
+                                self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
                                 self.fetch_pages();
                             }
                         }
@@ -601,6 +616,7 @@ where
             provider: None,
             local_source: None,
             needs_terminal_clear: false,
+            margin_clear_generation: 0,
             left_panel_area: Rect::default(),
             center_image_area: Rect::default(),
         }
@@ -652,7 +668,7 @@ where
                 if page.scroll_y < max_scroll {
                     let step = page.scroll_step();
                     page.scroll_y = (page.scroll_y + step).min(max_scroll);
-                    self.needs_terminal_clear = true;
+                    self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
                     return;
                 }
             }
@@ -667,7 +683,7 @@ where
             if let Some(page) = self.pages.get_mut(new_index) {
                 page.scroll_y = 0;
             }
-            self.needs_terminal_clear = true;
+            self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
         }
         self.fetch_pages();
     }
@@ -678,7 +694,7 @@ where
             if page.is_tall_strip() && page.scroll_y > 0 {
                 let step = page.scroll_step();
                 page.scroll_y = page.scroll_y.saturating_sub(step);
-                self.needs_terminal_clear = true;
+                self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
                 return;
             }
         }
@@ -691,7 +707,7 @@ where
                         page.scroll_y = page.max_scroll_y();
                     }
                 }
-                self.needs_terminal_clear = true;
+                self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
             }
             self.fetch_pages();
         }
@@ -757,7 +773,7 @@ where
                 page.scroll_y = 0;
             }
             if prev != 0 || prev_scroll != 0 {
-                self.needs_terminal_clear = true;
+                self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
             }
             self.fetch_pages();
         }
@@ -780,7 +796,7 @@ where
                 }
             }
             if prev != last || prev_scroll != new_scroll {
-                self.needs_terminal_clear = true;
+                self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
             }
             self.fetch_pages();
         }
@@ -822,7 +838,7 @@ where
             },
         }
         if data.index == self.current_page_index() {
-            self.needs_terminal_clear = true;
+            self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
         }
     }
 
@@ -836,7 +852,7 @@ where
 
     fn load_chapter(&mut self, chapter: ChapterToRead) {
         self.clean_up();
-        self.needs_terminal_clear = true;
+        self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
 
         self.current_chapter = chapter;
         self.local_source = LocalChapterSource::find(&self.manga_title, &self.current_chapter.id);
@@ -1254,9 +1270,10 @@ where
             (tr("Pág. anterior", "Prev page"), tr("Pág. siguiente", "Next page"))
         };
 
+        let key_col_w = if controls_inner.width >= 26 { 11 } else { 9 };
         let shortcut_row = |key: &str, desc: &str| {
             Line::from(vec![
-                Span::styled(format!("{key:<11} "), Style::default().fg(t.accent_primary).bold()),
+                Span::styled(format!("{key:<key_col_w$} "), Style::default().fg(t.accent_primary).bold()),
                 Span::styled(desc.to_string(), Style::default().fg(t.text_secondary)),
             ])
         };
@@ -1288,7 +1305,7 @@ where
             )]));
         }
 
-        Paragraph::new(control_lines).wrap(Wrap { trim: true }).render(controls_inner, buf);
+        Paragraph::new(control_lines).render(controls_inner, buf);
     }
 
     fn tick(&mut self) {
@@ -2266,19 +2283,23 @@ mod test {
         manga_reader.render_page_list(Rect::new(0, 0, 22, 20), &mut Buffer::empty(Rect::new(0, 0, 22, 20)));
         manga_reader.page_list_state.list_state.select(Some(0));
         manga_reader.needs_terminal_clear = false;
+        let gen_before = manga_reader.margin_clear_generation;
 
-        // Advancing from page 0 to page 1 sets needs_terminal_clear
-        manga_reader.next_page();
-        assert_eq!(manga_reader.current_page_index(), 1);
-        assert!(manga_reader.needs_terminal_clear);
-
-        // Advancing past last page must NOT wrap back to page 0
-        manga_reader.needs_terminal_clear = false;
+        // Advancing from page 0 to page 1 bumps margin_clear_generation without triggering full-screen terminal.clear()
         manga_reader.next_page();
         assert_eq!(manga_reader.current_page_index(), 1);
         assert!(!manga_reader.needs_terminal_clear);
+        assert_eq!(manga_reader.margin_clear_generation, gen_before.wrapping_add(1));
+
+        // Advancing past last page must NOT wrap back to page 0 or bump generation
+        let gen_at_last = manga_reader.margin_clear_generation;
+        manga_reader.next_page();
+        assert_eq!(manga_reader.current_page_index(), 1);
+        assert!(!manga_reader.needs_terminal_clear);
+        assert_eq!(manga_reader.margin_clear_generation, gen_at_last);
 
         // Render while current_page_size is still Normal: render must update current_page_size to Wide BEFORE layout
+        // while keeping right_w at 32 so Controls shortcuts stay aligned on a single line each
         assert_eq!(manga_reader.current_page_size, PageSize::Normal);
         let backend = TestBackend::new(140, 40);
         let mut terminal = Terminal::new(backend).unwrap();
@@ -2290,7 +2311,25 @@ mod test {
             .unwrap();
 
         assert_eq!(manga_reader.current_page_size, PageSize::Wide);
-        // Right panel width for Wide at 140 cols is 26; left is 22 -> center width is 140 - 22 - 26 = 92
-        assert_eq!(manga_reader.center_image_area.width, 92);
+        // Right panel width stays 32 on >=115 cols; left is 22 -> center width is 140 - 22 - 32 = 86
+        assert_eq!(manga_reader.center_image_area.width, 86);
+
+        let buf = terminal.backend().buffer();
+        let rendered: String = (0..40)
+            .map(|y| (0..140).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.contains("w") && (line.contains("Cap. siguiente") || line.contains("Next chapter"))),
+            "Controls shortcut 'w' and description must stay on a single line"
+        );
+        assert!(
+            rendered
+                .lines()
+                .any(|line| line.contains("v") && (line.contains("Visor Web HD") || line.contains("Web Viewer HD"))),
+            "Controls shortcut 'v' and description must stay on a single line"
+        );
     }
 }
