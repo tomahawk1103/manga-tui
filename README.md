@@ -141,6 +141,20 @@ To update in portable mode, simply replace `manga-tui.exe` and keep `portable.tx
 > [!NOTE]
 > AniList credentials set via CLI are stored in the operating system's credential manager (`keyring`), so when moving a portable folder to a new PC you will need to set them again on that PC or configure `[anilist]` directly inside `data/config.toml`.
 
+### Modo Portable en Windows (Español)
+
+Descomprime `manga-tui-*-windows-msvc-portable.zip` en cualquier carpeta con permisos de escritura y haz **doble clic** en `manga-tui.exe` (se abrirá automáticamente maximizado en Windows Terminal si está instalado; en consolas sin soporte gráfico abrirá el **Visor Web HD** automáticamente al leer).
+
+Orden de prioridad del directorio de datos:
+1. Variable de entorno `MANGA_TUI_DATA_DIR`
+2. `./data/` junto a `manga-tui.exe` (se activa automáticamente cuando existe `portable.txt` o `data/` junto al ejecutable)
+3. Directorios estándar del sistema (`%APPDATA%` / `%LOCALAPPDATA%`)
+
+Para actualizar sin perder datos, sustituye únicamente `manga-tui.exe` manteniendo intactos `portable.txt` y `data/` (se conservan `config.toml`, historial SQLite y `mangaDownloads/`).
+
+> [!NOTE]
+> Las credenciales de AniList configuradas por CLI se guardan en el almacén de credenciales de Windows (`keyring`), por lo que al mover la carpeta portable a otro equipo habrá que volver a configurarlas en ese PC o definir `[anilist]` dentro de `data/config.toml`. Para la guía completa en castellano incluida en el ZIP, consulta [docs/LEEME_PORTABLE.txt](docs/LEEME_PORTABLE.txt).
+
 ## Image rendering
 
 Use a terminal that can render images such as [Wezterm](https://wezfurlong.org/wezterm/index.html) (Personally I recommend using this one It's the one used in the videos), [iTerm2](https://iterm2.com/), [Kitty](https://sw.kovidgoyal.net/kitty/) and [Ghostty](https://ghostty.org/download)  <br />

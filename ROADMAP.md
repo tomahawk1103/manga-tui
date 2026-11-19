@@ -38,8 +38,8 @@ El binario en Rust ya es autocontenido para ejecutarse sin instalar dependencias
 
 ### Criterios de aceptación (Hito 1)
 - [x] Tests unitarios de relanzamiento en Windows Terminal, búsqueda de `wt.exe`, detección de terminales modernos, precedencia de protocolo gráfico (`MANGA_TUI_PROTOCOL` > `config.toml` > `auto`) y fallback automático al **Visor Web HD (`<v>`)** en terminales sin protocolo gráfico o cuando `image_protocol = "none"`.
-- [ ] Probar `manga-tui.exe` abriéndolo con **doble clic desde el Explorador**, dentro de **Windows Terminal**, y desde la **consola clásica (`conhost.exe`)**.
-- [ ] Si en algún terminal no se renderizan imágenes en el lector TUI, seleccionar `Sixel` / `Visor Web HD` en Ajustes (`<c>`) o abrir el **Visor Web HD (`<v>`)** permite seguir leyendo sin bloqueo.
+- [x] Probar `manga-tui.exe` abriéndolo con **doble clic desde el Explorador**, dentro de **Windows Terminal**, y desde la **consola clásica (`conhost.exe`)**.
+- [x] Si en algún terminal no se renderizan imágenes en el lector TUI, seleccionar `Sixel` / `Visor Web HD` en Ajustes (`<c>`) o abrir el **Visor Web HD (`<v>`)** permite seguir leyendo sin bloqueo.
 
 ---
 
@@ -78,7 +78,7 @@ El binario en Rust ya es autocontenido para ejecutarse sin instalar dependencias
 
 **Implementado en:** [scripts/package-windows.ps1](scripts/package-windows.ps1), [.github/workflows/release.yml](.github/workflows/release.yml)
 
-- **Script unificado**: `scripts/package-windows.ps1` compila el binario `--release`, empaqueta `manga-tui.exe`, `portable.txt`, `README.md` y `LICENSE` en `manga-tui-<version>-x86_64-pc-windows-msvc-portable.zip`, valida automáticamente que el `.zip` contiene `manga-tui.exe` y `portable.txt`, y genera el fichero `.sha256`.
+- **Script unificado**: `scripts/package-windows.ps1` compila el binario `--release`, empaqueta `manga-tui.exe`, `portable.txt`, `LEEME_PORTABLE.txt`, `README.md` y `LICENSE` en `manga-tui-<version>-x86_64-pc-windows-msvc-portable.zip`, valida automáticamente que el `.zip` contiene `manga-tui.exe`, `portable.txt` y `LEEME_PORTABLE.txt`, y genera el fichero `.sha256`.
 - **Workflow de releases (`.github/workflows/release.yml`)**: El job `build-windows` (`windows-latest`) invoca directamente `./scripts/package-windows.ps1` y adjunta el `.zip` y su checksum `SHA-256` a la release.
 
 ### Prueba de Principio a Fin (Release Candidata en Windows limpio) ⏳

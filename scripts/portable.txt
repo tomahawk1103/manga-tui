@@ -1,0 +1,40 @@
+manga-tui · Modo Portable / Portable Mode
+=========================================
+
+[ESPAÑOL] (Guía completa en castellano: consulta `LEEME_PORTABLE.txt`)
+---------------------------------------------------------------------
+NO BORRES este archivo (`portable.txt`). Mientras `portable.txt` o la
+carpeta `data/` existan junto a `manga-tui.exe`, tu configuración
+(`config.toml`), historial de lectura (`history/manga-tui-history.db`),
+registros de error (`errorLogs/`) y descargas (`mangaDownloads/`) se
+guardarán dentro de `./data/` en lugar de `%APPDATA%` / `%LOCALAPPDATA%`.
+
+Precedencia del directorio de datos:
+1. Variable de entorno `MANGA_TUI_DATA_DIR` (prioridad máxima)
+2. `./data/` junto a `manga-tui.exe` (cuando existe `portable.txt` o `data/`)
+3. Directorios estándar del sistema (`%APPDATA%` / `%LOCALAPPDATA%`)
+
+Para actualizar: sustituye solo `manga-tui.exe` manteniendo intactos
+`portable.txt` y `data/`.
+Nota sobre AniList: las credenciales configuradas por CLI se guardan en
+el almacén del sistema (`keyring`). Si llevas la carpeta a otro PC,
+reconfigúralas en ese equipo o define `[anilist]` en `data/config.toml`.
+
+
+[ENGLISH] (Full documentation: see `README.md`)
+-----------------------------------------------
+DO NOT DELETE this file (`portable.txt`). While `portable.txt` or a
+`data/` folder exists next to `manga-tui.exe`, all user configuration
+(`config.toml`), reading history (`history/manga-tui-history.db`), error
+logs (`errorLogs/`), and downloaded chapters (`mangaDownloads/`) are
+stored locally inside `./data/` instead of `%APPDATA%` / `%LOCALAPPDATA%`.
+
+Precedence:
+1. `MANGA_TUI_DATA_DIR` environment variable (highest priority)
+2. `./data/` next to `manga-tui.exe` (when `portable.txt` or `data/` exists)
+3. Standard OS directories (`%APPDATA%` / `%LOCALAPPDATA%`)
+
+To update: replace only `manga-tui.exe` and keep `portable.txt` and `data/` intact.
+AniList note: credentials set via CLI are stored in the OS credential
+manager (`keyring`). When moving the portable folder to another PC,
+reconfigure them there or set `[anilist]` in `data/config.toml`.

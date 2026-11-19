@@ -1,0 +1,83 @@
+====================================================================
+  manga-tui · Guía Rápida en Español (Versión Portable para Windows)
+====================================================================
+
+1. CÓMO EMPEZAR (SIN INSTALAR NADA)
+------------------------------------
+- Extrae todo el contenido de este archivo .zip en una carpeta con
+  permisos de escritura (por ejemplo: Escritorio\manga-tui\ o
+  Documentos\manga-tui\). Evita copiarlo en C:\Program Files\.
+- Haz doble clic en `manga-tui.exe`.
+- Si tienes Windows Terminal (`wt.exe`) instalado, `manga-tui` se
+  relanzará automáticamente maximizado dentro de Windows Terminal para
+  disfrutar de la mejor calidad visual y soporte de ratón.
+- Aviso de Windows SmartScreen: al no ser un ejecutable firmado,
+  Windows puede mostrar "Windows protegió su PC". En ese caso pulsa
+  "Más información" y después "Ejecutar de todas formas".
+- Visor Web HD automático: si abres el programa en una consola clásica
+  (`conhost.exe`) o un terminal sin protocolo gráfico compatible, al
+  entrar a cualquier capítulo se abrirá automáticamente el Visor Web HD
+  en tu navegador predeterminado para leer con total nitidez.
+
+
+2. CONTROLES BÁSICOS
+--------------------
+- Flechas / `j` / `k` / rueda o clic de ratón : Navegar listas y páginas
+- `/` o `s`                                  : Buscar manga
+- `Enter`                                    : Abrir manga o capítulo
+- `v`                                        : Abrir el capítulo en Visor Web HD
+- `c` o `F5`                                 : Abrir Ajustes
+- `?`                                        : Ver la Ayuda completa de atajos
+- `Esc` o `q`                                : Volver atrás / salir
+
+
+3. MODO PORTABLE Y UBICACIÓN DE DATOS
+-------------------------------------
+¡IMPORTANTE! NO BORRES el archivo `portable.txt` si quieres conservar el
+modo portable.
+
+Mientras exista `portable.txt` (o una carpeta `data/`) junto a
+`manga-tui.exe`, la aplicación guardará todos tus archivos dentro de la
+subcarpeta `./data/` en lugar de usar `%APPDATA%`:
+
+  - `data/config.toml`                  -> Tu configuración
+  - `data/history/manga-tui-history.db` -> Historial y progreso (SQLite)
+  - `data/mangaDownloads/`              -> Capítulos descargados (CBZ, EPUB, PDF, RAW)
+  - `data/errorLogs/`                   -> Registros de errores para soporte
+
+Precedencia del directorio de datos (de mayor a menor prioridad):
+  1. Variable de entorno `MANGA_TUI_DATA_DIR` (prioridad máxima).
+  2. `./data/` junto a `manga-tui.exe` (si existe `portable.txt` o `data/`).
+  3. Directorios estándar del sistema (`%APPDATA%` / `%LOCALAPPDATA%`).
+
+
+4. CÓMO ACTUALIZAR SIN PERDER DATOS
+-----------------------------------
+1. Descarga la nueva versión portable desde:
+   https://github.com/tomahawk1103/manga-tui/releases/latest
+   (También puedes pulsar `u` dentro de Ajustes con `c` o `F5` para
+   abrir la página de versiones en tu navegador).
+2. Descomprime el nuevo `.zip`.
+3. Sustituye únicamente `manga-tui.exe` manteniendo intactos
+   `portable.txt` y toda tu carpeta `data/`.
+   Con esto conservarás tu historial, configuración y descargas.
+
+
+5. NOTA SOBRE ANILIST (OPCIONAL)
+--------------------------------
+Las credenciales de AniList configuradas desde línea de comandos
+(`manga-tui anilist`) se almacenan en el Administrador de credenciales
+seguro de Windows (`keyring`).
+
+Si copias la carpeta portable a otro ordenador, deberás volver a
+configurar AniList en ese equipo o añadir manualmente la sección
+`[anilist]` dentro de `data/config.toml`.
+
+
+6. PROBLEMAS CON IMÁGENES EN EL TERMINAL
+----------------------------------------
+Si las imágenes no se muestran correctamente en tu terminal, o prefieres
+hacer zoom y desplazarte cómodamente desde el navegador:
+- Pulsa `v` dentro del lector para abrir el **Visor Web HD**.
+- O abre **Ajustes** (`c` / `F5`) y cambia el protocolo de imagen a
+  `Sixel` (recomendado en Windows Terminal) o `Visor Web HD` (`None`).
