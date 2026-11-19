@@ -16,6 +16,7 @@ pub struct ReleaseNotifier {
     client: Client,
 }
 
+pub static GITHUB_REPO_URL: &str = "https://github.com/tomahawk1103/manga-tui";
 pub static GITHUB_URL: &str = "https://api.github.com/repos/tomahawk1103/manga-tui";
 pub static GITHUB_RELEASES_PAGE_URL: &str = "https://github.com/tomahawk1103/manga-tui/releases/latest";
 

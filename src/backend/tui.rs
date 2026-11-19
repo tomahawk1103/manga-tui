@@ -61,7 +61,10 @@ pub enum Events {
         switched_from: Option<super::manga_provider::MangaProviders>,
         all_failed: bool,
     },
+    ImageProtocolChanged(crate::config::ImageProtocol),
 }
+
+static MEASURED_FONT_SIZE: std::sync::OnceLock<(u16, u16)> = std::sync::OnceLock::new();
 
 pub fn resolve_protocol_override(
     env_proto: Option<&str>,
@@ -89,13 +92,68 @@ pub fn resolve_protocol_override(
     }
 }
 
+pub fn build_picker_with_font_size(
+    font_size: (u16, u16),
+    is_modern_terminal: bool,
+    proto: crate::config::ImageProtocol,
+) -> Option<Picker> {
+    let mut picker = Picker::new(font_size);
+    match proto {
+        crate::config::ImageProtocol::None => None,
+        crate::config::ImageProtocol::Sixel => {
+            picker.protocol_type = ProtocolType::Sixel;
+            Some(picker)
+        },
+        crate::config::ImageProtocol::Halfblocks => {
+            picker.protocol_type = ProtocolType::Halfblocks;
+            Some(picker)
+        },
+        crate::config::ImageProtocol::Kitty => {
+            picker.protocol_type = ProtocolType::Kitty;
+            Some(picker)
+        },
+        crate::config::ImageProtocol::Iterm2 => {
+            picker.protocol_type = ProtocolType::Iterm2;
+            Some(picker)
+        },
+        crate::config::ImageProtocol::Auto => {
+            let guessed = picker.guess_protocol();
+            #[cfg(target_os = "windows")]
+            {
+                let is_vscode_conpty = std::env::var("TERM_PROGRAM").map(|v| v.eq_ignore_ascii_case("vscode")).unwrap_or(false);
+                if is_vscode_conpty || (guessed == ProtocolType::Halfblocks && is_modern_terminal) {
+                    picker.protocol_type = ProtocolType::Sixel;
+                }
+                Some(picker)
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let _ = is_modern_terminal;
+                if guessed == ProtocolType::Halfblocks { None } else { Some(picker) }
+            }
+        },
+    }
+}
+
+/// Builds a `Picker` for `proto` at runtime using the cached startup font size without querying stdin.
+pub fn picker_for_protocol(proto: crate::config::ImageProtocol) -> Option<Picker> {
+    let is_modern = is_running_in_modern_windows_terminal();
+    let fallback_size = if cfg!(target_os = "windows") && is_modern { (10, 22) } else { (8, 16) };
+    let font_size = *MEASURED_FONT_SIZE.get().unwrap_or(&fallback_size);
+    build_picker_with_font_size(font_size, is_modern, proto)
+}
+
 #[cfg(unix)]
 pub fn get_picker() -> Option<Picker> {
+    let picker_from_termios = Picker::from_termios().ok();
+    let size = picker_from_termios.as_ref().map(|p| p.font_size).unwrap_or((8, 16));
+    let _ = MEASURED_FONT_SIZE.set(size);
+
     let env_proto = std::env::var("MANGA_TUI_PROTOCOL").ok();
     let config_proto = crate::view::widgets::settings::active_image_protocol();
     match resolve_protocol_override(env_proto.as_deref(), config_proto) {
         Some(Some(proto)) => {
-            let mut picker = Picker::from_termios().unwrap_or_else(|_| Picker::new((8, 16)));
+            let mut picker = picker_from_termios.unwrap_or_else(|| Picker::new(size));
             picker.protocol_type = proto;
             return Some(picker);
         },
@@ -103,8 +161,7 @@ pub fn get_picker() -> Option<Picker> {
         None => {},
     }
 
-    Picker::from_termios()
-        .ok()
+    picker_from_termios
         .map(|mut picker| {
             picker.guess_protocol();
             picker
@@ -307,6 +364,8 @@ pub fn get_picker() -> Option<Picker> {
         (DEFAULT_FONT_SIZE_WIDTH, DEFAULT_FONT_SIZE_HEIGHT)
     };
 
+    let _ = MEASURED_FONT_SIZE.set(size);
+
     let mut picker = Picker::new(size);
 
     let env_proto = std::env::var("MANGA_TUI_PROTOCOL").ok();
@@ -320,15 +379,7 @@ pub fn get_picker() -> Option<Picker> {
         None => {},
     }
 
-    let protocol = picker.guess_protocol();
-
-    let is_vscode_conpty = std::env::var("TERM_PROGRAM").map(|v| v.eq_ignore_ascii_case("vscode")).unwrap_or(false);
-
-    if is_vscode_conpty || (protocol == ProtocolType::Halfblocks && is_modern_terminal) {
-        picker.protocol_type = ProtocolType::Sixel;
-    }
-
-    Some(picker)
+    build_picker_with_font_size(size, is_modern_terminal, crate::config::ImageProtocol::Auto)
 }
 
 ///Start app's main loop
@@ -473,5 +524,26 @@ mod tests {
         assert_eq!(parse_csi_cell_size_response("\x1b[6;0;8t"), None);
         assert_eq!(parse_csi_cell_size_response("\x1b[6;16;200t"), None);
         assert_eq!(parse_csi_cell_size_response("not a csi response"), None);
+    }
+
+    #[test]
+    fn build_picker_with_font_size_applies_all_protocol_modes() {
+        use crate::config::ImageProtocol;
+
+        assert!(build_picker_with_font_size((10, 22), true, ImageProtocol::None).is_none());
+
+        let sixel = build_picker_with_font_size((10, 22), false, ImageProtocol::Sixel).unwrap();
+        assert_eq!(sixel.protocol_type, ProtocolType::Sixel);
+        assert_eq!(sixel.font_size, (10, 22));
+
+        let hb = build_picker_with_font_size((8, 16), true, ImageProtocol::Halfblocks).unwrap();
+        assert_eq!(hb.protocol_type, ProtocolType::Halfblocks);
+        assert_eq!(hb.font_size, (8, 16));
+
+        #[cfg(target_os = "windows")]
+        {
+            let auto_modern = build_picker_with_font_size((10, 22), true, ImageProtocol::Auto).unwrap();
+            assert_eq!(auto_modern.protocol_type, ProtocolType::Sixel);
+        }
     }
 }

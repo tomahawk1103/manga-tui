@@ -11,7 +11,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Clear, List, ListState, Paragraph, StatefulWidget, Widget, Wrap};
 use ratatui_image::picker::Picker;
 use ratatui_image::protocol::StatefulProtocol;
-use ratatui_image::{Resize, StatefulImage};
 use strum_macros::EnumIs;
 use throbber_widgets_tui::ThrobberState;
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
@@ -31,7 +30,7 @@ use crate::backend::manga_provider::{
 };
 use crate::backend::tracker::{MangaTracker, track_manga};
 use crate::backend::tui::Events;
-use crate::common::format_error_message_tracking_reading_history;
+use crate::common::{clear_image_canvas, format_error_message_tracking_reading_history, render_stateful_image_cleared};
 use crate::config::MangaTuiConfig;
 use crate::i18n::tr;
 use crate::theme::theme;
@@ -156,6 +155,7 @@ where
 {
     pub manga: Manga,
     image_state: Option<Box<dyn StatefulProtocol>>,
+    cover_image: Option<DynamicImage>,
     cover_area: Rect,
     chapters_list_area: Rect,
     global_event_tx: Option<UnboundedSender<Events>>,
@@ -275,6 +275,7 @@ where
         Self {
             manga,
             image_state: None,
+            cover_image: None,
             picker,
             global_event_tx: None,
             local_action_tx,
@@ -354,11 +355,10 @@ where
         self.cover_area = area;
         match self.image_state.as_mut() {
             Some(state) => {
-                let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
-                let image = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
-                StatefulWidget::render(image, area, buf, state);
+                render_stateful_image_cleared(state, area, area, buf, Color::Rgb(1, 1, 1));
             },
             None => {
+                clear_image_canvas(area, buf, Color::Rgb(1, 1, 1));
                 let t = theme();
                 let block = t.rounded_block().border_style(Style::default().fg(t.border_muted));
                 let inner = block.inner(area);
@@ -1176,9 +1176,23 @@ where
 
     pub fn set_picker(&mut self, picker: Option<Picker>) {
         self.picker = picker;
-        if self.picker.is_none() {
-            self.image_state = None;
+        match (self.picker.as_mut(), self.cover_image.as_ref()) {
+            (Some(picker), Some(raw)) => {
+                self.image_state = Some(picker.new_resize_protocol(raw.clone()));
+            },
+            (Some(_), None) => {
+                self.image_state = None;
+                self.local_event_tx.send(MangaPageEvents::SearchCover).ok();
+            },
+            (None, _) => {
+                self.image_state = None;
+            },
         }
+    }
+
+    #[inline]
+    pub fn is_download_modal_open(&self) -> bool {
+        self.download_process_started()
     }
 
     fn read_chapter(&mut self) {
@@ -1526,6 +1540,7 @@ where
 
         self.manga = new_manga;
         self.image_state = None;
+        self.cover_image = None;
         self.chapters = None;
         self.selected_chapters.clear();
         self.is_chapter_search_open = false;
@@ -2213,6 +2228,7 @@ where
     }
 
     fn load_cover(&mut self, img: DynamicImage) {
+        self.cover_image = Some(img.clone());
         if let Some(picker) = self.picker.as_mut() {
             self.image_state = Some(picker.new_resize_protocol(img));
         }
@@ -2242,10 +2258,32 @@ where
                 {
                     let pos = Position::new(mouse_event.column, mouse_event.row);
                     if self.chapters_list_area.contains(pos) {
-                        if pos.x < self.chapters_list_area.x.saturating_add(4) {
-                            self.local_action_tx.send(MangaPageActions::ToggleSelectChapter).ok();
-                        } else {
-                            self.local_action_tx.send(MangaPageActions::ReadChapter).ok();
+                        let mut clicked_target = None;
+                        if let Some(chapters) = self.chapters.as_mut() {
+                            let offset = chapters.state.scroll_offset_index();
+                            let rel_y = pos.y - self.chapters_list_area.y;
+                            let mut y_acc: u16 = 0;
+                            for (idx, item) in chapters.widget.chapters.iter().enumerate().skip(offset) {
+                                let h = if item.download_loading_state.is_some() { 3 } else { 1 };
+                                if rel_y >= y_acc && rel_y < y_acc + h {
+                                    clicked_target = Some(idx);
+                                    break;
+                                }
+                                y_acc = y_acc.saturating_add(h);
+                                if y_acc >= self.chapters_list_area.height {
+                                    break;
+                                }
+                            }
+                            if let Some(target) = clicked_target {
+                                chapters.state.select(Some(target));
+                            }
+                        }
+                        if clicked_target.is_some() {
+                            if pos.x < self.chapters_list_area.x.saturating_add(4) {
+                                self.local_action_tx.send(MangaPageActions::ToggleSelectChapter).ok();
+                            } else {
+                                self.local_action_tx.send(MangaPageActions::ReadChapter).ok();
+                            }
                         }
                     }
                 },
@@ -3569,5 +3607,61 @@ mod test {
 
         assert!(!manga_page.chapters.as_ref().unwrap().widget.chapters[0].is_read);
         assert!(!manga_page.migrated_read_chapter_numbers.contains("1"));
+    }
+
+    #[tokio::test]
+    async fn test_chapter_mouse_click_selects_clicked_row_and_download_modal_overlay_flag() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let mut manga = Manga::default();
+        manga.id = "manga_mouse".into();
+        manga.title = "Mouse Chapters".into();
+
+        let mut manga_page: MangaPage<MockMangaPageProvider, TrackerTest> =
+            MangaPage::new(manga, None, MockMangaPageProvider::new().into());
+
+        manga_page.load_chapters(Some(GetChaptersResponse {
+            chapters: vec![
+                Chapter {
+                    id: "c1".into(),
+                    chapter_number: "1".into(),
+                    ..Default::default()
+                },
+                Chapter {
+                    id: "c2".into(),
+                    chapter_number: "2".into(),
+                    ..Default::default()
+                },
+            ],
+            total_chapters: 2,
+        }));
+
+        assert!(!manga_page.is_download_modal_open());
+        manga_page.ask_download_all_chapters();
+        assert!(manga_page.is_download_modal_open());
+        manga_page.cancel_download_all_chapters();
+        assert!(!manga_page.is_download_modal_open());
+
+        manga_page.chapters_list_area = Rect::new(40, 10, 60, 10);
+        manga_page.chapters.as_mut().unwrap().state.select(Some(0));
+
+        // Click checkbox column on row 1 (y=11) -> selects chapter index 1 and toggles selection
+        manga_page.handle_mouse_events(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 41,
+            row: 11,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(manga_page.chapters.as_ref().unwrap().state.selected, Some(1));
+        assert_eq!(manga_page.local_action_rx.try_recv().unwrap(), MangaPageActions::ToggleSelectChapter);
+
+        // Clicking empty space below the last chapter (y=15) does nothing
+        manga_page.handle_mouse_events(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 50,
+            row: 15,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(manga_page.local_action_rx.try_recv().is_err());
     }
 }

@@ -305,6 +305,19 @@ where
 
     pub fn set_picker(&mut self, picker: Option<Picker>) {
         self.picker = picker;
+        let can_display = self.picker.is_some();
+        self.carrousel_popular_mangas.can_display_images = can_display;
+        self.carrousel_recently_added.can_display_images = can_display;
+        self.popular_manga_carrousel_state.rebuild_protocols(self.picker.as_mut());
+        self.recently_added_manga_state.rebuild_protocols(self.picker.as_mut());
+        if can_display {
+            if !self.carrousel_popular_mangas.items.is_empty() && self.popular_manga_carrousel_state.is_empty() {
+                self.init_search_popular_mangas_cover();
+            }
+            if !self.carrousel_recently_added.items.is_empty() && self.recently_added_manga_state.is_empty() {
+                self.init_search_recently_added_mangas_cover();
+            }
+        }
     }
 
     pub fn set_active_provider(&mut self, provider: MangaProviders) {
@@ -480,8 +493,8 @@ where
         if let Some(cover) = maybe_cover
             && let Some(picker) = self.picker.as_mut()
         {
-            let protocol = picker.new_resize_protocol(cover);
-            self.popular_manga_carrousel_state.insert_manga(protocol, id);
+            let protocol = picker.new_resize_protocol(cover.clone());
+            self.popular_manga_carrousel_state.insert_manga_with_raw(protocol, cover, id);
         }
     }
 
@@ -596,13 +609,13 @@ where
         if let Some(cover) = maybe_cover
             && let Some(picker) = self.picker.as_mut()
         {
-            let protocol = picker.new_resize_protocol(cover);
-            self.recently_added_manga_state.insert_manga(protocol, id);
+            let protocol = picker.new_resize_protocol(cover.clone());
+            self.recently_added_manga_state.insert_manga_with_raw(protocol, cover, id);
         }
     }
 
     fn support_project(&mut self) {
-        open::that("https://github.com/josueBarretogit/manga-tui").ok();
+        open::that(crate::backend::release_notifier::GITHUB_REPO_URL).ok();
     }
 
     fn render_recently_added_mangas_area(&mut self, recently_added_mangas_area: Rect, buf: &mut Buffer) {

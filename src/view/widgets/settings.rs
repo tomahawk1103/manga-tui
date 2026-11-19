@@ -455,6 +455,7 @@ pub enum SettingsOutcome {
 pub struct SettingsModalState {
     pub cursor: usize,
     pub status_message: Option<String>,
+    pub status_is_error: bool,
 }
 
 impl Default for SettingsModalState {
@@ -468,6 +469,24 @@ impl SettingsModalState {
         Self {
             cursor: 0,
             status_message: None,
+            status_is_error: false,
+        }
+    }
+
+    fn set_persist_status(&mut self, label: &str, value: &str, result: Result<(), String>) {
+        match result {
+            Ok(()) => {
+                self.status_is_error = false;
+                self.status_message =
+                    Some(format!("✓ {label}: {value} ({})", tr("guardado en config.toml", "saved to config.toml")));
+            },
+            Err(err) => {
+                self.status_is_error = true;
+                self.status_message = Some(format!(
+                    "⚠ {label}: {value} ({}: {err})",
+                    tr("solo sesión actual, error al guardar", "session only, save failed")
+                ));
+            },
         }
     }
 
@@ -501,13 +520,12 @@ impl SettingsModalState {
                 };
                 let next_provider = ALL_PROVIDERS[next_idx];
                 set_active_default_provider(next_provider);
-                let _ = persist_setting_to_disk("default_manga_provider", &next_provider.to_string());
-                self.status_message = Some(format!(
-                    "✓ {}: {} ({})",
+                let res = persist_setting_to_disk("default_manga_provider", &next_provider.to_string());
+                self.set_persist_status(
                     tr("Proveedor activo y por defecto", "Active & default provider"),
                     next_provider.badge_label(),
-                    tr("guardado en config.toml", "saved to config.toml")
-                ));
+                    res,
+                );
                 SettingsOutcome::ProviderChanged(next_provider)
             },
             SettingsField::DownloadFormat => {
@@ -522,13 +540,8 @@ impl SettingsModalState {
                 };
                 let next_format = ALL_DOWNLOAD_FORMATS[next_idx];
                 set_active_download_type(next_format);
-                let _ = persist_setting_to_disk("download_type", download_type_toml_value(next_format));
-                self.status_message = Some(format!(
-                    "✓ {}: {} ({})",
-                    tr("Formato de descarga", "Download format"),
-                    next_format.to_string().to_uppercase(),
-                    tr("guardado en config.toml", "saved to config.toml")
-                ));
+                let res = persist_setting_to_disk("download_type", download_type_toml_value(next_format));
+                self.set_persist_status(tr("Formato de descarga", "Download format"), &next_format.to_string().to_uppercase(), res);
                 SettingsOutcome::DownloadFormatChanged(next_format)
             },
             SettingsField::ChapterLanguage => {
@@ -544,14 +557,9 @@ impl SettingsModalState {
                 };
                 let next_lang = langs[next_idx];
                 set_active_chapter_language(next_lang);
-                let _ = persist_setting_to_disk("default_language", &next_lang.to_string().to_lowercase());
-                self.status_message = Some(format!(
-                    "✓ {}: {} {} ({})",
-                    tr("Idioma de capítulos", "Chapter language"),
-                    next_lang.as_emoji(),
-                    next_lang.as_human_readable(),
-                    tr("guardado en config.toml", "saved to config.toml")
-                ));
+                let res = persist_setting_to_disk("default_language", &next_lang.to_string().to_lowercase());
+                let display_val = format!("{} {}", next_lang.as_emoji(), next_lang.as_human_readable());
+                self.set_persist_status(tr("Idioma de capítulos", "Chapter language"), &display_val, res);
                 SettingsOutcome::ChapterLanguageChanged(next_lang)
             },
             SettingsField::UiLanguage => {
@@ -561,17 +569,12 @@ impl SettingsModalState {
                     UiLanguage::En => UiLanguage::Es,
                 };
                 set_active_ui_language(next_lang);
-                let _ = persist_setting_to_disk("ui_language", ui_lang_toml_value(next_lang));
+                let res = persist_setting_to_disk("ui_language", ui_lang_toml_value(next_lang));
                 let label = match next_lang {
                     UiLanguage::Es => "🇪🇸 Español",
                     UiLanguage::En => "🇬🇧 English",
                 };
-                self.status_message = Some(format!(
-                    "✓ {}: {} ({})",
-                    tr("Idioma de la interfaz", "Interface language"),
-                    label,
-                    tr("guardado en config.toml", "saved to config.toml")
-                ));
+                self.set_persist_status(tr("Idioma de la interfaz", "Interface language"), label, res);
                 SettingsOutcome::UiLanguageChanged(next_lang)
             },
             SettingsField::Theme => {
@@ -586,13 +589,8 @@ impl SettingsModalState {
                 };
                 let next_theme = ALL_THEMES[next_idx];
                 set_theme(next_theme);
-                let _ = persist_setting_to_disk("theme", theme_toml_value(next_theme));
-                self.status_message = Some(format!(
-                    "✓ {}: {} ({})",
-                    tr("Tema visual", "Visual theme"),
-                    next_theme.label(),
-                    tr("guardado en config.toml", "saved to config.toml")
-                ));
+                let res = persist_setting_to_disk("theme", theme_toml_value(next_theme));
+                self.set_persist_status(tr("Tema visual", "Visual theme"), next_theme.label(), res);
                 SettingsOutcome::ThemeChanged(next_theme)
             },
             SettingsField::ImageProtocol => {
@@ -607,13 +605,8 @@ impl SettingsModalState {
                 };
                 let next_proto = ALL_IMAGE_PROTOCOLS[next_idx];
                 set_active_image_protocol(next_proto);
-                let _ = persist_setting_to_disk("image_protocol", next_proto.toml_value());
-                self.status_message = Some(format!(
-                    "✓ {}: {} ({})",
-                    tr("Protocolo gráfico", "Graphics protocol"),
-                    next_proto.label(),
-                    tr("guardado en config.toml", "saved to config.toml")
-                ));
+                let res = persist_setting_to_disk("image_protocol", next_proto.toml_value());
+                self.set_persist_status(tr("Protocolo gráfico", "Graphics protocol"), next_proto.label(), res);
                 SettingsOutcome::ImageProtocolChanged(next_proto)
             },
         }
@@ -659,6 +652,7 @@ impl SettingsModalState {
                 let target_dir = crate::backend::AppDirectories::MangaDownloads.get_full_path();
                 #[cfg(not(test))]
                 let _ = open::that(&target_dir);
+                self.status_is_error = false;
                 self.status_message = Some(format!("📂 {}: {}", tr("Abriendo carpeta", "Opening folder"), target_dir.display()));
                 SettingsOutcome::Noop
             },
@@ -666,6 +660,7 @@ impl SettingsModalState {
                 let url = crate::backend::release_notifier::GITHUB_RELEASES_PAGE_URL;
                 #[cfg(not(test))]
                 let _ = open::that(url);
+                self.status_is_error = false;
                 self.status_message =
                     Some(format!("🌐 {}: {url}", tr("Abriendo releases en navegador", "Opening releases in browser")));
                 SettingsOutcome::Noop
@@ -993,7 +988,8 @@ impl<'a> Widget for SettingsModal<'a> {
 
         let storage_mode = crate::backend::current_storage_mode().label();
         let footer_line = if let Some(msg) = &self.state.status_message {
-            Line::from(vec![Span::styled(msg.as_str(), Style::default().fg(t.status_success).add_modifier(Modifier::BOLD))])
+            let msg_color = if self.state.status_is_error { t.status_warning } else { t.status_success };
+            Line::from(vec![Span::styled(msg.as_str(), Style::default().fg(msg_color).add_modifier(Modifier::BOLD))])
         } else {
             Line::from(vec![Span::styled(
                 format!(
@@ -1124,5 +1120,22 @@ client_id = "123"
                 .as_deref()
                 .is_some_and(|m| m.contains("tomahawk1103/manga-tui/releases/latest"))
         );
+    }
+
+    #[test]
+    fn test_settings_modal_persist_status_reports_errors_honestly() {
+        let mut state = SettingsModalState::new();
+        state.set_persist_status("Tema visual", "Catppuccin", Err("permission denied".into()));
+
+        assert!(state.status_is_error);
+        let msg = state.status_message.as_deref().unwrap();
+        assert!(!msg.contains("guardado en config.toml"));
+        assert!(!msg.contains("saved to config.toml"));
+        assert!(msg.contains("permission denied"));
+
+        state.set_persist_status("Tema visual", "Catppuccin", Ok(()));
+        assert!(!state.status_is_error);
+        let ok_msg = state.status_message.as_deref().unwrap();
+        assert!(ok_msg.contains("guardado en config.toml") || ok_msg.contains("saved to config.toml"));
     }
 }

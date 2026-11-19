@@ -374,6 +374,9 @@ where
                 self.is_checking_provider = true;
                 self.active_provider = candidate;
             },
+            Events::ImageProtocolChanged(proto) => {
+                self.apply_image_protocol(proto);
+            },
             Events::ProviderCheckFinished {
                 active_provider,
                 switched_from,
@@ -837,68 +840,6 @@ where
 
         self.tab_hit_boxes.clear();
 
-        let mut spans: Vec<Span<'static>> = Vec::new();
-        let mut cursor_x = top_row.x;
-
-        let brand_text = " ⛩ MANGA-TUI ";
-        spans.push(Span::styled(brand_text, Style::default().fg(Color::Black).bg(brand_bg).bold()));
-        cursor_x = cursor_x.saturating_add(brand_text.chars().count() as u16);
-
-        spans.push(Span::styled(" ", Style::default().fg(brand_bg).bg(bar_bg)));
-        cursor_x = cursor_x.saturating_add(2);
-
-        let mut tab_defs: Vec<(SelectedPage, String)> = vec![
-            (SelectedPage::Home, tr(" 🏠 Inicio <u/F1> ", " 🏠 Home <u/F1> ").to_string()),
-            (SelectedPage::Search, tr(" 🔍 Buscar <i/F2> ", " 🔍 Search <i/F2> ").to_string()),
-            (SelectedPage::Feed, tr(" 📚 Seguimiento <o/F3> ", " 📚 Feed <o/F3> ").to_string()),
-        ];
-
-        if self.current_tab == SelectedPage::MangaTab {
-            let manga_label = self
-                .manga_page
-                .as_ref()
-                .map(|p| {
-                    let short: String = p.manga.title.chars().take(18).collect();
-                    if p.manga.title.chars().count() > 18 { format!(" 📖 {short}… ") } else { format!(" 📖 {short} ") }
-                })
-                .unwrap_or_else(|| tr(" 📖 Ficha ", " 📖 Manga ").to_string());
-            tab_defs.push((SelectedPage::MangaTab, manga_label));
-        }
-
-        let mut active_tab_range: Option<(u16, u16)> = None;
-
-        for (page, label) in tab_defs {
-            let is_active = self.current_tab == page;
-            let pill_bg = if is_active { active_pill_bg } else { inactive_pill_bg };
-            let pill_fg = if is_active { Color::Black } else { t.text_primary };
-
-            let start_x = cursor_x;
-            spans.push(Span::styled("", Style::default().fg(pill_bg).bg(bar_bg)));
-            cursor_x = cursor_x.saturating_add(1);
-
-            let label_width = label.chars().count() as u16;
-            let mut text_style = Style::default().fg(pill_fg).bg(pill_bg);
-            if is_active {
-                text_style = text_style.bold();
-            }
-            spans.push(Span::styled(label, text_style));
-            cursor_x = cursor_x.saturating_add(label_width);
-
-            spans.push(Span::styled("", Style::default().fg(pill_bg).bg(bar_bg)));
-            cursor_x = cursor_x.saturating_add(1);
-
-            let end_x = cursor_x;
-            self.tab_hit_boxes.push((start_x, end_x, page));
-            if is_active {
-                active_tab_range = Some((start_x, end_x));
-            }
-
-            spans.push(Span::styled(" ", Style::default().bg(bar_bg)));
-            cursor_x = cursor_x.saturating_add(1);
-        }
-
-        Paragraph::new(Line::from(spans)).render(top_row, buf);
-
         // Right-aligned status / provider / download badges on top row
         let mut right_spans: Vec<Span<'static>> = Vec::new();
 
@@ -906,10 +847,11 @@ where
             if progress.is_downloading {
                 let short_title: String = progress.current_manga_title.chars().take(14).collect();
                 let dl_text = format!(
-                    " ⬇ [{}/{}] {} Ch.{} ({:.0}%) <D> ",
+                    " ⬇ [{}/{}] {} {} {} ({:.0}%) <D> ",
                     progress.completed_in_batch + 1,
                     progress.total_in_batch,
                     short_title,
+                    tr("Cap.", "Ch."),
                     progress.current_chapter_number,
                     progress.current_page_percentage
                 );
@@ -968,7 +910,75 @@ where
                 .push(Span::styled(format!("{active_provider:?} "), Style::default().fg(t.text_primary).bg(pill_color).bold()));
         }
 
-        Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right).render(top_row, buf);
+        let right_line = Line::from(right_spans);
+        let right_w = (right_line.width() as u16).min(top_row.width);
+        let [left_area, right_area] = Layout::horizontal([Constraint::Min(0), Constraint::Length(right_w)]).areas(top_row);
+
+        Paragraph::new(right_line).alignment(Alignment::Right).render(right_area, buf);
+
+        let max_left_x = left_area.right();
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut cursor_x = left_area.x;
+
+        let brand_span = Span::styled(" ⛩ MANGA-TUI ", Style::default().fg(Color::Black).bg(brand_bg).bold());
+        let arrow_span = Span::styled(" ", Style::default().fg(brand_bg).bg(bar_bg));
+        cursor_x = cursor_x.saturating_add((brand_span.width() + arrow_span.width()) as u16);
+        spans.push(brand_span);
+        spans.push(arrow_span);
+
+        let mut tab_defs: Vec<(SelectedPage, String)> = vec![
+            (SelectedPage::Home, tr(" 🏠 Inicio <u/F1> ", " 🏠 Home <u/F1> ").to_string()),
+            (SelectedPage::Search, tr(" 🔍 Buscar <i/F2> ", " 🔍 Search <i/F2> ").to_string()),
+            (SelectedPage::Feed, tr(" 📚 Seguimiento <o/F3> ", " 📚 Feed <o/F3> ").to_string()),
+        ];
+
+        if self.current_tab == SelectedPage::MangaTab {
+            let manga_label = self
+                .manga_page
+                .as_ref()
+                .map(|p| {
+                    let short: String = p.manga.title.chars().take(18).collect();
+                    if p.manga.title.chars().count() > 18 { format!(" 📖 {short}… ") } else { format!(" 📖 {short} ") }
+                })
+                .unwrap_or_else(|| tr(" 📖 Ficha ", " 📖 Manga ").to_string());
+            tab_defs.push((SelectedPage::MangaTab, manga_label));
+        }
+
+        let mut active_tab_range: Option<(u16, u16)> = None;
+
+        for (page, label) in tab_defs {
+            let is_active = self.current_tab == page;
+            let pill_bg = if is_active { active_pill_bg } else { inactive_pill_bg };
+            let pill_fg = if is_active { Color::Black } else { t.text_primary };
+
+            let left_cap = Span::styled("", Style::default().fg(pill_bg).bg(bar_bg));
+            let mut text_style = Style::default().fg(pill_fg).bg(pill_bg);
+            if is_active {
+                text_style = text_style.bold();
+            }
+            let text_span = Span::styled(label, text_style);
+            let right_cap = Span::styled("", Style::default().fg(pill_bg).bg(bar_bg));
+
+            let start_x = cursor_x;
+            let pill_w = (left_cap.width() + text_span.width() + right_cap.width()) as u16;
+            let end_x = start_x.saturating_add(pill_w);
+            let clamped_end = end_x.min(max_left_x);
+
+            if start_x < max_left_x && clamped_end > start_x {
+                self.tab_hit_boxes.push((start_x, clamped_end, page));
+                if is_active {
+                    active_tab_range = Some((start_x, clamped_end));
+                }
+            }
+
+            spans.push(left_cap);
+            spans.push(text_span);
+            spans.push(right_cap);
+            spans.push(Span::styled(" ", Style::default().bg(bar_bg)));
+            cursor_x = end_x.saturating_add(1);
+        }
+
+        Paragraph::new(Line::from(spans)).render(left_area, buf);
 
         // Second row: subtle horizontal rule with active tab highlight bar
         if area.height >= 2 {
@@ -1063,7 +1073,7 @@ where
                             ("d", tr("Descargar", "Download")),
                             ("f", tr("Favorito", "Favorite")),
                             ("s", tr("Filtrar", "Filter")),
-                            ("u", tr("Actualizar", "Refresh")),
+                            ("R", tr("Actualizar", "Refresh")),
                         ]
                     } else {
                         vec![
@@ -1114,33 +1124,69 @@ where
             }
         };
 
-        let mut left_spans: Vec<Span<'static>> = vec![
-            Span::styled(mode_label.to_string(), Style::default().fg(Color::Black).bg(mode_color).bold()),
-            Span::styled(" ", Style::default().fg(mode_color).bg(bar_bg)),
-        ];
+        let active_theme_label = current_theme().label();
+        let right_spans: Vec<Span<'static>> = if area.width >= 100 {
+            vec![
+                Span::styled(" c ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
+                Span::styled(format!(" {}  ", tr("Ajustes", "Settings")), Style::default().fg(t.text_muted).bg(bar_bg)),
+                Span::styled(" T ", Style::default().fg(t.accent_secondary).bg(chip_bg).bold()),
+                Span::styled(format!(" {active_theme_label}  "), Style::default().fg(t.text_muted).bg(bar_bg)),
+                Span::styled(" D ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
+                Span::styled(format!(" {}  ", tr("Cola", "Queue")), Style::default().fg(t.text_muted).bg(bar_bg)),
+                Span::styled(" n ", Style::default().fg(t.accent_highlight).bg(chip_bg).bold()),
+                Span::styled(format!(" {}  ", tr("Ayuda", "Help")), Style::default().fg(t.text_muted).bg(bar_bg)),
+                Span::styled(" ^C ", Style::default().fg(t.status_error).bg(chip_bg).bold()),
+                Span::styled(format!(" {} ", tr("Salir", "Quit")), Style::default().fg(t.text_muted).bg(bar_bg)),
+            ]
+        } else {
+            vec![
+                Span::styled(" c ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
+                Span::styled(" ", Style::default().bg(bar_bg)),
+                Span::styled(" T ", Style::default().fg(t.accent_secondary).bg(chip_bg).bold()),
+                Span::styled(" ", Style::default().bg(bar_bg)),
+                Span::styled(" D ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
+                Span::styled(" ", Style::default().bg(bar_bg)),
+                Span::styled(" n ", Style::default().fg(t.accent_highlight).bg(chip_bg).bold()),
+                Span::styled(" ", Style::default().bg(bar_bg)),
+                Span::styled(" ^C ", Style::default().fg(t.status_error).bg(chip_bg).bold()),
+            ]
+        };
 
-        for (key, action) in shortcuts {
-            left_spans.push(Span::styled(format!(" {key} "), Style::default().fg(t.accent_primary).bg(chip_bg).bold()));
-            left_spans.push(Span::styled(format!(" {action}  "), Style::default().fg(t.text_muted).bg(bar_bg)));
+        let right_line = Line::from(right_spans);
+        let right_w = (right_line.width() as u16).min(area.width);
+        let [left_area, right_area] = Layout::horizontal([Constraint::Min(0), Constraint::Length(right_w)]).areas(area);
+
+        Paragraph::new(right_line).alignment(Alignment::Right).render(right_area, buf);
+
+        let avail_left = left_area.width.saturating_sub(u16::from(right_w > 0 && left_area.width > 2)) as usize;
+        if avail_left == 0 {
+            return;
         }
 
-        Paragraph::new(Line::from(left_spans)).render(area, buf);
+        let mut left_spans: Vec<Span<'static>> = Vec::new();
+        let mut used_w = 0usize;
 
-        let active_theme_label = current_theme().label();
-        let right_spans: Vec<Span<'static>> = vec![
-            Span::styled(" c ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
-            Span::styled(format!(" {}  ", tr("Ajustes", "Settings")), Style::default().fg(t.text_muted).bg(bar_bg)),
-            Span::styled(" T ", Style::default().fg(t.accent_secondary).bg(chip_bg).bold()),
-            Span::styled(format!(" {active_theme_label}  "), Style::default().fg(t.text_muted).bg(bar_bg)),
-            Span::styled(" D ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
-            Span::styled(format!(" {}  ", tr("Cola", "Queue")), Style::default().fg(t.text_muted).bg(bar_bg)),
-            Span::styled(" n ", Style::default().fg(t.accent_highlight).bg(chip_bg).bold()),
-            Span::styled(format!(" {}  ", tr("Ayuda", "Help")), Style::default().fg(t.text_muted).bg(bar_bg)),
-            Span::styled(" ^C ", Style::default().fg(t.status_error).bg(chip_bg).bold()),
-            Span::styled(format!(" {} ", tr("Salir", "Quit")), Style::default().fg(t.text_muted).bg(bar_bg)),
-        ];
+        let mode_span = Span::styled(mode_label.to_string(), Style::default().fg(Color::Black).bg(mode_color).bold());
+        let arrow_span = Span::styled(" ", Style::default().fg(mode_color).bg(bar_bg));
+        let prefix_w = mode_span.width() + arrow_span.width();
+        if prefix_w <= avail_left {
+            used_w += prefix_w;
+            left_spans.push(mode_span);
+            left_spans.push(arrow_span);
+        }
 
-        Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right).render(area, buf);
+        for (key, action) in shortcuts {
+            let key_span = Span::styled(format!(" {key} "), Style::default().fg(t.accent_primary).bg(chip_bg).bold());
+            let act_span = Span::styled(format!(" {action}  "), Style::default().fg(t.text_muted).bg(bar_bg));
+            let w = key_span.width() + act_span.width();
+            if used_w + w <= avail_left {
+                used_w += w;
+                left_spans.push(key_span);
+                left_spans.push(act_span);
+            }
+        }
+
+        Paragraph::new(Line::from(left_spans)).render(left_area, buf);
     }
 
     fn render_modal_error_message(&self, area: Rect, buf: &mut Buffer, message: &str) {
@@ -1195,10 +1241,29 @@ where
     pub fn is_overlay_open(&self) -> bool {
         self.is_displaying_modal()
             || self.search_page.is_filter_open()
-            || self
-                .manga_page
-                .as_ref()
-                .is_some_and(|page| page.is_provider_switcher_open || page.is_list_languages_open || page.is_chapter_search_open)
+            || self.feed_page.is_overlay_open()
+            || self.manga_page.as_ref().is_some_and(|page| {
+                page.is_provider_switcher_open
+                    || page.is_list_languages_open
+                    || page.is_chapter_search_open
+                    || page.is_download_modal_open()
+            })
+    }
+
+    fn apply_image_protocol(&mut self, proto: crate::config::ImageProtocol) {
+        let new_picker = crate::backend::tui::picker_for_protocol(proto);
+        self.picker = new_picker;
+        self.home_page.set_picker(new_picker);
+        self.search_page.set_picker(new_picker);
+        if let Some(manga_page) = self.manga_page.as_mut() {
+            manga_page.set_picker(new_picker);
+        }
+        if let (Some(picker), Some(reader_page)) = (new_picker, self.manga_reader_page.as_mut())
+            && reader_page.picker_protocol_type() != picker.protocol_type
+        {
+            reader_page.set_picker(picker);
+        }
+        self.needs_terminal_clear = true;
     }
 
     pub fn render_pages(&mut self, area: Rect, frame: &mut Frame<'_>) {
@@ -1287,18 +1352,11 @@ where
                         manga_page.apply_preferred_language(new_lang);
                     }
                 },
-                SettingsOutcome::ImageProtocolChanged(_) => {
-                    let new_picker = crate::backend::tui::get_picker();
-                    self.picker = new_picker;
-                    self.home_page.set_picker(new_picker);
-                    self.search_page.set_picker(new_picker);
-                    if let Some(manga_page) = self.manga_page.as_mut() {
-                        manga_page.set_picker(new_picker);
-                    }
-                    if let (Some(picker), Some(reader_page)) = (new_picker, self.manga_reader_page.as_mut()) {
-                        reader_page.set_picker(picker);
-                    }
-                    self.needs_terminal_clear = true;
+                SettingsOutcome::UiLanguageChanged(_) => {
+                    self.search_page.refresh_personal_discovery();
+                },
+                SettingsOutcome::ImageProtocolChanged(proto) => {
+                    self.apply_image_protocol(proto);
                 },
                 _ => {},
             }
@@ -1465,6 +1523,7 @@ where
             && (key_event.code == KeyCode::F(5) || (key_event.code == KeyCode::Char('c') && !manga_page_blocks_c))
         {
             self.settings_state.status_message = None;
+            self.settings_state.status_is_error = false;
             self.is_settings_modal_open = true;
             return;
         }
@@ -1528,18 +1587,20 @@ where
                     return;
                 }
             }
-            let num_tabs: u16 = if self.current_tab == SelectedPage::MangaTab { 4 } else { 3 };
-            let tab_width = self.top_tabs_area.width / num_tabs;
-            if tab_width == 0 {
-                return;
+            if self.tab_hit_boxes.is_empty() {
+                let num_tabs: u16 = if self.current_tab == SelectedPage::MangaTab { 4 } else { 3 };
+                let tab_width = self.top_tabs_area.width / num_tabs;
+                if tab_width == 0 {
+                    return;
+                }
+                let tab_index = ((mouse_event.column.saturating_sub(self.top_tabs_area.x)) / tab_width).min(num_tabs - 1);
+                match tab_index {
+                    0 => self.global_event_tx.send(Events::GoToHome).ok(),
+                    1 => self.global_event_tx.send(Events::GoSearchPage).ok(),
+                    2 => self.global_event_tx.send(Events::GoFeedPage).ok(),
+                    _ => None,
+                };
             }
-            let tab_index = ((mouse_event.column.saturating_sub(self.top_tabs_area.x)) / tab_width).min(num_tabs - 1);
-            match tab_index {
-                0 => self.global_event_tx.send(Events::GoToHome).ok(),
-                1 => self.global_event_tx.send(Events::GoSearchPage).ok(),
-                2 => self.global_event_tx.send(Events::GoFeedPage).ok(),
-                _ => None,
-            };
         }
     }
 
@@ -2297,5 +2358,133 @@ mod tests {
 
         assert_eq!(newly_available.len(), 1);
         assert_eq!(newly_available[0].id, "manga/madan-no-ichi|824060");
+    }
+
+    #[tokio::test]
+    async fn top_tabs_hitboxes_use_unicode_display_width_and_dont_overlap_right_badge() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app: App<MockMangaPageProvider, TrackerTest> =
+            App::new(MockMangaPageProvider::new(), None, None, MockFiltersHandler::new(MockFilterState {}), MockWidgetFilter {});
+        app.listen_to_event().await; // Home
+
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let area = Rect::new(0, 0, 100, 30);
+        terminal.draw(|f| app.render(area, f)).unwrap();
+
+        assert_eq!(app.tab_hit_boxes.len(), 3);
+        let (home_start, home_end, _) = app.tab_hit_boxes[0];
+        let (search_start, search_end, _) = app.tab_hit_boxes[1];
+        let (feed_start, feed_end, _) = app.tab_hit_boxes[2];
+
+        let top_row: String = (0..100).map(|x| terminal.backend().buffer()[(x, 0)].symbol()).collect();
+        assert!(top_row.contains("●"), "Provider badge on the right must stay visible: {top_row}");
+
+        // Second row highlight '━' must cover the exact column range of the active Home tab (which includes a 2-col emoji)
+        let active_bar_cols: Vec<u16> = (0..100).filter(|&x| terminal.backend().buffer()[(x, 1)].symbol() == "━").collect();
+        assert_eq!(active_bar_cols.first().copied(), Some(home_start));
+        assert_eq!(active_bar_cols.last().map(|x| x + 1), Some(home_end));
+        assert_eq!(terminal.backend().buffer()[(home_start, 0)].symbol(), "");
+        assert_eq!(terminal.backend().buffer()[(home_end - 1, 0)].symbol(), "");
+        assert_eq!(search_start, home_end + 1);
+        assert_eq!(feed_start, search_end + 1);
+
+        // Clicking empty space past feed_end (on right side near provider pill) must NOT switch tabs
+        app.handle_mouse_events(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 92,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert!(app.global_event_rx.try_recv().is_err());
+
+        // Clicking exact Search hitbox triggers GoSearchPage
+        app.handle_mouse_events(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: search_start + 2,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(app.global_event_rx.try_recv().unwrap(), Events::GoSearchPage);
+    }
+
+    #[tokio::test]
+    async fn reader_protocol_toggle_syncs_app_picker_for_subsequent_chapters() {
+        use ratatui_image::picker::{Picker, ProtocolType};
+
+        let mut initial_picker = Picker::new((10, 22));
+        initial_picker.protocol_type = ProtocolType::Sixel;
+
+        let mut app: App<MockMangaPageProvider, TrackerTest> = App::new(
+            MockMangaPageProvider::new(),
+            None,
+            Some(initial_picker),
+            MockFiltersHandler::new(MockFilterState {}),
+            MockWidgetFilter {},
+        );
+        app.listen_to_event().await; // initial GoToHome
+
+        let make_chapter = || ChapterToRead {
+            id: "c1".into(),
+            pages_url: vec!["http://localhost/1".parse().unwrap()],
+            ..Default::default()
+        };
+        app.go_to_read_chapter(
+            make_chapter(),
+            MangaToRead {
+                title: "M".into(),
+                manga_id: "m1".into(),
+                list: ListOfChapters::default(),
+                provider: None,
+            },
+            None,
+        );
+
+        // Toggle 'p' inside Reader: Sixel -> Halfblocks
+        app.process_global_event(Events::Key(KeyCode::Char('p').into()));
+        // Process MangaReader's local action queue, then drain Events::ImageProtocolChanged
+        app.update_based_on_action();
+        while let Ok(evt) = app.global_event_rx.try_recv() {
+            app.process_global_event(evt);
+        }
+
+        assert_eq!(app.picker.as_ref().unwrap().protocol_type, ProtocolType::Halfblocks);
+
+        // Opening another chapter retains Halfblocks instead of reverting to Sixel
+        app.go_to_read_chapter(
+            make_chapter(),
+            MangaToRead {
+                title: "M".into(),
+                manga_id: "m2".into(),
+                list: ListOfChapters::default(),
+                provider: None,
+            },
+            None,
+        );
+        assert_eq!(app.manga_reader_page.as_ref().unwrap().picker_protocol_type(), ProtocolType::Halfblocks);
+
+        crate::view::widgets::settings::set_active_image_protocol(crate::config::ImageProtocol::Auto);
+    }
+
+    #[tokio::test]
+    async fn feed_u_goes_home_and_shift_r_refreshes_timeline() {
+        let mut app: App<MockMangaPageProvider, TrackerTest> =
+            App::new(MockMangaPageProvider::new(), None, None, MockFiltersHandler::new(MockFilterState {}), MockWidgetFilter {});
+        app.listen_to_event().await; // GoToHome
+        app.current_tab = SelectedPage::Feed;
+
+        // Pressing 'u' on Feed triggers global GoToHome (no conflict with timeline refresh)
+        app.process_global_event(Events::Key(KeyCode::Char('u').into()));
+        assert_eq!(app.global_event_rx.try_recv().unwrap(), Events::GoToHome);
+
+        // Pressing 'R' on Feed goes to FeedPage (RefreshTimeline) without switching away from Feed
+        app.process_global_event(Events::Key(KeyCode::Char('R').into()));
+        assert!(app.global_event_rx.try_recv().is_err());
+        assert_eq!(app.current_tab, SelectedPage::Feed);
+        let action = app.feed_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(action, crate::view::pages::feed::FeedActions::RefreshTimeline);
     }
 }

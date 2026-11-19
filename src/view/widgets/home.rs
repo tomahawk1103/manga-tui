@@ -3,12 +3,10 @@ use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget, Wrap};
-use ratatui_image::{Resize, StatefulImage};
 use throbber_widgets_tui::{Throbber, ThrobberState};
 
 use crate::backend::manga_provider::{MangaStatus, PopularManga, Rating, RecentlyAddedManga};
-use crate::common::ImageState;
-use crate::config::MangaTuiConfig;
+use crate::common::{ImageState, clear_image_canvas, render_stateful_image_cleared};
 use crate::i18n::tr;
 use crate::theme::theme;
 
@@ -67,11 +65,10 @@ impl CarrouselItemPopularManga {
 
         match state.get_image_state(&self.manga.id) {
             Some(image_state) => {
-                let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
-                let cover = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
-                StatefulWidget::render(cover, inner, buf, image_state);
+                render_stateful_image_cleared(image_state, inner, inner, buf, Color::Rgb(1, 1, 1));
             },
             None => {
+                clear_image_canvas(inner, buf, Color::Rgb(1, 1, 1));
                 let loader = Throbber::default()
                     .label(tr("Cargando portada...", "Loading cover..."))
                     .style(Style::default().fg(t.accent_primary))
@@ -266,11 +263,10 @@ impl CarrouselItemRecentlyAddedManga {
         let t = theme();
         match state.get_image_state(&self.manga.id) {
             Some(image_state) => {
-                let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
-                let cover = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
-                StatefulWidget::render(cover, area, buf, image_state);
+                render_stateful_image_cleared(image_state, area, area, buf, Color::Rgb(1, 1, 1));
             },
             None => {
+                clear_image_canvas(area, buf, Color::Rgb(1, 1, 1));
                 let loader = Throbber::default()
                     .label(tr("Cargando...", "Loading..."))
                     .style(Style::default().fg(t.accent_secondary))
@@ -293,7 +289,7 @@ pub struct RecentlyAddedCarrousel {
     pub selected_item_index: usize,
     pub amount_items_per_page: usize,
     pub state: CarrouselState,
-    can_display_images: bool,
+    pub can_display_images: bool,
 }
 
 impl StatefulWidget for RecentlyAddedCarrousel {
@@ -373,6 +369,8 @@ impl StatefulWidget for RecentlyAddedCarrousel {
                             .wrap(Wrap { trim: true })
                             .render(bottom, buf);
                         }
+                    } else {
+                        clear_image_canvas(*area_manga, buf, Color::Rgb(1, 1, 1));
                     }
                 }
             },

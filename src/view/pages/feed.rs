@@ -122,7 +122,7 @@ pub enum FeedActions {
     GoToMangaPage,
     /// Toggle favorite on the selected manga (f key)
     ToggleFavorite,
-    /// Refresh timeline feed (u key)
+    /// Refresh timeline feed (Shift+R key)
     RefreshTimeline,
 }
 
@@ -230,6 +230,12 @@ where
     #[inline]
     pub fn is_typing(&self) -> bool {
         self.is_typing
+    }
+
+    /// Returns `true` when the bulk-deletion confirmation modal is displayed.
+    #[inline]
+    pub fn is_overlay_open(&self) -> bool {
+        self.state == FeedState::AskingDeleteAllConfirmation
     }
 
     /// Sets the global event sender for communicating with the main application.
@@ -417,7 +423,7 @@ where
                 Span::styled(tr(" 🔍 Filtrar ", " 🔍 Filter "), Style::default().fg(t.accent_primary).bold()),
                 Span::styled("<s> ", Style::default().fg(t.accent_highlight).bold()),
                 Span::styled(tr("Escribir ", "Type "), Style::default().fg(t.text_muted)),
-                Span::styled("<u> ", Style::default().fg(t.accent_highlight).bold()),
+                Span::styled("<R> ", Style::default().fg(t.accent_highlight).bold()),
                 Span::styled(tr("Actualizar ", "Refresh "), Style::default().fg(t.text_muted)),
             ])
         };
@@ -643,7 +649,7 @@ where
                 KeyCode::Char('s') => {
                     self.local_action_tx.send(FeedActions::ToggleSearchBar).ok();
                 },
-                KeyCode::Char('u') => {
+                KeyCode::Char('R') => {
                     self.local_action_tx.send(FeedActions::RefreshTimeline).ok();
                 },
                 KeyCode::Char('f') => {
@@ -1110,7 +1116,24 @@ where
                     if self.is_typing {
                         self.is_typing = false;
                     }
-                    self.local_action_tx.send(FeedActions::GoToMangaPage).ok();
+                    if pos.y > self.content_area.y && pos.y < self.content_area.bottom().saturating_sub(1) {
+                        let rel_y = (pos.y - self.content_area.y - 1) as usize;
+                        if self.tabs == FeedTabs::Timeline {
+                            if let Some(timeline) = self.timeline.as_mut() {
+                                let target = timeline.state.scroll_offset_index() + rel_y / 4;
+                                if target < timeline.items.len() {
+                                    timeline.state.select(Some(target));
+                                    self.read_timeline_chapter();
+                                }
+                            }
+                        } else if let Some(history) = self.history.as_mut() {
+                            let target = history.state.scroll_offset_index() + rel_y / 8;
+                            if target < history.mangas.len() {
+                                history.state.select(Some(target));
+                                self.local_action_tx.send(FeedActions::GoToMangaPage).ok();
+                            }
+                        }
+                    }
                 }
             },
             _ => {},
@@ -1681,5 +1704,53 @@ mod tests {
         assert_eq!(action, FeedActions::SetTab(FeedTabs::Timeline));
         feed_page.update(action);
         assert_eq!(feed_page.tabs, FeedTabs::Timeline);
+    }
+
+    #[test]
+    fn shift_r_refreshes_timeline_is_overlay_open_and_mouse_click_selects_exact_row() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        let mut feed_page: Feed<MockMangaPageProvider> = Feed::new().with_api_client(MockMangaPageProvider::new().into());
+        assert!(!feed_page.is_overlay_open());
+
+        // Shift+R triggers RefreshTimeline (leaving 'u' free for global Home navigation)
+        press_key(&mut feed_page, KeyCode::Char('R'));
+        let action = feed_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(action, FeedActions::RefreshTimeline);
+
+        feed_page.tabs = FeedTabs::Library;
+        press_key(&mut feed_page, KeyCode::Char('X'));
+        assert!(feed_page.is_overlay_open());
+        press_key(&mut feed_page, KeyCode::Esc);
+        assert!(!feed_page.is_overlay_open());
+
+        // Clicking inside second History card (item height = 8) selects index 1 before opening
+        let mut hist = manga_history_response();
+        hist.mangas = vec![
+            MangaHistory {
+                id: "m0".into(),
+                title: "First".into(),
+                ..Default::default()
+            },
+            MangaHistory {
+                id: "m1".into(),
+                title: "Second".into(),
+                ..Default::default()
+            },
+        ];
+        feed_page.load_history(Some(hist));
+        feed_page.content_area = Rect::new(0, 5, 80, 20);
+        feed_page.history.as_mut().unwrap().state.select(Some(0));
+
+        // Top border is y=5, card 0 is rows 6..14, card 1 is rows 14..22 -> y=16 hits card 1
+        feed_page.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 10,
+            row: 16,
+            modifiers: KeyModifiers::NONE,
+        });
+
+        assert_eq!(feed_page.history.as_ref().unwrap().state.selected, Some(1));
+        assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::GoToMangaPage);
     }
 }

@@ -151,61 +151,62 @@ impl DiscoveryFeed {
 }
 
 fn default_global_most_read() -> Vec<DiscoveryItem> {
+    let readers = tr("lectores", "readers");
     vec![
-        DiscoveryItem::new("Berserk", "★ 9.47", "700K lectores"),
-        DiscoveryItem::new("Shingeki no Kyojin", "★ 8.55", "650K lectores"),
-        DiscoveryItem::new("One Piece", "★ 9.22", "620K lectores"),
-        DiscoveryItem::new("Tokyo Ghoul", "★ 8.71", "540K lectores"),
-        DiscoveryItem::new("Solo Leveling", "★ 8.66", "510K lectores"),
-        DiscoveryItem::new("Chainsaw Man", "★ 8.73", "490K lectores"),
-        DiscoveryItem::new("One-Punch Man", "★ 8.75", "450K lectores"),
-        DiscoveryItem::new("Jujutsu Kaisen", "★ 8.50", "430K lectores"),
-        DiscoveryItem::new("Kimetsu no Yaiba", "★ 8.25", "410K lectores"),
-        DiscoveryItem::new("Naruto", "★ 8.08", "400K lectores"),
-        DiscoveryItem::new("Vagabond", "★ 9.25", "390K lectores"),
-        DiscoveryItem::new("Oyasumi Punpun", "★ 9.01", "380K lectores"),
-        DiscoveryItem::new("Boku no Hero Academia", "★ 8.15", "370K lectores"),
-        DiscoveryItem::new("Horimiya", "★ 8.39", "350K lectores"),
-        DiscoveryItem::new("Kaguya-sama: Love is War", "★ 8.91", "340K lectores"),
-        DiscoveryItem::new("Death Note", "★ 8.69", "335K lectores"),
-        DiscoveryItem::new("Bleach", "★ 7.98", "325K lectores"),
-        DiscoveryItem::new("Vinland Saga", "★ 9.07", "320K lectores"),
-        DiscoveryItem::new("Fullmetal Alchemist", "★ 9.03", "310K lectores"),
-        DiscoveryItem::new("Monster", "★ 9.16", "295K lectores"),
-        DiscoveryItem::new("Haikyu!!", "★ 8.85", "285K lectores"),
-        DiscoveryItem::new("Spy x Family", "★ 8.35", "280K lectores"),
-        DiscoveryItem::new("Hunter x Hunter", "★ 8.74", "270K lectores"),
-        DiscoveryItem::new("Blue Lock", "★ 8.28", "260K lectores"),
-        DiscoveryItem::new("Dandadan", "★ 8.45", "250K lectores"),
+        DiscoveryItem::new("Berserk", "★ 9.47", format!("700K {readers}")),
+        DiscoveryItem::new("Shingeki no Kyojin", "★ 8.55", format!("650K {readers}")),
+        DiscoveryItem::new("One Piece", "★ 9.22", format!("620K {readers}")),
+        DiscoveryItem::new("Tokyo Ghoul", "★ 8.71", format!("540K {readers}")),
+        DiscoveryItem::new("Solo Leveling", "★ 8.66", format!("510K {readers}")),
+        DiscoveryItem::new("Chainsaw Man", "★ 8.73", format!("490K {readers}")),
+        DiscoveryItem::new("One-Punch Man", "★ 8.75", format!("450K {readers}")),
+        DiscoveryItem::new("Jujutsu Kaisen", "★ 8.50", format!("430K {readers}")),
+        DiscoveryItem::new("Kimetsu no Yaiba", "★ 8.25", format!("410K {readers}")),
+        DiscoveryItem::new("Naruto", "★ 8.08", format!("400K {readers}")),
+        DiscoveryItem::new("Vagabond", "★ 9.25", format!("390K {readers}")),
+        DiscoveryItem::new("Oyasumi Punpun", "★ 9.01", format!("380K {readers}")),
+        DiscoveryItem::new("Boku no Hero Academia", "★ 8.15", format!("370K {readers}")),
+        DiscoveryItem::new("Horimiya", "★ 8.39", format!("350K {readers}")),
+        DiscoveryItem::new("Kaguya-sama: Love is War", "★ 8.91", format!("340K {readers}")),
+        DiscoveryItem::new("Death Note", "★ 8.69", format!("335K {readers}")),
+        DiscoveryItem::new("Bleach", "★ 7.98", format!("325K {readers}")),
+        DiscoveryItem::new("Vinland Saga", "★ 9.07", format!("320K {readers}")),
+        DiscoveryItem::new("Fullmetal Alchemist", "★ 9.03", format!("310K {readers}")),
+        DiscoveryItem::new("Monster", "★ 9.16", format!("295K {readers}")),
+        DiscoveryItem::new("Haikyu!!", "★ 8.85", format!("285K {readers}")),
+        DiscoveryItem::new("Spy x Family", "★ 8.35", format!("280K {readers}")),
+        DiscoveryItem::new("Hunter x Hunter", "★ 8.74", format!("270K {readers}")),
+        DiscoveryItem::new("Blue Lock", "★ 8.28", format!("260K {readers}")),
+        DiscoveryItem::new("Dandadan", "★ 8.45", format!("250K {readers}")),
     ]
 }
 
 fn default_global_top_rated() -> Vec<DiscoveryItem> {
     vec![
         DiscoveryItem::new("Berserk", "★ 9.47", "Seinen"),
-        DiscoveryItem::new("Steel Ball Run", "★ 9.30", "Aventura"),
-        DiscoveryItem::new("Vagabond", "★ 9.25", "Histórico"),
+        DiscoveryItem::new("Steel Ball Run", "★ 9.30", tr("Aventura", "Adventure")),
+        DiscoveryItem::new("Vagabond", "★ 9.25", tr("Histórico", "Historical")),
         DiscoveryItem::new("One Piece", "★ 9.22", "Shonen"),
         DiscoveryItem::new("Monster", "★ 9.16", "Thriller"),
-        DiscoveryItem::new("Slam Dunk", "★ 9.08", "Deportes"),
-        DiscoveryItem::new("Vinland Saga", "★ 9.07", "Épico"),
-        DiscoveryItem::new("Fullmetal Alchemist", "★ 9.03", "Fantasía"),
-        DiscoveryItem::new("Grand Blue", "★ 9.03", "Comedia"),
-        DiscoveryItem::new("Kingdom", "★ 9.00", "Guerra"),
+        DiscoveryItem::new("Slam Dunk", "★ 9.08", tr("Deportes", "Sports")),
+        DiscoveryItem::new("Vinland Saga", "★ 9.07", tr("Épico", "Epic")),
+        DiscoveryItem::new("Fullmetal Alchemist", "★ 9.03", tr("Fantasía", "Fantasy")),
+        DiscoveryItem::new("Grand Blue", "★ 9.03", tr("Comedia", "Comedy")),
+        DiscoveryItem::new("Kingdom", "★ 9.00", tr("Guerra", "War")),
         DiscoveryItem::new("Omniscient Reader", "★ 8.96", "Manhwa"),
-        DiscoveryItem::new("20th Century Boys", "★ 8.95", "Misterio"),
+        DiscoveryItem::new("20th Century Boys", "★ 8.95", tr("Misterio", "Mystery")),
         DiscoveryItem::new("Real", "★ 8.95", "Drama"),
-        DiscoveryItem::new("Oyasumi Punpun", "★ 9.01", "Psicológico"),
-        DiscoveryItem::new("Ashita no Joe", "★ 8.94", "Deportes"),
+        DiscoveryItem::new("Oyasumi Punpun", "★ 9.01", tr("Psicológico", "Psychological")),
+        DiscoveryItem::new("Ashita no Joe", "★ 8.94", tr("Deportes", "Sports")),
         DiscoveryItem::new("Kaguya-sama: Love is War", "★ 8.91", "Romance"),
         DiscoveryItem::new("Yotsuba to!", "★ 8.89", "Slice of Life"),
         DiscoveryItem::new("3-gatsu no Lion", "★ 8.88", "Drama"),
         DiscoveryItem::new("Nana", "★ 8.87", "Drama"),
-        DiscoveryItem::new("Haikyu!!", "★ 8.85", "Deportes"),
+        DiscoveryItem::new("Haikyu!!", "★ 8.85", tr("Deportes", "Sports")),
         DiscoveryItem::new("Yokohama Kaidashi Kikou", "★ 8.83", "Sci-Fi"),
-        DiscoveryItem::new("Akatsuki no Yona", "★ 8.81", "Fantasía"),
-        DiscoveryItem::new("Houseki no Kuni", "★ 8.80", "Fantasía"),
-        DiscoveryItem::new("Kaze no Tani no Nausicaa", "★ 8.79", "Aventura"),
+        DiscoveryItem::new("Akatsuki no Yona", "★ 8.81", tr("Fantasía", "Fantasy")),
+        DiscoveryItem::new("Houseki no Kuni", "★ 8.80", tr("Fantasía", "Fantasy")),
+        DiscoveryItem::new("Kaze no Tani no Nausicaa", "★ 8.79", tr("Aventura", "Adventure")),
         DiscoveryItem::new("The Climber", "★ 8.78", "Seinen"),
     ]
 }
@@ -223,7 +224,7 @@ fn build_personal_and_trending_discovery(search_history: &[String]) -> Vec<Disco
                     break;
                 }
                 if seen.insert(title.to_lowercase()) {
-                    items.push(DiscoveryItem::new(title, format!("📖 {count} caps"), provider.to_string()));
+                    items.push(DiscoveryItem::new(title, format!("📖 {count} {}", tr("caps", "ch.")), provider.to_string()));
                     added += 1;
                 }
             }
@@ -235,7 +236,7 @@ fn build_personal_and_trending_discovery(search_history: &[String]) -> Vec<Disco
                     break;
                 }
                 if seen.insert(fav.title.to_lowercase()) {
-                    items.push(DiscoveryItem::new(fav.title, "★ Favorito".to_string(), fav.provider.to_string()));
+                    items.push(DiscoveryItem::new(fav.title, tr("★ Favorito", "★ Favorite"), fav.provider.to_string()));
                     added += 1;
                 }
             }
@@ -253,37 +254,42 @@ fn build_personal_and_trending_discovery(search_history: &[String]) -> Vec<Disco
         }
     }
 
+    let badge_trending = tr("🔥 Tendencia", "🔥 Trending");
+    let badge_classic = tr("🔥 Clásico", "🔥 Classic");
+    let badge_pick = tr("💎 Recomendado", "💎 Pick");
+    let badge_gem_classic = tr("💎 Clásico", "💎 Classic");
+
     let trending = [
-        ("Dandadan", "🔥 Tendencia", "Acción / Sobrenatural"),
-        ("Sakamoto Days", "🔥 Tendencia", "Acción / Comedia"),
-        ("Kagurabachi", "🔥 Tendencia", "Fantasía Oscura"),
-        ("Blue Lock", "🔥 Tendencia", "Deportes"),
-        ("Sousou no Frieren", "🔥 Tendencia", "Fantasía"),
-        ("Kaiju No. 8", "🔥 Tendencia", "Sci-Fi / Acción"),
-        ("Gachiakuta", "🔥 Tendencia", "Shonen"),
-        ("Hunter x Hunter", "🔥 Clásico", "Aventura"),
-        ("Spy x Family", "🔥 Tendencia", "Comedia"),
-        ("The Climber", "💎 Recomendado", "Seinen"),
-        ("Homunculus", "💎 Recomendado", "Psicológico"),
-        ("Real", "💎 Recomendado", "Drama"),
-        ("Usogui", "💎 Recomendado", "Apuestas"),
-        ("Blame!", "💎 Clásico", "Cyberpunk"),
-        ("Dorohedoro", "💎 Recomendado", "Fantasía Oscura"),
-        ("Golden Kamuy", "💎 Recomendado", "Histórico"),
-        ("Billy Bat", "💎 Recomendado", "Misterio"),
-        ("Pluto", "💎 Recomendado", "Sci-Fi /Thriller"),
-        ("Claymore", "💎 Recomendado", "Fantasía Oscura"),
-        ("Made in Abyss", "💎 Recomendado", "Aventura"),
-        ("Tower of God", "💎 Manhwa", "Fantasía"),
+        ("Dandadan", badge_trending, tr("Acción / Sobrenatural", "Action / Supernatural")),
+        ("Sakamoto Days", badge_trending, tr("Acción / Comedia", "Action / Comedy")),
+        ("Kagurabachi", badge_trending, tr("Fantasía Oscura", "Dark Fantasy")),
+        ("Blue Lock", badge_trending, tr("Deportes", "Sports")),
+        ("Sousou no Frieren", badge_trending, tr("Fantasía", "Fantasy")),
+        ("Kaiju No. 8", badge_trending, tr("Sci-Fi / Acción", "Sci-Fi / Action")),
+        ("Gachiakuta", badge_trending, "Shonen"),
+        ("Hunter x Hunter", badge_classic, tr("Aventura", "Adventure")),
+        ("Spy x Family", badge_trending, tr("Comedia", "Comedy")),
+        ("The Climber", badge_pick, "Seinen"),
+        ("Homunculus", badge_pick, tr("Psicológico", "Psychological")),
+        ("Real", badge_pick, "Drama"),
+        ("Usogui", badge_pick, tr("Apuestas", "Gambling")),
+        ("Blame!", badge_gem_classic, "Cyberpunk"),
+        ("Dorohedoro", badge_pick, tr("Fantasía Oscura", "Dark Fantasy")),
+        ("Golden Kamuy", badge_pick, tr("Histórico", "Historical")),
+        ("Billy Bat", badge_pick, tr("Misterio", "Mystery")),
+        ("Pluto", badge_pick, "Sci-Fi / Thriller"),
+        ("Claymore", badge_pick, tr("Fantasía Oscura", "Dark Fantasy")),
+        ("Made in Abyss", badge_pick, tr("Aventura", "Adventure")),
+        ("Tower of God", "💎 Manhwa", tr("Fantasía", "Fantasy")),
         ("The Horizon", "💎 Manhwa", "Drama"),
         ("TBATE", "💎 Manhwa", "Isekai"),
-        ("Gantz", "💎 Clásico", "Acción / Sci-Fi"),
-        ("Hellsing", "💎 Clásico", "Acción"),
-        ("Innocent", "💎 Recomendado", "Histórico"),
-        ("Blue Box", "🔥 Tendencia", "Romance / Deportes"),
-        ("Witch Hat Atelier", "💎 Recomendado", "Fantasía"),
-        ("Dungeon Meshi", "🔥 Tendencia", "Fantasía / Comedia"),
-        ("Tengoku Daimakyou", "💎 Recomendado", "Misterio / Sci-Fi"),
+        ("Gantz", badge_gem_classic, tr("Acción / Sci-Fi", "Action / Sci-Fi")),
+        ("Hellsing", badge_gem_classic, tr("Acción", "Action")),
+        ("Innocent", badge_pick, tr("Histórico", "Historical")),
+        ("Blue Box", badge_trending, tr("Romance / Deportes", "Romance / Sports")),
+        ("Witch Hat Atelier", badge_pick, tr("Fantasía", "Fantasy")),
+        ("Dungeon Meshi", badge_trending, tr("Fantasía / Comedia", "Fantasy / Comedy")),
+        ("Tengoku Daimakyou", badge_pick, tr("Misterio / Sci-Fi", "Mystery / Sci-Fi")),
     ];
 
     for (title, badge, tag) in trending {
@@ -334,7 +340,7 @@ fn parse_jikan_page(json: &serde_json::Value, mode_popular: bool) -> Option<(Vec
         let tag = if mode_popular {
             let members = entry.get("members").and_then(|v| v.as_u64()).unwrap_or(0);
             if members >= 1_000 {
-                format!("{}K lectores", members / 1_000)
+                format!("{}K {}", members / 1_000, tr("lectores", "readers"))
             } else {
                 entry.get("type").and_then(|v| v.as_str()).unwrap_or("Manga").to_string()
             }
@@ -512,6 +518,8 @@ where
     all_providers_unfiltered_results: Vec<SearchManga>,
     pub all_providers_groups: Vec<crate::backend::multi_provider::GroupedSearchManga>,
     manga_area: Rect,
+    manga_list_inner_area: Rect,
+    manga_preview_area: Rect,
     search_input_area: Rect,
     pub most_read_feed: DiscoveryFeed,
     pub top_rated_feed: DiscoveryFeed,
@@ -723,6 +731,8 @@ where
             all_providers_unfiltered_results: Vec::new(),
             all_providers_groups: Vec::new(),
             manga_area: Rect::default(),
+            manga_list_inner_area: Rect::default(),
+            manga_preview_area: Rect::default(),
             search_input_area: Rect::default(),
             most_read_feed: DiscoveryFeed::new(default_global_most_read()),
             top_rated_feed: DiscoveryFeed::new(default_global_top_rated()),
@@ -741,6 +751,14 @@ where
 
     pub fn set_picker(&mut self, picker: Option<Picker>) {
         self.picker = picker;
+        self.manga_cover_state.rebuild_protocols(self.picker.as_mut());
+        if self.picker.is_some()
+            && self.state == PageState::DisplayingMangasFound
+            && self.manga_cover_state.is_empty()
+            && !self.mangas_found_list.widget.mangas.is_empty()
+        {
+            self.local_event_tx.send(SearchPageEvents::SearchCovers).ok();
+        }
     }
 
     /// Rebuilds the personal discovery column from the database and search history.
@@ -754,6 +772,12 @@ where
         let max_idx = self.discovery_personal.len().saturating_sub(1);
         if self.discovery_row[2] > max_idx {
             self.discovery_row[2] = max_idx;
+        }
+        if !self.most_read_feed.is_live {
+            self.most_read_feed.items = default_global_most_read();
+        }
+        if !self.top_rated_feed.is_live {
+            self.top_rated_feed.items = default_global_top_rated();
         }
     }
 
@@ -862,6 +886,8 @@ where
 
         match self.state {
             PageState::Normal => {
+                self.manga_list_inner_area = Rect::default();
+                self.manga_preview_area = Rect::default();
                 let is_live = self.most_read_feed.is_live || self.top_rated_feed.is_live;
                 let sync_badge = if is_live {
                     Span::styled(
@@ -1056,6 +1082,8 @@ where
                 }
             },
             PageState::SearchingMangas => {
+                self.manga_list_inner_area = Rect::default();
+                self.manga_preview_area = Rect::default();
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(t.accent_highlight))
@@ -1081,6 +1109,8 @@ where
                 StatefulWidget::render(loader, inner, buf, &mut self.loader_state);
             },
             PageState::NotFound => {
+                self.manga_list_inner_area = Rect::default();
+                self.manga_preview_area = Rect::default();
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(t.accent_highlight))
@@ -1110,6 +1140,8 @@ where
                 .render(inner, buf);
             },
             PageState::ErrorOcurredSearchingMangas => {
+                self.manga_list_inner_area = Rect::default();
+                self.manga_preview_area = Rect::default();
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(t.status_error))
@@ -1161,6 +1193,8 @@ where
                 });
 
                 if !self.filter_state.is_open() {
+                    self.manga_list_inner_area = inner_list_area;
+                    self.manga_preview_area = preview_area;
                     StatefulWidgetRef::render_ref(
                         &self.mangas_found_list.widget,
                         inner_list_area,
@@ -1188,6 +1222,9 @@ where
                             &mut self.manga_cover_state,
                         )
                     }
+                } else {
+                    self.manga_list_inner_area = Rect::default();
+                    self.manga_preview_area = Rect::default();
                 }
             },
         }
@@ -1799,6 +1836,33 @@ where
                             break;
                         }
                     }
+                } else if self.state == PageState::DisplayingMangasFound {
+                    if self.manga_list_inner_area.contains(pos) {
+                        let offset = self.mangas_found_list.state.scroll_offset_index();
+                        let rel_y = pos.y - self.manga_list_inner_area.y;
+                        let mut y_acc: u16 = 0;
+                        let mut clicked_idx = None;
+                        for (idx, item) in self.mangas_found_list.widget.mangas.iter().enumerate().skip(offset) {
+                            let h = item.item_height();
+                            if rel_y >= y_acc && rel_y < y_acc + h {
+                                clicked_idx = Some(idx);
+                                break;
+                            }
+                            y_acc = y_acc.saturating_add(h);
+                            if y_acc >= self.manga_list_inner_area.height {
+                                break;
+                            }
+                        }
+                        if let Some(target) = clicked_idx {
+                            if self.mangas_found_list.state.selected == Some(target) {
+                                self.local_action_tx.send(SearchPageActions::SearchMangaPage).ok();
+                            } else {
+                                self.mangas_found_list.state.select(Some(target));
+                            }
+                        }
+                    } else if self.manga_preview_area.contains(pos) {
+                        self.local_action_tx.send(SearchPageActions::SearchMangaPage).ok();
+                    }
                 } else if self.manga_area.contains(pos) {
                     self.local_action_tx.send(SearchPageActions::SearchMangaPage).ok();
                 }
@@ -2033,8 +2097,8 @@ where
         if let Some(cover) = maybe_cover
             && let Some(picker) = self.picker.as_mut()
         {
-            let protocol = picker.new_resize_protocol(cover);
-            self.manga_cover_state.insert_manga(protocol, manga_id);
+            let protocol = picker.new_resize_protocol(cover.clone());
+            self.manga_cover_state.insert_manga_with_raw(protocol, cover, manga_id);
         }
     }
 
@@ -2522,7 +2586,7 @@ mod test {
         assert!(pop_next);
         assert_eq!(pop_items[0].title, "Manga Global #1");
         assert_eq!(pop_items[0].badge, "★ 9.48");
-        assert_eq!(pop_items[0].tag, "501K lectores");
+        assert!(matches!(pop_items[0].tag.as_str(), "501K lectores" | "501K readers"));
 
         let (rated_items, rated_next) = parse_jikan_page(&json_has_next, false).expect("rated page should parse");
         assert_eq!(rated_items.len(), 25);
@@ -2857,7 +2921,7 @@ mod test {
         let items = build_personal_and_trending_discovery(&history);
         let recent_titles: Vec<&str> = items
             .iter()
-            .filter(|i| i.badge == tr("🕒 Reciente", "🕒 Recent"))
+            .filter(|i| matches!(i.badge.as_str(), "🕒 Reciente" | "🕒 Recent"))
             .map(|i| i.title.as_str())
             .collect();
 
@@ -2879,5 +2943,77 @@ mod test {
         assert_eq!(search_page.discovery_personal[0].title, "Boku no kokoro");
         assert_eq!(search_page.discovery_personal[1].title, "Vagabond");
         assert!(search_page.discovery_row[2] < search_page.discovery_personal.len());
+    }
+
+    #[tokio::test]
+    async fn test_results_mouse_click_selects_clicked_item_then_opens() {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+
+        use super::*;
+        use crate::backend::manga_provider::MangaProviders;
+        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
+        use crate::global::test_utils::TrackerTest;
+
+        let mut search_page: SearchPage<MockMangaPageProvider, TrackerTest> = SearchPage::new(
+            None,
+            MockMangaPageProvider::new().into(),
+            None,
+            MockFiltersHandler::new(MockFilterState {}),
+            MockWidgetFilter {},
+            Pagination::from_first_page(20),
+        );
+
+        search_page.load_mangas_found(Some(GetMangasResponse {
+            mangas: vec![
+                SearchManga {
+                    id: "m0".into(),
+                    title: "Manga Zero".into(),
+                    provider: Some(MangaProviders::Inmanga),
+                    ..Default::default()
+                },
+                SearchManga {
+                    id: "m1".into(),
+                    title: "Manga One".into(),
+                    provider: Some(MangaProviders::Inmanga),
+                    ..Default::default()
+                },
+            ],
+            total_mangas: 2,
+            next_page: false,
+        }));
+
+        // Render or set areas directly: each item with a provider is 2 rows high
+        search_page.manga_list_inner_area = Rect::new(1, 6, 40, 10);
+        search_page.manga_preview_area = Rect::new(42, 5, 50, 15);
+        search_page.mangas_found_list.state.select(Some(0));
+
+        // First click on row y=8 (item 1 starts at y=6+2=8) selects item 1 without opening immediately
+        search_page.handle_mouse_events(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 8,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(search_page.mangas_found_list.state.selected, Some(1));
+        assert!(search_page.local_action_rx.try_recv().is_err());
+
+        // Clicking empty space below item 1 (row y=13) does nothing
+        search_page.handle_mouse_events(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 13,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(search_page.mangas_found_list.state.selected, Some(1));
+        assert!(search_page.local_action_rx.try_recv().is_err());
+
+        // Second click on selected item 1 opens its manga page
+        search_page.handle_mouse_events(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 5,
+            row: 9,
+            modifiers: KeyModifiers::NONE,
+        });
+        assert_eq!(search_page.local_action_rx.try_recv().unwrap(), SearchPageActions::SearchMangaPage);
     }
 }

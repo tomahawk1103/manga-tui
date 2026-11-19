@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEventKind};
 use image::{DynamicImage, GenericImageView};
@@ -12,7 +13,6 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Paragraph, StatefulWidget, Widget, Wrap};
 use ratatui_image::picker::{Picker, ProtocolType};
 use ratatui_image::protocol::StatefulProtocol;
-use ratatui_image::{Resize, StatefulImage};
 use throbber_widgets_tui::{Throbber, ThrobberState};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinSet;
@@ -235,6 +235,7 @@ pub enum MangaReaderEvents {
     LoadPage(PageData),
     FailedPage(usize),
     ErrorTrackingReadingProgress(String),
+    WebViewerError(String),
 }
 
 pub struct Page {
@@ -334,6 +335,34 @@ where
     margin_clear_generation: u8,
     left_panel_area: Rect,
     center_image_area: Rect,
+    web_viewer_notice: Option<(String, Instant, bool)>,
+}
+
+fn truncate_to_display_width(text: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
+    if Span::raw(text).width() <= max_width {
+        return text.to_string();
+    }
+    if max_width == 1 {
+        return "…".to_string();
+    }
+    let target = max_width - 1;
+    let mut out = String::new();
+    let mut used = 0usize;
+    for ch in text.chars() {
+        let mut buf = [0u8; 4];
+        let s = ch.encode_utf8(&mut buf);
+        let cw = Span::raw(&*s).width();
+        if used + cw > target {
+            break;
+        }
+        out.push(ch);
+        used += cw;
+    }
+    out.push('…');
+    out
 }
 
 fn centered_image_rect(area: Rect, img_w: u32, img_h: u32, font_w: u16, font_h: u16) -> Rect {
@@ -429,50 +458,8 @@ where
             let (raw_w, raw_h) = page.dimensions.unwrap_or((0, 0));
             let display_h = if page.is_tall_strip() { page.viewport_height() } else { raw_h };
             let draw_area = centered_image_rect(image_canvas, raw_w, display_h, font_size.0, font_size.1);
-            let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
-            let image = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
             if let Some(protocol) = page.get_or_create_protocol(&mut self.picker) {
-                StatefulWidget::render(image, draw_area, buf, protocol);
-            }
-
-            let is_graphical_escape = draw_area.width > 0
-                && draw_area.height > 0
-                && center.contains(Position::new(draw_area.x, draw_area.y))
-                && buf[(draw_area.x, draw_area.y)].symbol().starts_with('\x1b');
-
-            if is_graphical_escape {
-                use std::fmt::Write as _;
-
-                let mut prefix = String::with_capacity((center.height as usize) * (center.width as usize + 12) + 24);
-                prefix.push_str("\x1b[0m");
-                let blanks = " ".repeat(center.width as usize);
-                for row in center.top()..center.bottom() {
-                    let _ = write!(prefix, "\x1b[{};{}H{blanks}", row + 1, center.x + 1);
-                }
-                let _ = write!(prefix, "\x1b[{};{}H", draw_area.y + 1, draw_area.x + 1);
-                let combined = format!("{prefix}{}", buf[(draw_area.x, draw_area.y)].symbol());
-                let origin = &mut buf[(draw_area.x, draw_area.y)];
-                origin.set_style(Style::reset());
-                origin.set_symbol(&combined);
-                origin.set_skip(false);
-
-                for y in center.top()..center.bottom() {
-                    for x in center.left()..center.right() {
-                        if x != draw_area.x || y != draw_area.y {
-                            let cell = &mut buf[(x, y)];
-                            cell.reset();
-                            cell.set_skip(true);
-                        }
-                    }
-                }
-            } else {
-                for y in center.top()..center.bottom() {
-                    for x in center.left()..center.right() {
-                        if !draw_area.contains(Position::new(x, y)) {
-                            buf[(x, y)].set_symbol(" ").set_fg(margin_fg);
-                        }
-                    }
-                }
+                crate::common::render_stateful_image_cleared(protocol, center, draw_area, buf, margin_fg);
             }
 
             false
@@ -539,10 +526,11 @@ where
         };
 
         self.render_page_list(left, buf);
+        let has_right_panel = right.is_some();
         if let Some(right_area) = right {
             self.render_right_panel(buf, right_area, show_reload);
         }
-        self.render_reader_bottom_bar(bottom_bar_area, buf, show_reload);
+        self.render_reader_bottom_bar(bottom_bar_area, buf, show_reload, has_right_panel);
     }
 
     fn update(&mut self, action: Self::Actions) {
@@ -652,7 +640,20 @@ where
             margin_clear_generation: 0,
             left_panel_area: Rect::default(),
             center_image_area: Rect::default(),
+            web_viewer_notice: None,
         }
+    }
+
+    #[inline]
+    pub fn picker_protocol_type(&self) -> ProtocolType {
+        self.picker.protocol_type
+    }
+
+    fn active_web_viewer_notice(&self) -> Option<(&str, bool)> {
+        self.web_viewer_notice
+            .as_ref()
+            .filter(|(_, at, _)| at.elapsed() < Duration::from_secs(6))
+            .map(|(msg, _, is_err)| (msg.as_str(), *is_err))
     }
 
     pub fn set_picker(&mut self, picker: Picker) {
@@ -768,6 +769,9 @@ where
             page.cached_protocol = None;
         }
         self.needs_terminal_clear = true;
+        if let Some(tx) = &self.global_event_tx {
+            let _ = tx.send(Events::ImageProtocolChanged(config_proto));
+        }
     }
 
     fn protocol_label(proto: ProtocolType) -> &'static str {
@@ -789,9 +793,13 @@ where
             list_of_chapters: self.list_of_chapters.clone(),
             local_source: self.local_source.clone(),
         };
+        self.web_viewer_notice =
+            Some((tr("🌐 Abriendo Visor Web HD...", "🌐 Opening Web HD Viewer...").to_string(), Instant::now(), false));
+        let local_tx = self.local_event_tx.clone();
         tokio::spawn(async move {
             if let Err(e) = crate::backend::web_viewer::open_chapter_in_browser(session).await {
                 write_to_error_log(ErrorType::String(&e));
+                let _ = local_tx.send(MangaReaderEvents::WebViewerError(e));
             }
         });
     }
@@ -1081,7 +1089,17 @@ where
 
         let title = self.current_chapter.title.trim();
         if title.is_empty() {
-            format!("{vol_prefix}{} {}", tr("Cap.", "Ch."), self.current_chapter.number)
+            return format!("{vol_prefix}{} {}", tr("Cap.", "Ch."), self.current_chapter.number);
+        }
+
+        let lower = title.to_lowercase();
+        const CHAPTER_PREFIXES: [&str; 10] =
+            ["capítulo", "capitulo", "cap.", "cap ", "chapter", "ch.", "ch ", "episodio", "episode", "ep."];
+        let has_chapter_prefix = CHAPTER_PREFIXES.iter().any(|p| lower.starts_with(p));
+        let num_str = self.current_chapter.number.to_string();
+
+        if has_chapter_prefix && (self.current_chapter.number == 0.0 || title.contains(&num_str)) {
+            format!("{vol_prefix}{title}")
         } else {
             format!("{vol_prefix}{} {} — {title}", tr("Cap.", "Ch."), self.current_chapter.number)
         }
@@ -1090,28 +1108,6 @@ where
     fn render_reader_top_bar(&self, area: Rect, buf: &mut Buffer) {
         let t = theme();
         buf.set_style(area, Style::default().bg(t.bar_bg));
-
-        let mut left_spans: Vec<Span<'_>> = vec![
-            Span::styled(
-                format!(" 📖 {} ", tr("LECTOR", "READER")),
-                Style::default().fg(Color::Black).bg(t.accent_highlight).bold(),
-            ),
-            Span::styled(" ", Style::default().fg(t.accent_highlight).bg(t.bar_bg)),
-        ];
-
-        if let Some(provider) = self.provider {
-            let (fg, bg) = provider_pill_colors(provider);
-            left_spans.push(Span::styled(format!(" {} ", provider.short_name()), Style::default().fg(fg).bg(bg).bold()));
-            left_spans.push(Span::styled(" ", Style::default().bg(t.bar_bg)));
-        }
-
-        if !self.manga_title.trim().is_empty() {
-            left_spans.push(Span::styled(self.manga_title.as_str(), Style::default().fg(t.text_primary).bg(t.bar_bg).bold()));
-            left_spans.push(Span::styled(" · ", Style::default().fg(t.text_dim).bg(t.bar_bg)));
-        }
-        left_spans.push(Span::styled(self.format_chapter_heading(), Style::default().fg(t.accent_primary).bg(t.bar_bg).bold()));
-
-        Paragraph::new(Line::from(left_spans)).render(area, buf);
 
         let total = self.pages_list.pages.len().max(self.pages.len());
         let curr = if total == 0 { 0 } else { (self.current_page_index() + 1).min(total) };
@@ -1142,46 +1138,89 @@ where
             Style::default().fg(t.accent_highlight).bg(t.chip_bg).bold(),
         ));
 
-        Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right).render(area, buf);
+        let right_line = Line::from(right_spans);
+        let right_w = (right_line.width() as u16).min(area.width);
+        let [left_area, right_area] = Layout::horizontal([Constraint::Min(0), Constraint::Length(right_w)]).areas(area);
+
+        Paragraph::new(right_line).alignment(Alignment::Right).render(right_area, buf);
+
+        let gap = u16::from(right_w > 0 && left_area.width > 4);
+        let avail_left = left_area.width.saturating_sub(gap) as usize;
+        if avail_left == 0 {
+            return;
+        }
+
+        let mut left_spans: Vec<Span<'_>> = Vec::new();
+        let mut used_w = 0usize;
+
+        let badge = Span::styled(
+            format!(" 📖 {} ", tr("LECTOR", "READER")),
+            Style::default().fg(Color::Black).bg(t.accent_highlight).bold(),
+        );
+        let badge_w = badge.width();
+        if used_w + badge_w <= avail_left {
+            left_spans.push(badge);
+            used_w += badge_w;
+        }
+        let arrow = Span::styled(" ", Style::default().fg(t.accent_highlight).bg(t.bar_bg));
+        let arrow_w = arrow.width();
+        if used_w + arrow_w <= avail_left {
+            left_spans.push(arrow);
+            used_w += arrow_w;
+        }
+
+        if let Some(provider) = self.provider {
+            let (fg, bg) = provider_pill_colors(provider);
+            let pill = Span::styled(format!(" {} ", provider.short_name()), Style::default().fg(fg).bg(bg).bold());
+            let pw = pill.width();
+            if used_w + pw + 1 <= avail_left {
+                left_spans.push(pill);
+                left_spans.push(Span::styled(" ", Style::default().bg(t.bar_bg)));
+                used_w += pw + 1;
+            }
+        }
+
+        let heading = self.format_chapter_heading();
+        let manga_title = self.manga_title.trim();
+        let rem = avail_left.saturating_sub(used_w);
+        if rem > 0 {
+            if !manga_title.is_empty() {
+                let heading_w = Span::raw(&heading).width();
+                let title_w = Span::raw(manga_title).width();
+                let sep = " · ";
+                let sep_w = 3usize;
+                if title_w + sep_w + heading_w <= rem {
+                    left_spans.push(Span::styled(manga_title, Style::default().fg(t.text_primary).bg(t.bar_bg).bold()));
+                    left_spans.push(Span::styled(sep, Style::default().fg(t.text_dim).bg(t.bar_bg)));
+                    left_spans.push(Span::styled(heading, Style::default().fg(t.accent_primary).bg(t.bar_bg).bold()));
+                } else {
+                    let heading_alloc = heading_w.min(rem / 2);
+                    let title_alloc = rem.saturating_sub(heading_alloc + sep_w);
+                    if title_alloc >= 4 {
+                        let short_title = truncate_to_display_width(manga_title, title_alloc);
+                        let short_heading =
+                            truncate_to_display_width(&heading, rem.saturating_sub(Span::raw(&short_title).width() + sep_w));
+                        left_spans.push(Span::styled(short_title, Style::default().fg(t.text_primary).bg(t.bar_bg).bold()));
+                        left_spans.push(Span::styled(sep, Style::default().fg(t.text_dim).bg(t.bar_bg)));
+                        left_spans.push(Span::styled(short_heading, Style::default().fg(t.accent_primary).bg(t.bar_bg).bold()));
+                    } else {
+                        let short_heading = truncate_to_display_width(&heading, rem);
+                        left_spans.push(Span::styled(short_heading, Style::default().fg(t.accent_primary).bg(t.bar_bg).bold()));
+                    }
+                }
+            } else {
+                let short_heading = truncate_to_display_width(&heading, rem);
+                left_spans.push(Span::styled(short_heading, Style::default().fg(t.accent_primary).bg(t.bar_bg).bold()));
+            }
+        }
+
+        let left_render_area = Rect::new(left_area.x, left_area.y, left_area.width.saturating_sub(gap), left_area.height);
+        Paragraph::new(Line::from(left_spans)).render(left_render_area, buf);
     }
 
-    fn render_reader_bottom_bar(&self, area: Rect, buf: &mut Buffer, show_reload: bool) {
+    fn render_reader_bottom_bar(&self, area: Rect, buf: &mut Buffer, show_reload: bool, has_right_panel: bool) {
         let t = theme();
         buf.set_style(area, Style::default().bg(t.bar_bg));
-
-        let is_strip = self.pages.get(self.current_page_index()).map(|p| p.is_tall_strip()).unwrap_or(false);
-        let nav_label = if is_strip { tr("Desplazar", "Scroll") } else { tr("Pág.", "Page") };
-
-        let mut left_spans: Vec<Span<'_>> = vec![
-            Span::styled(format!(" ⌨ {} ", tr("ATÁJOS", "KEYS")), Style::default().fg(Color::Black).bg(t.accent_primary).bold()),
-            Span::styled(" ", Style::default().fg(t.accent_primary).bg(t.bar_bg)),
-            t.key_chip("j/k"),
-            Span::styled(format!(" {nav_label}  "), Style::default().fg(t.text_muted).bg(t.bar_bg)),
-            t.key_chip("w/b"),
-            Span::styled(format!(" {}  ", tr("Cap.", "Chap.")), Style::default().fg(t.text_muted).bg(t.bar_bg)),
-            t.key_chip("g/G"),
-            Span::styled(format!(" {}  ", tr("Inicio/Fin", "Start/End")), Style::default().fg(t.text_muted).bg(t.bar_bg)),
-            t.highlight_key_chip("v"),
-            Span::styled(format!(" {}  ", tr("Visor Web HD", "Web HD")), Style::default().fg(t.text_muted).bg(t.bar_bg)),
-            t.key_chip("p"),
-            Span::styled(format!(" {}  ", tr("Protocolo", "Protocol")), Style::default().fg(t.text_muted).bg(t.bar_bg)),
-        ];
-
-        if show_reload {
-            left_spans.push(t.highlight_key_chip("r"));
-            left_spans
-                .push(Span::styled(format!(" {}  ", tr("Recargar", "Reload")), Style::default().fg(t.text_muted).bg(t.bar_bg)));
-        }
-        if !self.auto_bookmark {
-            left_spans.push(t.key_chip("m"));
-            left_spans
-                .push(Span::styled(format!(" {}  ", tr("Marcar", "Bookmark")), Style::default().fg(t.text_muted).bg(t.bar_bg)));
-        }
-
-        left_spans.push(t.key_chip("Esc/q"));
-        left_spans.push(Span::styled(format!(" {} ", tr("Volver", "Back")), Style::default().fg(t.text_muted).bg(t.bar_bg)));
-
-        Paragraph::new(Line::from(left_spans)).render(area, buf);
 
         let right_spans = vec![
             Span::styled(
@@ -1190,7 +1229,68 @@ where
             ),
             Span::styled(format!("🎨 {} ", current_theme().label()), Style::default().fg(t.text_muted).bg(t.bar_bg)),
         ];
-        Paragraph::new(Line::from(right_spans)).alignment(Alignment::Right).render(area, buf);
+        let right_line = Line::from(right_spans);
+        let right_w = (right_line.width() as u16).min(area.width);
+        let [left_area, right_area] = Layout::horizontal([Constraint::Min(0), Constraint::Length(right_w)]).areas(area);
+
+        Paragraph::new(right_line).alignment(Alignment::Right).render(right_area, buf);
+
+        let avail_w = left_area.width.saturating_sub(u16::from(right_w > 0 && left_area.width > 2)) as usize;
+        if avail_w == 0 {
+            return;
+        }
+
+        if !has_right_panel && let Some((notice, is_err)) = self.active_web_viewer_notice() {
+            let style = if is_err {
+                Style::default().fg(t.status_error).bg(t.bar_bg).bold()
+            } else {
+                Style::default().fg(t.accent_highlight).bg(t.bar_bg).bold()
+            };
+            let truncated = truncate_to_display_width(notice, avail_w);
+            Paragraph::new(Span::styled(truncated, style)).render(left_area, buf);
+            return;
+        }
+
+        let is_strip = self.pages.get(self.current_page_index()).map(|p| p.is_tall_strip()).unwrap_or(false);
+        let nav_label = if is_strip { tr("Desplazar", "Scroll") } else { tr("Pág.", "Page") };
+
+        let mut left_spans: Vec<Span<'_>> = Vec::new();
+        let mut used_w = 0usize;
+
+        let badge =
+            Span::styled(format!(" ⌨ {} ", tr("ATAJOS", "KEYS")), Style::default().fg(Color::Black).bg(t.accent_primary).bold());
+        let arrow = Span::styled(" ", Style::default().fg(t.accent_primary).bg(t.bar_bg));
+        if used_w + badge.width() + arrow.width() <= avail_w {
+            used_w += badge.width() + arrow.width();
+            left_spans.push(badge);
+            left_spans.push(arrow);
+        }
+
+        let mut push_chip = |key: &'static str, label: &'static str, highlight: bool| {
+            let chip = if highlight { t.highlight_key_chip(key) } else { t.key_chip(key) };
+            let text = Span::styled(format!(" {label}  "), Style::default().fg(t.text_muted).bg(t.bar_bg));
+            let w = chip.width() + text.width();
+            if used_w + w <= avail_w {
+                used_w += w;
+                left_spans.push(chip);
+                left_spans.push(text);
+            }
+        };
+
+        push_chip("j/k", nav_label, false);
+        push_chip("w/b", tr("Cap.", "Chap."), false);
+        push_chip("v", tr("Visor Web HD", "Web HD"), true);
+        push_chip("p", tr("Protocolo", "Protocol"), false);
+        push_chip("Esc/q", tr("Volver", "Back"), false);
+        push_chip("g/G", tr("Inicio/Fin", "Start/End"), false);
+        if show_reload {
+            push_chip("r", tr("Recargar", "Reload"), true);
+        }
+        if !self.auto_bookmark {
+            push_chip("m", tr("Marcar", "Bookmark"), false);
+        }
+
+        Paragraph::new(Line::from(left_spans)).render(left_area, buf);
     }
 
     fn render_right_panel(&mut self, buf: &mut Buffer, area: Rect, show_reload: bool) {
@@ -1199,7 +1299,8 @@ where
         }
         let t = theme();
 
-        let info_height = 11u16.min(area.height.saturating_sub(6).max(6));
+        let base_info_h = if self.active_web_viewer_notice().is_some() { 12u16 } else { 11u16 };
+        let info_height = base_info_h.min(area.height.saturating_sub(6).max(6));
         let [info_card_area, controls_card_area] =
             Layout::vertical([Constraint::Length(info_height), Constraint::Min(6)]).areas(area);
 
@@ -1278,6 +1379,12 @@ where
                 )]));
             },
             _ => {},
+        }
+
+        if let Some((notice, is_err)) = self.active_web_viewer_notice() {
+            let style =
+                if is_err { Style::default().fg(t.status_error).bold() } else { Style::default().fg(t.accent_highlight).bold() };
+            info_lines.push(Line::from(vec![Span::styled(notice, style)]));
         }
 
         Paragraph::new(info_lines).wrap(Wrap { trim: true }).render(info_inner, buf);
@@ -1361,6 +1468,9 @@ where
                 MangaReaderEvents::LoadPage(maybe_data) => self.load_page(maybe_data),
                 MangaReaderEvents::FailedPage(index) => self.failed_page(index),
                 MangaReaderEvents::ErrorTrackingReadingProgress(error_message) => self.log_manga_tracking_error(error_message),
+                MangaReaderEvents::WebViewerError(err) => {
+                    self.web_viewer_notice = Some((format!("⚠ {}: {err}", tr("Visor Web", "Web Viewer")), Instant::now(), true));
+                },
             }
         }
     }
@@ -2440,5 +2550,60 @@ mod test {
             })
             .unwrap();
         assert_eq!(origin_count, 1, "exactly one origin cell in center should emit atomic clear + Sixel");
+    }
+
+    #[test]
+    fn format_chapter_heading_avoids_duplicate_zero_or_repeated_prefix() {
+        let make_reader = |num: f64, title: &str, vol: Option<&str>| -> MangaReader<ReaderPageProvierMock, TrackerTest> {
+            MangaReader::new(
+                ChapterToRead {
+                    id: "1".into(),
+                    title: title.into(),
+                    number: num,
+                    volume_number: vol.map(str::to_string),
+                    ..Default::default()
+                },
+                "m1".into(),
+                Picker::new((8, 16)),
+                ReaderPageProvierMock::new().into(),
+            )
+        };
+
+        assert_eq!(make_reader(0.0, "Capítulo 1,198", None).format_chapter_heading(), "Capítulo 1,198");
+        assert_eq!(make_reader(10.0, "Chapter 10: Dawn", None).format_chapter_heading(), "Chapter 10: Dawn");
+        assert_eq!(make_reader(0.0, "Capítulo 1,198", Some("1")).format_chapter_heading(), "Vol. 1 · Capítulo 1,198");
+        assert_eq!(make_reader(0.0, "Prólogo", None).format_chapter_heading(), format!("{} 0 — Prólogo", tr("Cap.", "Ch.")));
+        assert_eq!(
+            make_reader(10.0, "El amanecer", None).format_chapter_heading(),
+            format!("{} 10 — El amanecer", tr("Cap.", "Ch."))
+        );
+        assert_eq!(make_reader(12.0, "", None).format_chapter_heading(), format!("{} 12", tr("Cap.", "Ch.")));
+    }
+
+    #[test]
+    fn reader_bottom_bar_shows_atajos_and_does_not_overlap_wide_or_narrow() {
+        let chapter = ChapterToRead {
+            title: "Un capítulo con título extremadamente largo que debería truncarse suavemente".into(),
+            number: 42.0,
+            pages_url: vec!["http://localhost/1".parse().unwrap()],
+            ..Default::default()
+        };
+        let mut reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(chapter, "m1".into(), Picker::new((8, 16)), ReaderPageProvierMock::new().into())
+                .with_manga_title("Manga con título bastante largo".into());
+        reader.init_fetching_pages();
+
+        let area = Rect::new(0, 0, 90, 24);
+        let mut buf = Buffer::empty(area);
+        reader.render_reader_top_bar(Rect::new(0, 0, 90, 1), &mut buf);
+        reader.render_reader_bottom_bar(Rect::new(0, 23, 90, 1), &mut buf, false, true);
+
+        let top_row: String = (0..90).map(|x| buf[(x, 0)].symbol()).collect();
+        let bottom_row: String = (0..90).map(|x| buf[(x, 23)].symbol()).collect();
+
+        assert!(top_row.contains("1/1 (100%)"), "right page counter must not be overwritten: {top_row}");
+        assert!(!bottom_row.contains("ATÁJOS"), "typo ATÁJOS must be fixed: {bottom_row}");
+        assert!(bottom_row.contains("ATAJOS") || bottom_row.contains("KEYS"));
+        assert!(bottom_row.contains("HALFBLOCKS") || bottom_row.contains("SIXEL"));
     }
 }

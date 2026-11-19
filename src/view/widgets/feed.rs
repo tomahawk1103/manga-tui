@@ -218,7 +218,7 @@ impl StatefulWidget for TimelineWidget {
             Span::styled(tr(" Favorito  ", " Favorite  "), Style::default().fg(t.text_muted)),
             t.key_chip("d"),
             Span::styled(tr(" Descargar  ", " Download  "), Style::default().fg(t.text_muted)),
-            t.key_chip("u"),
+            t.key_chip("R"),
             Span::styled(tr(" Actualizar ", " Refresh "), Style::default().fg(t.text_muted)),
         ]);
 
@@ -277,7 +277,7 @@ impl From<RecentChapters> for ListItem<'_> {
     fn from(value: RecentChapters) -> Self {
         let t = theme();
         let mut spans = vec![
-            Span::styled(format!("Ch. {} ", value.number), Style::default().fg(t.accent_highlight).bold()),
+            Span::styled(format!("{} {} ", tr("Cap.", "Ch."), value.number), Style::default().fg(t.accent_highlight).bold()),
             Span::styled(value.title, Style::default().fg(t.text_primary).bold()),
             Span::styled(" │ ", Style::default().fg(t.border_muted)),
             Span::raw(value.translated_language.as_emoji()),

@@ -3,14 +3,12 @@ use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, StatefulWidget, StatefulWidgetRef, Widget, Wrap};
-use ratatui_image::{Resize, StatefulImage};
 use throbber_widgets_tui::{Throbber, ThrobberState};
 use tui_widget_list::PreRender;
 
 use crate::backend::manga_provider::{Genres, MangaProviders, MangaStatus, SearchManga};
 use crate::backend::multi_provider::GroupedSearchManga;
-use crate::common::ImageState;
-use crate::config::MangaTuiConfig;
+use crate::common::{ImageState, clear_image_canvas, render_stateful_image_cleared};
 use crate::global::CURRENT_LIST_ITEM_STYLE;
 use crate::i18n::tr;
 use crate::theme::theme;
@@ -125,11 +123,10 @@ impl<'a> MangaPreview<'a> {
 
             match resolved_id.as_deref().and_then(|id| state.get_image_state(id)) {
                 Some(image_state) => {
-                    let filter = MangaTuiConfig::get().image_resize_filter.to_filter_type();
-                    let cover = StatefulImage::new(None).resize(Resize::Fit(Some(filter)));
-                    StatefulWidget::render(cover, cover_area, buf, image_state);
+                    render_stateful_image_cleared(image_state, cover_area, cover_area, buf, Color::Rgb(1, 1, 1));
                 },
                 None => {
+                    clear_image_canvas(cover_area, buf, Color::Rgb(1, 1, 1));
                     let t = theme();
                     Block::bordered()
                         .border_type(BorderType::Rounded)
@@ -496,7 +493,7 @@ impl PreRender for MangaItem {
             self.style = *CURRENT_LIST_ITEM_STYLE;
         }
 
-        if self.provider_entries().is_empty() { 1 } else { 2 }
+        self.item_height()
     }
 }
 
@@ -507,6 +504,10 @@ impl From<SearchManga> for MangaItem {
 }
 
 impl MangaItem {
+    pub fn item_height(&self) -> u16 {
+        if self.provider_entries().is_empty() { 1 } else { 2 }
+    }
+
     pub fn new(manga: SearchManga) -> Self {
         let variants = vec![manga.clone()];
         Self {

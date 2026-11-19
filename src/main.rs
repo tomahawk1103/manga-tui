@@ -328,12 +328,17 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
         Ok(_) => {},
         Err(e) => {
             logger.error(
-            format!(
-            "Data directory could not be created, this is where your manga history and manga downloads is stored
-             \n this could be for many reasons such as the application not having enough permissions
-            \n Try setting the environment variable `MANGA_TUI_DATA_DIR` to some path pointing to a directory, example: /home/user/somedirectory 
-            \n Error details : {e}"
-        ).into()
+                format!(
+                    "No se pudo crear la carpeta de datos donde se guardan tu historial, configuración y descargas.\n\
+                     Esto suele deberse a falta de permisos de escritura en esta ubicación.\n\
+                     Solución: mueve manga-tui a otra carpeta o define la variable de entorno `MANGA_TUI_DATA_DIR`.\n\
+                     ---\n\
+                     Could not create the data directory where your history, config, and downloads are stored.\n\
+                     This is usually caused by insufficient write permissions here.\n\
+                     Fix: move manga-tui to a writable folder or set `MANGA_TUI_DATA_DIR`.\n\
+                     Detalle / Details: {e}"
+                )
+                .into(),
             );
             pause_before_exit_if_standalone();
             exit(1)
