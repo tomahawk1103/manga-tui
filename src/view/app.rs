@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -19,9 +19,11 @@ use self::manga::MangaPage;
 use self::reader::MangaReader;
 use self::search::{InputMode, SearchPage};
 use super::widgets::Component;
-use crate::backend::database::Database;
+use crate::backend::AppDirectories;
+use crate::backend::database::{Database, DownloadedMangaWithProvider};
 use crate::backend::download_queue::{DownloadQueueCommand, DownloadQueueProgress, DownloadQueueWorker, EnqueueDownloadBatch};
 use crate::backend::error_log::write_to_error_log;
+use crate::backend::manga_downloader::LocalDownloadsIndex;
 use crate::backend::manga_provider::{
     ChapterToRead, FeedPageProvider, LatestChapter, ListOfChapters, Manga, MangaProvider, MangaProviders, MangaStatus, Pagination,
 };
@@ -41,15 +43,97 @@ use crate::view::widgets::{
 
 const NEW_CHAPTER_CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
 
-fn find_new_chapters(latest_chapters: &[LatestChapter], previous_ids: &[String], downloaded_ids: &[String]) -> Vec<LatestChapter> {
-    let mut known_ids: HashSet<&str> = previous_ids.iter().map(String::as_str).collect();
-    known_ids.extend(downloaded_ids.iter().map(String::as_str));
+fn strip_mangaoni_type_prefix(value: &str) -> &str {
+    for prefix in ["manga/", "manhwa/", "manhua/", "novela/"] {
+        if let Some(rest) = value.strip_prefix(prefix) {
+            return rest;
+        }
+    }
+    value
+}
+
+fn canonical_notification_manga_key(provider: MangaProviders, manga_id: &str) -> (MangaProviders, String) {
+    let canonical_id = if provider == MangaProviders::Mangaoni { strip_mangaoni_type_prefix(manga_id) } else { manga_id };
+    (provider, canonical_id.to_string())
+}
+
+fn canonical_notification_chapter_id(provider: MangaProviders, chapter_id: &str) -> &str {
+    if provider == MangaProviders::Mangaoni { strip_mangaoni_type_prefix(chapter_id) } else { chapter_id }
+}
+
+fn find_new_chapters_for_provider(
+    provider: MangaProviders,
+    latest_chapters: &[LatestChapter],
+    previous_ids: &[String],
+    downloaded_ids: &[String],
+) -> Vec<LatestChapter> {
+    let mut known_ids: HashSet<&str> = previous_ids.iter().map(|id| canonical_notification_chapter_id(provider, id)).collect();
+    known_ids.extend(downloaded_ids.iter().map(|id| canonical_notification_chapter_id(provider, id)));
 
     latest_chapters
         .iter()
-        .filter(|chapter| !known_ids.contains(chapter.id.as_str()))
+        .filter(|chapter| !known_ids.contains(canonical_notification_chapter_id(provider, &chapter.id)))
         .cloned()
         .collect()
+}
+
+#[cfg(test)]
+fn find_new_chapters(latest_chapters: &[LatestChapter], previous_ids: &[String], downloaded_ids: &[String]) -> Vec<LatestChapter> {
+    find_new_chapters_for_provider(MangaProviders::Mangadex, latest_chapters, previous_ids, downloaded_ids)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CheckableDownloadedManga {
+    id: String,
+    alias_ids: Vec<String>,
+    title: String,
+    provider: MangaProviders,
+    downloaded_chapter_ids: Vec<String>,
+}
+
+fn filter_and_dedupe_downloaded_mangas(
+    downloaded_mangas: Vec<DownloadedMangaWithProvider>,
+    disk_index: &LocalDownloadsIndex,
+    already_checked: &HashSet<(MangaProviders, String)>,
+) -> Vec<CheckableDownloadedManga> {
+    let mut merged = BTreeMap::<(MangaProviders, String), CheckableDownloadedManga>::new();
+
+    for manga in downloaded_mangas {
+        if !disk_index.has_any_chapter(manga.provider, &manga.downloaded_chapter_ids) {
+            continue;
+        }
+
+        let key = canonical_notification_manga_key(manga.provider, &manga.id);
+        if already_checked.contains(&key) {
+            continue;
+        }
+
+        match merged.get_mut(&key) {
+            Some(existing) => {
+                if manga.provider == MangaProviders::Mangaoni && manga.id.contains('/') && !existing.id.contains('/') {
+                    if !existing.alias_ids.contains(&existing.id) {
+                        existing.alias_ids.push(existing.id.clone());
+                    }
+                    existing.id = manga.id;
+                    existing.title = manga.title;
+                } else if manga.id != existing.id && !existing.alias_ids.contains(&manga.id) {
+                    existing.alias_ids.push(manga.id);
+                }
+                existing.downloaded_chapter_ids.extend(manga.downloaded_chapter_ids);
+            },
+            None => {
+                merged.insert(key, CheckableDownloadedManga {
+                    id: manga.id,
+                    alias_ids: Vec::new(),
+                    title: manga.title,
+                    provider: manga.provider,
+                    downloaded_chapter_ids: manga.downloaded_chapter_ids,
+                });
+            },
+        }
+    }
+
+    merged.into_values().collect()
 }
 
 #[derive(PartialEq, Eq, PartialOrd, Ord)]
@@ -543,7 +627,7 @@ where
 
             // Check all favorites across all providers
             for fav in all_favorites {
-                checked_mangas.insert((fav.provider, fav.manga_id.clone()));
+                checked_mangas.insert(canonical_notification_manga_key(fav.provider, &fav.manga_id));
 
                 let manga_details = match crate::backend::multi_provider::get_manga_by_id_for_provider(fav.provider, &fav.manga_id)
                     .await
@@ -579,7 +663,8 @@ where
                     },
                 };
 
-                let newly_available = find_new_chapters(&latest_chapters, &dismissed_ids, &downloaded_ids);
+                let newly_available =
+                    find_new_chapters_for_provider(fav.provider, &latest_chapters, &dismissed_ids, &downloaded_ids);
 
                 if !newly_available.is_empty() {
                     let chapters_to_auto_download =
@@ -605,12 +690,27 @@ where
                 }
             }
 
-            // Check downloaded non-favorites across all providers
-            for manga in downloaded_mangas {
-                if checked_mangas.contains(&(manga.provider, manga.id.clone())) {
-                    continue;
+            // Check downloaded non-favorites across all providers whose files still exist on disk
+            let checkable_mangas = if downloaded_mangas.is_empty() {
+                Vec::new()
+            } else {
+                let download_dir = AppDirectories::MangaDownloads.get_full_path();
+                let disk_index = tokio::task::spawn_blocking(move || LocalDownloadsIndex::scan(&download_dir))
+                    .await
+                    .ok()
+                    .flatten();
+                match disk_index {
+                    Some(index) => filter_and_dedupe_downloaded_mangas(downloaded_mangas, &index, &checked_mangas),
+                    None => {
+                        write_to_error_log(
+                            "Download directory is not accessible; skipping downloaded chapter notifications".into(),
+                        );
+                        Vec::new()
+                    },
                 }
+            };
 
+            for manga in checkable_mangas {
                 let manga_details_res = if manga.provider == provider_name {
                     provider.get_manga_by_id(&manga.id).await.map_err(|e| e.to_string())
                 } else {
@@ -653,8 +753,16 @@ where
 
                 let state_result = Database::get_connection().and_then(|connection| {
                     let database = Database::new(&connection);
-                    let dismissed_ids = database.get_dismissed_chapter_ids(&manga.id, manga.provider)?;
-                    Ok(find_new_chapters(&latest_chapters, &dismissed_ids, &manga.downloaded_chapter_ids))
+                    let mut dismissed_ids = database.get_dismissed_chapter_ids(&manga.id, manga.provider)?;
+                    for alias_id in &manga.alias_ids {
+                        dismissed_ids.extend(database.get_dismissed_chapter_ids(alias_id, manga.provider)?);
+                    }
+                    Ok(find_new_chapters_for_provider(
+                        manga.provider,
+                        &latest_chapters,
+                        &dismissed_ids,
+                        &manga.downloaded_chapter_ids,
+                    ))
                 });
 
                 let newly_available = match state_result {
@@ -2059,5 +2167,135 @@ mod tests {
         assert!(app.error_message.is_none(), "must not block with an error modal when picker is None");
         assert!(app.queue_status_toast.is_some(), "should show informative Web HD fallback toast");
         assert_ne!(app.current_tab, SelectedPage::ReaderTab);
+    }
+
+    #[test]
+    fn filter_and_dedupe_skips_missing_disk_files_and_dedupes_legacy_mangaoni() {
+        struct TempDir(std::path::PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let temp = TempDir(std::env::temp_dir().join(format!("manga_tui_notif_test_{}", uuid::Uuid::new_v4())));
+        let root = &temp.0;
+
+        let haimiya_dir = root.join("Haimiya-senpai wa Kowakute Kawaii");
+        std::fs::create_dir_all(&haimiya_dir).unwrap();
+        std::fs::write(haimiya_dir.join("Ch 48 Vol none Capitulo 48  manga_haimiya-senpai_750000.cbz"), b"").unwrap();
+
+        let madan_dir = root.join("Madan no Ichi");
+        std::fs::create_dir_all(&madan_dir).unwrap();
+        std::fs::write(madan_dir.join("Ch 10 Vol none Capitulo 10  madan-no-ichi_10010.cbz"), b"").unwrap();
+        std::fs::write(madan_dir.join("Ch 20 Vol none Capitulo 20  manga_madan-no-ichi_20020.cbz"), b"").unwrap();
+
+        let str_dir = root.join("ST_R Strike it Rich");
+        std::fs::create_dir_all(&str_dir).unwrap();
+        std::fs::write(str_dir.join("Ch 89 Vol none Capitulo 89  str-strike-it-rich_824059.cbz"), b"").unwrap();
+
+        let after_god_dir = root.join("After God");
+        std::fs::create_dir_all(&after_god_dir).unwrap();
+        std::fs::write(after_god_dir.join("Ch 48 Vol none  Weeb central 01J76XZ7JNB5QTARKZWHCBTF6T.cbz"), b"").unwrap();
+
+        let index = LocalDownloadsIndex::scan(root).unwrap();
+
+        let mut already_checked = HashSet::new();
+        already_checked.insert(canonical_notification_manga_key(MangaProviders::Mangaoni, "manga/str-strike-it-rich"));
+
+        let downloaded = vec![
+            DownloadedMangaWithProvider {
+                id: "01J76XY7E9FNDZ1DBBM6PBJPFK".into(),
+                title: "One Piece".into(),
+                provider: MangaProviders::Weebcentral,
+                downloaded_chapter_ids: vec!["01M27CS4DQ1JVQDGARQJVK76EQ".into()],
+            },
+            DownloadedMangaWithProvider {
+                id: "dfc7ecb5-e9b3-4aa5-a61b-a498993cd935".into(),
+                title: "One Piece".into(),
+                provider: MangaProviders::Inmanga,
+                downloaded_chapter_ids: vec!["B9C9F061-4400-4813-A70A-9256FC102E05".into()],
+            },
+            DownloadedMangaWithProvider {
+                id: "psvkfbmjgo/one-piece".into(),
+                title: "One Piece".into(),
+                provider: MangaProviders::Leercapitulo,
+                downloaded_chapter_ids: vec!["/leer/psvkfbmjgo/one-piece/1195/".into()],
+            },
+            DownloadedMangaWithProvider {
+                id: "str-strike-it-rich".into(),
+                title: "ST✰R: Strike it Rich".into(),
+                provider: MangaProviders::Mangaoni,
+                downloaded_chapter_ids: vec!["str-strike-it-rich|824059".into()],
+            },
+            DownloadedMangaWithProvider {
+                id: "madan-no-ichi".into(),
+                title: "Madan no Ichi".into(),
+                provider: MangaProviders::Mangaoni,
+                downloaded_chapter_ids: vec!["madan-no-ichi|10010".into(), "madan-no-ichi|deleted-old-9".into()],
+            },
+            DownloadedMangaWithProvider {
+                id: "manga/madan-no-ichi".into(),
+                title: "Madan no Ichi".into(),
+                provider: MangaProviders::Mangaoni,
+                downloaded_chapter_ids: vec!["manga/madan-no-ichi|20020".into()],
+            },
+            DownloadedMangaWithProvider {
+                id: "manga/haimiya-senpai".into(),
+                title: "Haimiya-senpai wa Kowakute Kawaii".into(),
+                provider: MangaProviders::Mangaoni,
+                downloaded_chapter_ids: vec!["manga/haimiya-senpai|750000".into()],
+            },
+            DownloadedMangaWithProvider {
+                id: "01J76XYFSKMEZ2KH54TAC7P3SK".into(),
+                title: "After God".into(),
+                provider: MangaProviders::Weebcentral,
+                downloaded_chapter_ids: vec!["01J76XZ7JNB5QTARKZWHCBTF6T".into()],
+            },
+        ];
+
+        let result = filter_and_dedupe_downloaded_mangas(downloaded, &index, &already_checked);
+
+        // Missing-from-disk entries (One Piece on weebcentral/inmanga/leercapitulo) and favorite-checked legacy str-strike-it-rich
+        // are excluded
+        assert_eq!(result.len(), 3);
+        assert!(!result.iter().any(|m| m.title == "One Piece"));
+        assert!(!result.iter().any(|m| m.id.contains("str-strike-it-rich")));
+
+        let madan = result.iter().find(|m| m.title == "Madan no Ichi").expect("Madan no Ichi present");
+        assert_eq!(madan.id, "manga/madan-no-ichi");
+        assert_eq!(madan.alias_ids, vec!["madan-no-ichi".to_string()]);
+        assert!(madan.downloaded_chapter_ids.contains(&"madan-no-ichi|deleted-old-9".to_string()));
+        assert!(madan.downloaded_chapter_ids.contains(&"madan-no-ichi|10010".to_string()));
+        assert!(madan.downloaded_chapter_ids.contains(&"manga/madan-no-ichi|20020".to_string()));
+    }
+
+    #[test]
+    fn find_new_chapters_for_provider_normalizes_mangaoni_prefixes() {
+        let latest = vec![
+            LatestChapter {
+                id: "manga/madan-no-ichi|824060".into(),
+                chapter_number: "60".into(),
+                ..Default::default()
+            },
+            LatestChapter {
+                id: "manga/madan-no-ichi|824059".into(),
+                chapter_number: "59".into(),
+                ..Default::default()
+            },
+            LatestChapter {
+                id: "manga/madan-no-ichi|824058".into(),
+                chapter_number: "58".into(),
+                ..Default::default()
+            },
+        ];
+
+        let newly_available =
+            find_new_chapters_for_provider(MangaProviders::Mangaoni, &latest, &["madan-no-ichi|824058".to_string()], &[
+                "madan-no-ichi|824059".to_string(),
+            ]);
+
+        assert_eq!(newly_available.len(), 1);
+        assert_eq!(newly_available[0].id, "manga/madan-no-ichi|824060");
     }
 }
