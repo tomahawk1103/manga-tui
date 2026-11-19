@@ -170,6 +170,14 @@ pub struct DownloadedManga {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DownloadedMangaWithProvider {
+    pub id: String,
+    pub title: String,
+    pub provider: MangaProviders,
+    pub downloaded_chapter_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FavoriteMangaRecord {
     pub manga_id: String,
     pub provider: MangaProviders,
@@ -940,6 +948,40 @@ impl<'a> Database<'a> {
                 .or_insert_with(|| DownloadedManga {
                     id,
                     title,
+                    downloaded_chapter_ids: Vec::new(),
+                })
+                .downloaded_chapter_ids
+                .push(chapter_id);
+        }
+
+        Ok(mangas.into_values().collect())
+    }
+
+    pub fn get_all_downloaded_mangas(&self) -> rusqlite::Result<Vec<DownloadedMangaWithProvider>> {
+        let mut statement = self.connection.prepare(
+            "SELECT mangas.id, mangas.title, mangas.manga_provider, chapters.id
+             FROM mangas
+             INNER JOIN chapters ON chapters.manga_id = mangas.id
+             WHERE chapters.is_downloaded = 1
+             ORDER BY mangas.manga_provider, mangas.id",
+        )?;
+
+        let rows = statement.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?, row.get::<_, String>(3)?))
+        })?;
+        let mut mangas = BTreeMap::<(MangaProviders, String), DownloadedMangaWithProvider>::new();
+
+        for row in rows {
+            let (id, title, provider_str, chapter_id) = row?;
+            let Ok(provider) = provider_str.parse::<MangaProviders>() else {
+                continue;
+            };
+            mangas
+                .entry((provider, id.clone()))
+                .or_insert_with(|| DownloadedMangaWithProvider {
+                    id,
+                    title,
+                    provider,
                     downloaded_chapter_ids: Vec::new(),
                 })
                 .downloaded_chapter_ids
@@ -1886,6 +1928,41 @@ mod test {
         assert_eq!(all_dismissed_chapters.len(), 3);
         assert!(all_dismissed_chapters.contains(&"chapter-3".to_string()));
         assert!(database.get_dismissed_chapter_ids(&manga_id, MangaProviders::Weebcentral)?.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn get_all_downloaded_mangas_returns_mangas_across_providers() -> Result<()> {
+        let connection = Connection::open_in_memory()?;
+        let database = Database::new(&connection);
+        database.setup()?;
+
+        database.set_chapter_downloaded(SetChapterDownloaded {
+            id: "ch-md-1",
+            title: "Chapter 1",
+            manga_id: "manga-md",
+            manga_title: "MangaDex Series",
+            img_url: None,
+            provider: MangaProviders::Mangadex,
+        })?;
+        database.set_chapter_downloaded(SetChapterDownloaded {
+            id: "ch-lc-1",
+            title: "Capitulo 1",
+            manga_id: "manga-lc",
+            manga_title: "LeerCapitulo Series",
+            img_url: None,
+            provider: MangaProviders::Leercapitulo,
+        })?;
+
+        let all_downloaded = database.get_all_downloaded_mangas()?;
+        assert_eq!(all_downloaded.len(), 2);
+        assert!(all_downloaded.iter().any(|m| {
+            m.id == "manga-md" && m.provider == MangaProviders::Mangadex && m.downloaded_chapter_ids == vec!["ch-md-1"]
+        }));
+        assert!(all_downloaded.iter().any(|m| {
+            m.id == "manga-lc" && m.provider == MangaProviders::Leercapitulo && m.downloaded_chapter_ids == vec!["ch-lc-1"]
+        }));
 
         Ok(())
     }

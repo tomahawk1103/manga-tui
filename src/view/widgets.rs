@@ -6,7 +6,7 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget, WidgetRef, Wrap};
 
-use crate::backend::manga_provider::LatestChapter;
+use crate::backend::manga_provider::{LatestChapter, MangaProviders};
 use crate::backend::tui::Events;
 use crate::i18n::tr;
 use crate::theme::theme;
@@ -189,6 +189,7 @@ impl<'a> Widget for ErrorModal<'a> {
 pub struct NewChapterItem {
     pub manga_id: String,
     pub manga_title: String,
+    pub provider: MangaProviders,
     pub chapter_numbers: String,
     pub chapters: Vec<LatestChapter>,
     pub selected: bool,
@@ -354,6 +355,7 @@ impl<'a> Widget for NewChaptersModal<'a> {
                 check_span,
                 Span::styled(item.manga_title.as_str(), title_style),
                 Span::styled(format!(": {} {}", tr("Cap.", "Ch."), item.chapter_numbers), ch_style),
+                Span::styled(format!(" [{}]", item.provider), Style::default().fg(t.text_muted)),
             ];
             if !item.selected {
                 spans.push(Span::styled(
@@ -616,6 +618,7 @@ mod tests {
         let state = NewChaptersModalState::new(vec![NewChapterItem {
             manga_id: "mieruko".into(),
             manga_title: "Mieruko-chan".into(),
+            provider: MangaProviders::Leercapitulo,
             chapter_numbers: "74".into(),
             chapters: vec![],
             selected: true,
@@ -634,6 +637,7 @@ mod tests {
         assert!(rendered.contains('╰'), "modal should use rounded bottom borders");
         assert!(rendered.contains("Mieruko-chan"));
         assert!(rendered.contains("▸ [✓] Mieruko-chan"));
+        assert!(rendered.contains("[leercapitulo]"));
 
         // Verify the modal is compact rather than spanning 65% height for 1 item
         let top_border_y = (0..area.height)
