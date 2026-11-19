@@ -172,6 +172,7 @@ where
                     .map(|g| NewChapterItem {
                         manga_id: g.manga_id,
                         manga_title: g.manga_title,
+                        provider: g.provider,
                         chapter_numbers: g.chapter_numbers,
                         chapters: g.chapters,
                         selected: true,
@@ -510,10 +511,10 @@ where
                 },
             };
 
-            // 2. Get downloaded mangas for current provider (for modal notification of non-favorites)
+            // 2. Get downloaded mangas across all providers (for modal notification of non-favorites)
             let downloaded_mangas = match Database::get_connection().and_then(|connection| {
                 let database = Database::new(&connection);
-                database.get_downloaded_mangas(provider_name)
+                database.get_all_downloaded_mangas()
             }) {
                 Ok(mangas) => mangas,
                 Err(error) => {
@@ -590,17 +591,25 @@ where
                 }
             }
 
-            // Check downloaded non-favorites for current provider
+            // Check downloaded non-favorites across all providers
             for manga in downloaded_mangas {
-                if checked_mangas.contains(&(provider_name, manga.id.clone())) {
+                if checked_mangas.contains(&(manga.provider, manga.id.clone())) {
                     continue;
                 }
 
-                let manga_details = match provider.get_manga_by_id(&manga.id).await {
+                let manga_details_res = if manga.provider == provider_name {
+                    provider.get_manga_by_id(&manga.id).await.map_err(|e| e.to_string())
+                } else {
+                    crate::backend::multi_provider::get_manga_by_id_for_provider(manga.provider, &manga.id)
+                        .await
+                        .map_err(|e| e.to_string())
+                };
+
+                let manga_details = match manga_details_res {
                     Ok(details) => details,
                     Err(error) => {
                         write_to_error_log(
-                            format!("Could not check downloaded {} on {}: {error}", manga.title, provider_name).into(),
+                            format!("Could not check downloaded {} on {}: {error}", manga.title, manga.provider).into(),
                         );
                         continue;
                     },
@@ -609,12 +618,20 @@ where
                     continue;
                 }
 
-                let latest_chapters = match provider.get_latest_chapters(&manga.id).await {
+                let latest_chapters_res = if manga.provider == provider_name {
+                    provider.get_latest_chapters(&manga.id).await.map_err(|e| e.to_string())
+                } else {
+                    crate::backend::multi_provider::get_latest_chapters_for_provider(manga.provider, &manga.id)
+                        .await
+                        .map_err(|e| e.to_string())
+                };
+
+                let latest_chapters = match latest_chapters_res {
                     Ok(chapters) if !chapters.is_empty() => chapters,
                     Ok(_) => continue,
                     Err(error) => {
                         write_to_error_log(
-                            format!("Could not check for new chapters of {} on {}: {error}", manga.title, provider_name).into(),
+                            format!("Could not check for new chapters of {} on {}: {error}", manga.title, manga.provider).into(),
                         );
                         continue;
                     },
@@ -622,7 +639,7 @@ where
 
                 let state_result = Database::get_connection().and_then(|connection| {
                     let database = Database::new(&connection);
-                    let dismissed_ids = database.get_dismissed_chapter_ids(&manga.id, provider_name)?;
+                    let dismissed_ids = database.get_dismissed_chapter_ids(&manga.id, manga.provider)?;
                     Ok(find_new_chapters(&latest_chapters, &dismissed_ids, &manga.downloaded_chapter_ids))
                 });
 
@@ -643,6 +660,7 @@ where
                     groups.push(NewChapterNotificationGroup {
                         manga_id: manga.id,
                         manga_title: manga.title,
+                        provider: manga.provider,
                         chapter_numbers,
                         chapters: newly_available,
                     });
@@ -1021,18 +1039,21 @@ where
 
     fn dismiss_new_chapters_notification(&mut self) -> Result<(), String> {
         if let Some(state) = &self.new_chapters_state {
-            let mut chapter_ids_by_manga = std::collections::BTreeMap::<String, Vec<String>>::new();
+            let mut chapter_ids_by_manga = std::collections::BTreeMap::<(MangaProviders, String), Vec<String>>::new();
             for item in &state.items {
                 for chapter in &item.chapters {
-                    chapter_ids_by_manga.entry(item.manga_id.clone()).or_default().push(chapter.id.clone());
+                    chapter_ids_by_manga
+                        .entry((item.provider, item.manga_id.clone()))
+                        .or_default()
+                        .push(chapter.id.clone());
                 }
             }
 
             let connection = Database::get_connection().map_err(|error| error.to_string())?;
             let database = Database::new(&connection);
-            for (manga_id, chapter_ids) in chapter_ids_by_manga {
+            for ((provider, manga_id), chapter_ids) in chapter_ids_by_manga {
                 database
-                    .save_dismissed_chapter_ids(&manga_id, self.manga_provider.name(), &chapter_ids)
+                    .save_dismissed_chapter_ids(&manga_id, provider, &chapter_ids)
                     .map_err(|error| error.to_string())?;
             }
         }
@@ -1221,41 +1242,53 @@ where
 
     fn download_new_chapters(&mut self) {
         if let Some(state) = &mut self.new_chapters_state {
-            let mut chapters_to_download = Vec::new();
-            let mut unselected_by_manga = std::collections::BTreeMap::<String, Vec<String>>::new();
+            let mut items_to_download = Vec::new();
+            let mut unselected_by_manga = std::collections::BTreeMap::<(MangaProviders, String), Vec<String>>::new();
 
             for item in &state.items {
                 if item.selected {
-                    chapters_to_download.extend(item.chapters.clone());
+                    for chapter in &item.chapters {
+                        items_to_download.push(AutoDownloadItem {
+                            provider: item.provider,
+                            manga_id: item.manga_id.clone(),
+                            chapter: chapter.clone(),
+                        });
+                    }
                 } else {
                     for chapter in &item.chapters {
-                        unselected_by_manga.entry(item.manga_id.clone()).or_default().push(chapter.id.clone());
+                        unselected_by_manga
+                            .entry((item.provider, item.manga_id.clone()))
+                            .or_default()
+                            .push(chapter.id.clone());
                     }
                 }
             }
 
-            if chapters_to_download.is_empty() {
+            if items_to_download.is_empty() {
                 return;
             }
 
             if !unselected_by_manga.is_empty() {
                 if let Ok(connection) = Database::get_connection() {
                     let database = Database::new(&connection);
-                    for (manga_id, chapter_ids) in unselected_by_manga {
-                        let _ = database.save_dismissed_chapter_ids(&manga_id, self.manga_provider.name(), &chapter_ids);
+                    for ((provider, manga_id), chapter_ids) in unselected_by_manga {
+                        let _ = database.save_dismissed_chapter_ids(&manga_id, provider, &chapter_ids);
                     }
                 }
             }
 
-            state.status_message =
-                Some(format!("Downloading {} new chapter(s)... Press <q> to close.", chapters_to_download.len()));
+            let count = items_to_download.len();
+            state.status_message = Some(if crate::i18n::is_es() {
+                format!("Descargando {count} nuevo(s) capítulo(s)... Pulsa <q> para cerrar.")
+            } else {
+                format!("Downloading {count} new chapter(s)... Press <q> to close.")
+            });
 
-            let client = Arc::clone(&self.manga_provider);
             let config = MangaTuiConfig::get().effective();
             let event_tx = self.global_event_tx.clone();
 
             tokio::spawn(async move {
-                let result = download_new_chapters(client, chapters_to_download, config).await;
+                let result = download_new_chapters(items_to_download, config).await;
                 event_tx.send(Events::NewChaptersDownloadFinished(result)).ok();
             });
         }
@@ -1629,6 +1662,7 @@ mod tests {
             NewChapterItem {
                 manga_id: "one-piece".into(),
                 manga_title: "One Piece".into(),
+                provider: MangaProviders::Mangadex,
                 chapter_numbers: "1196, 1195".into(),
                 chapters: vec![LatestChapter {
                     id: "ch-1196".into(),
@@ -1641,6 +1675,7 @@ mod tests {
             NewChapterItem {
                 manga_id: "dandadan".into(),
                 manga_title: "Dandadan".into(),
+                provider: MangaProviders::Leercapitulo,
                 chapter_numbers: "249".into(),
                 chapters: vec![LatestChapter {
                     id: "ch-249".into(),

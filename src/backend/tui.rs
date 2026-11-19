@@ -22,6 +22,7 @@ pub enum Action {
 pub struct NewChapterNotificationGroup {
     pub manga_id: String,
     pub manga_title: String,
+    pub provider: super::manga_provider::MangaProviders,
     pub chapter_numbers: String,
     pub chapters: Vec<super::manga_provider::LatestChapter>,
 }
