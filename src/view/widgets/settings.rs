@@ -40,14 +40,8 @@ pub const ALL_UI_LANGUAGES: [UiLanguage; 2] = [UiLanguage::Es, UiLanguage::En];
 
 pub const ALL_THEMES: [ThemeVariant; 3] = [ThemeVariant::TokyoNight, ThemeVariant::Catppuccin, ThemeVariant::Classic];
 
-pub const ALL_IMAGE_PROTOCOLS: [ImageProtocol; 6] = [
-    ImageProtocol::Auto,
-    ImageProtocol::Sixel,
-    ImageProtocol::Halfblocks,
-    ImageProtocol::Kitty,
-    ImageProtocol::Iterm2,
-    ImageProtocol::None,
-];
+pub const ALL_IMAGE_PROTOCOLS: [ImageProtocol; 5] =
+    [ImageProtocol::Auto, ImageProtocol::Sixel, ImageProtocol::Kitty, ImageProtocol::Iterm2, ImageProtocol::None];
 
 /// Returns the ordered list of chapter languages with the most common ones first for quick cycling.
 pub fn ordered_chapter_languages() -> Vec<Languages> {
@@ -101,11 +95,25 @@ fn ui_lang_from_u8(val: u8) -> UiLanguage {
 }
 
 fn image_protocol_to_u8(proto: ImageProtocol) -> u8 {
-    ALL_IMAGE_PROTOCOLS.iter().position(|&item| item == proto).unwrap_or(0) as u8
+    match proto {
+        ImageProtocol::Auto => 0,
+        ImageProtocol::Sixel => 1,
+        ImageProtocol::Halfblocks => 2,
+        ImageProtocol::Kitty => 3,
+        ImageProtocol::Iterm2 => 4,
+        ImageProtocol::None => 5,
+    }
 }
 
 fn image_protocol_from_u8(val: u8) -> ImageProtocol {
-    ALL_IMAGE_PROTOCOLS.get(val as usize).copied().unwrap_or_default()
+    match val {
+        1 => ImageProtocol::Sixel,
+        2 => ImageProtocol::Halfblocks,
+        3 => ImageProtocol::Kitty,
+        4 => ImageProtocol::Iterm2,
+        5 => ImageProtocol::None,
+        _ => ImageProtocol::Auto,
+    }
 }
 
 fn language_to_u8(lang: Languages) -> u8 {
@@ -405,7 +413,7 @@ impl SettingsField {
             Self::ChapterLanguage => tr("🌐 Idioma de capítulos", "🌐 Chapter Language"),
             Self::UiLanguage => tr("🗣 Idioma de la interfaz", "🗣 Interface Language"),
             Self::Theme => tr("🎨 Tema visual", "🎨 Visual Theme"),
-            Self::ImageProtocol => tr("🖼 Protocolo gráfico", "🖼 Graphics Protocol"),
+            Self::ImageProtocol => tr("🖼  Protocolo gráfico", "🖼  Graphics Protocol"),
         }
     }
 
@@ -432,8 +440,8 @@ impl SettingsField {
                 "Live color palette applied across the entire interface without restarting",
             ),
             Self::ImageProtocol => tr(
-                "Protocolo de renderizado TUI (Auto, Sixel, Halfblocks o Web HD sin TUI)",
-                "Terminal graphics rendering protocol (Auto, Sixel, Halfblocks, or Web HD only)",
+                "Protocolo de renderizado TUI (Auto, Sixel, Kitty, iTerm2 o solo Visor Web HD)",
+                "Terminal graphics rendering protocol (Auto, Sixel, Kitty, iTerm2, or Web HD only)",
             ),
         }
     }
@@ -871,7 +879,7 @@ impl<'a> Widget for SettingsModal<'a> {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(t.border_accent))
             .title(Line::from(vec![Span::styled(
-                tr(" ⚙ Menú de Ajustes Interactivos <c / F5> ", " ⚙ Interactive Settings Menu <c / F5> "),
+                tr(" ⚙  Menú de Ajustes Interactivos <c / F5> ", " ⚙  Interactive Settings Menu <c / F5> "),
                 Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD),
             )]))
             .title_bottom(
@@ -993,7 +1001,7 @@ impl<'a> Widget for SettingsModal<'a> {
         } else {
             Line::from(vec![Span::styled(
                 format!(
-                    "📡 {}  │  📦 {}  │  🌐 {}  │  🎨 {}  │  🖼 {}  │  💾 {}",
+                    "📡 {}  │  📦 {}  │  🌐 {}  │  🎨 {}  │  🖼  {}  │  💾 {}",
                     active_default_provider(),
                     active_download_type().to_string().to_uppercase(),
                     active_chapter_language(),
@@ -1085,13 +1093,13 @@ client_id = "123"
         assert_eq!(state.handle_key_event(KeyCode::Right.into()), SettingsOutcome::ThemeChanged(ThemeVariant::Catppuccin));
         assert_eq!(current_theme(), ThemeVariant::Catppuccin);
 
-        // Move down to ImageProtocol and cycle: Auto -> Sixel -> Halfblocks
+        // Move down to ImageProtocol and cycle: Auto -> Sixel -> Kitty
         state.handle_key_event(KeyCode::Down.into());
         assert_eq!(state.current_field(), SettingsField::ImageProtocol);
         assert_eq!(state.handle_key_event(KeyCode::Right.into()), SettingsOutcome::ImageProtocolChanged(ImageProtocol::Sixel));
         assert_eq!(active_image_protocol(), ImageProtocol::Sixel);
-        assert_eq!(state.handle_key_event(KeyCode::Right.into()), SettingsOutcome::ImageProtocolChanged(ImageProtocol::Halfblocks));
-        assert_eq!(active_image_protocol(), ImageProtocol::Halfblocks);
+        assert_eq!(state.handle_key_event(KeyCode::Right.into()), SettingsOutcome::ImageProtocolChanged(ImageProtocol::Kitty));
+        assert_eq!(active_image_protocol(), ImageProtocol::Kitty);
 
         // Closing with 'c' or F5
         assert_eq!(state.handle_key_event(KeyCode::Char('c').into()), SettingsOutcome::Close);

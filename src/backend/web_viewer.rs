@@ -175,7 +175,11 @@ async fn handle_connection(
 
             if let Some(target) = target_chapter {
                 if let Ok(new_chapter) = resolve_chapter(&current_session, &target).await {
-                    let new_local_source = LocalChapterSource::find(&current_session.manga_title, &new_chapter.id);
+                    let new_local_source = LocalChapterSource::find_for_chapter(
+                        &current_session.manga_title,
+                        &new_chapter.id,
+                        new_chapter.pages_url.len(),
+                    );
                     save_chapter_read_in_db(&current_session, &new_chapter);
                     let mut write_guard = state.write().await;
                     write_guard.chapter = new_chapter;

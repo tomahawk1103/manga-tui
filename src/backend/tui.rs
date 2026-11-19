@@ -123,8 +123,13 @@ pub fn build_picker_with_font_size(
                 let is_vscode_conpty = std::env::var("TERM_PROGRAM").map(|v| v.eq_ignore_ascii_case("vscode")).unwrap_or(false);
                 if is_vscode_conpty || (guessed == ProtocolType::Halfblocks && is_modern_terminal) {
                     picker.protocol_type = ProtocolType::Sixel;
+                    Some(picker)
+                } else if guessed == ProtocolType::Halfblocks {
+                    // Avoid unreadable Halfblocks on classic conhost.exe: fall back to Visor Web HD (`None`).
+                    None
+                } else {
+                    Some(picker)
                 }
-                Some(picker)
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -544,6 +549,17 @@ mod tests {
         {
             let auto_modern = build_picker_with_font_size((10, 22), true, ImageProtocol::Auto).unwrap();
             assert_eq!(auto_modern.protocol_type, ProtocolType::Sixel);
+
+            // Classic conhost.exe (`is_modern_terminal = false`) falls back to Web HD (`None`) instead of Halfblocks
+            if std::env::var("TERM_PROGRAM").map(|v| v.eq_ignore_ascii_case("vscode")).unwrap_or(false) {
+                let auto_vscode = build_picker_with_font_size((8, 16), false, ImageProtocol::Auto).unwrap();
+                assert_eq!(auto_vscode.protocol_type, ProtocolType::Sixel);
+            } else {
+                let auto_classic = build_picker_with_font_size((8, 16), false, ImageProtocol::Auto);
+                if let Some(p) = auto_classic {
+                    assert_ne!(p.protocol_type, ProtocolType::Halfblocks);
+                }
+            }
         }
     }
 }

@@ -53,7 +53,6 @@ pub enum MangaReaderActions {
     GoToFirstPage,
     GoToLastPage,
     OpenInWebViewer,
-    ToggleImageProtocol,
 }
 
 #[derive(Clone, Debug)]
@@ -107,6 +106,18 @@ impl LocalChapterSource {
         }
 
         search_dir(&base_dir, chapter_id, &id_clean, 3)
+    }
+
+    /// Finds a downloaded local CBZ/directory only if it covers the chapter completely when online page count is known.
+    pub fn find_for_chapter(manga_title: &str, chapter_id: &str, expected_remote_pages: usize) -> Option<Self> {
+        let src = Self::find(manga_title, chapter_id)?;
+        if expected_remote_pages > 0 {
+            let local_count = src.page_count();
+            if local_count == 0 || local_count != expected_remote_pages {
+                return None;
+            }
+        }
+        Some(src)
     }
 
     pub fn page_count(&self) -> usize {
@@ -545,7 +556,6 @@ where
             MangaReaderActions::GoToFirstPage => self.go_to_first_page(),
             MangaReaderActions::GoToLastPage => self.go_to_last_page(),
             MangaReaderActions::OpenInWebViewer => self.open_in_web_viewer(),
-            MangaReaderActions::ToggleImageProtocol => self.toggle_image_protocol(),
         }
     }
 
@@ -679,7 +689,8 @@ where
     }
 
     pub fn with_manga_title(mut self, title: String) -> Self {
-        self.local_source = LocalChapterSource::find(&title, &self.current_chapter.id);
+        self.local_source =
+            LocalChapterSource::find_for_chapter(&title, &self.current_chapter.id, self.current_chapter.pages_url.len());
         self.manga_title = title;
         self
     }
@@ -749,29 +760,6 @@ where
 
     fn reload_page(&mut self) {
         self.fetch_page(self.current_page_index());
-    }
-
-    fn toggle_image_protocol(&mut self) {
-        let next_proto = match self.picker.protocol_type {
-            ProtocolType::Halfblocks => ProtocolType::Sixel,
-            _ => ProtocolType::Halfblocks,
-        };
-        self.picker.protocol_type = next_proto;
-        let config_proto = match next_proto {
-            ProtocolType::Sixel => crate::config::ImageProtocol::Sixel,
-            ProtocolType::Halfblocks => crate::config::ImageProtocol::Halfblocks,
-            ProtocolType::Kitty => crate::config::ImageProtocol::Kitty,
-            ProtocolType::Iterm2 => crate::config::ImageProtocol::Iterm2,
-        };
-        crate::view::widgets::settings::set_active_image_protocol(config_proto);
-        let _ = crate::view::widgets::settings::persist_setting_to_disk("image_protocol", config_proto.toml_value());
-        for page in &mut self.pages {
-            page.cached_protocol = None;
-        }
-        self.needs_terminal_clear = true;
-        if let Some(tx) = &self.global_event_tx {
-            let _ = tx.send(Events::ImageProtocolChanged(config_proto));
-        }
     }
 
     fn protocol_label(proto: ProtocolType) -> &'static str {
@@ -896,7 +884,8 @@ where
         self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
 
         self.current_chapter = chapter;
-        self.local_source = LocalChapterSource::find(&self.manga_title, &self.current_chapter.id);
+        self.local_source =
+            LocalChapterSource::find_for_chapter(&self.manga_title, &self.current_chapter.id, self.current_chapter.pages_url.len());
         self.state = State::SearchingPages;
 
         self.init_fetching_pages();
@@ -926,13 +915,15 @@ where
             return vec![];
         }
 
+        let is_failed = |idx: usize| self.pages_list.pages.get(idx).is_some_and(|item| item.state == PageItemState::FailedLoad);
+
         let pages = MangaTuiConfig::get().amount_pages as usize;
 
         if self.pages.len() == 1 {
-            return if self.pages[0].is_loaded() { vec![] } else { vec![0] };
+            return if self.pages[0].is_loaded() || is_failed(0) { vec![] } else { vec![0] };
         }
 
-        // Collect `pages` pages before and after index that are not yet loaded
+        // Collect `pages` pages before and after index that are not yet loaded (skipping already-failed pages; use `r` to retry)
         let curr = self.current_page_index().min(self.pages.len().saturating_sub(1));
         let start_index = curr.saturating_sub(pages);
         let end_index = curr.saturating_add(pages).min(self.pages.len().saturating_sub(1));
@@ -941,7 +932,10 @@ where
             self.pages[start_index..=end_index]
                 .iter()
                 .enumerate()
-                .filter_map(|(base_index, page)| if page.is_loaded() { None } else { Some(base_index + start_index) })
+                .filter_map(|(base_index, page)| {
+                    let abs_idx = base_index + start_index;
+                    if page.is_loaded() || is_failed(abs_idx) { None } else { Some(abs_idx) }
+                })
                 .collect()
         } else {
             vec![]
@@ -958,6 +952,9 @@ where
             //NOTE:  This will need to become async atomic if this becomes an async function
             if item.state != PageItemState::Loading && item.state != PageItemState::FinishedLoad {
                 let tx = self.local_event_tx.clone();
+                let api_client = Arc::clone(&self.api_client);
+                let provider = self.provider;
+                let url = url.clone();
 
                 if let Some(source) = self.local_source.clone() {
                     self.image_tasks.spawn(async move {
@@ -966,24 +963,38 @@ where
                             Ok(Ok(panel)) => {
                                 let page = PageData { panel, index };
                                 tx.send(MangaReaderEvents::LoadPage(page)).ok();
+                                return;
                             },
                             Ok(Err(e)) => {
-                                tx.send(MangaReaderEvents::FailedPage(index)).ok();
                                 write_to_error_log(ErrorType::String(&format!("Local read error: {e}")));
                             },
                             Err(e) => {
-                                tx.send(MangaReaderEvents::FailedPage(index)).ok();
                                 write_to_error_log(ErrorType::String(&format!("Task join error: {e}")));
                             },
+                        }
+
+                        if url.host_str() != Some("localhost") {
+                            let response = match provider {
+                                Some(p) => crate::backend::multi_provider::search_manga_panel_for_provider(p, url).await,
+                                None => api_client.search_manga_panel(url).await,
+                            };
+                            match response {
+                                Ok(panel) => {
+                                    let page = PageData { panel, index };
+                                    tx.send(MangaReaderEvents::LoadPage(page)).ok();
+                                },
+                                Err(e) => {
+                                    tx.send(MangaReaderEvents::FailedPage(index)).ok();
+                                    write_to_error_log(ErrorType::Error(e));
+                                },
+                            }
+                        } else {
+                            tx.send(MangaReaderEvents::FailedPage(index)).ok();
                         }
                     });
                     item.state = PageItemState::Loading;
                     return;
                 }
-
-                let api_client = Arc::clone(&self.api_client);
-                let provider = self.provider;
-                let url = url.clone();
 
                 self.image_tasks.spawn(async move {
                     let response = match provider {
@@ -1224,7 +1235,7 @@ where
 
         let right_spans = vec![
             Span::styled(
-                format!(" 🖼 {}  ", Self::protocol_label(self.picker.protocol_type)),
+                format!(" 🖼  {}  ", Self::protocol_label(self.picker.protocol_type)),
                 Style::default().fg(t.accent_secondary).bg(t.bar_bg).bold(),
             ),
             Span::styled(format!("🎨 {} ", current_theme().label()), Style::default().fg(t.text_muted).bg(t.bar_bg)),
@@ -1258,7 +1269,7 @@ where
         let mut used_w = 0usize;
 
         let badge =
-            Span::styled(format!(" ⌨ {} ", tr("ATAJOS", "KEYS")), Style::default().fg(Color::Black).bg(t.accent_primary).bold());
+            Span::styled(format!(" ⌨  {} ", tr("ATAJOS", "KEYS")), Style::default().fg(Color::Black).bg(t.accent_primary).bold());
         let arrow = Span::styled(" ", Style::default().fg(t.accent_primary).bg(t.bar_bg));
         if used_w + badge.width() + arrow.width() <= avail_w {
             used_w += badge.width() + arrow.width();
@@ -1280,7 +1291,6 @@ where
         push_chip("j/k", nav_label, false);
         push_chip("w/b", tr("Cap.", "Chap."), false);
         push_chip("v", tr("Visor Web HD", "Web HD"), true);
-        push_chip("p", tr("Protocolo", "Protocol"), false);
         push_chip("Esc/q", tr("Volver", "Back"), false);
         push_chip("g/G", tr("Inicio/Fin", "Start/End"), false);
         if show_reload {
@@ -1392,7 +1402,7 @@ where
         // Card 2: Themed Keyboard Controls
         let controls_block = t
             .rounded_block()
-            .title(Span::styled(format!(" ⌨ {} ", tr("Controles", "Controls")), Style::default().fg(t.accent_primary).bold()));
+            .title(Span::styled(format!(" ⌨  {} ", tr("Controles", "Controls")), Style::default().fg(t.accent_primary).bold()));
         let controls_inner = controls_block.inner(controls_card_area).inner(Margin {
             horizontal: 1,
             vertical: 1,
@@ -1427,7 +1437,6 @@ where
             shortcut_row("w", tr("Cap. siguiente", "Next chapter")),
             shortcut_row("b", tr("Cap. anterior", "Prev chapter")),
             shortcut_row("v", tr("Visor Web HD", "Web Viewer HD")),
-            shortcut_row("p", tr("Protocolo img.", "Img protocol")),
         ];
 
         if show_reload {
@@ -1437,15 +1446,20 @@ where
             control_lines.push(shortcut_row("m", tr("Marcar pág.", "Bookmark page")));
         }
 
-        if controls_inner.height as usize > control_lines.len() + 2 {
-            control_lines.push(Line::raw(""));
-            control_lines.push(Line::from(vec![Span::styled(
-                tr("💡 Scroll de ratón cambia pág.", "💡 Mouse wheel turns pages"),
-                Style::default().fg(t.text_muted).italic(),
-            )]));
-        }
+        let shortcuts_h = (control_lines.len() as u16).min(controls_inner.height);
+        let shortcuts_area = Rect::new(controls_inner.x, controls_inner.y, controls_inner.width, shortcuts_h);
+        Paragraph::new(control_lines).render(shortcuts_area, buf);
 
-        Paragraph::new(control_lines).render(controls_inner, buf);
+        if controls_inner.height as usize > shortcuts_h as usize + 1 {
+            let tip_y = controls_inner.y + shortcuts_h + 1;
+            let tip_area = Rect::new(controls_inner.x, tip_y, controls_inner.width, controls_inner.bottom().saturating_sub(tip_y));
+            Paragraph::new(Line::from(vec![Span::styled(
+                tr("💡 Rueda del ratón: pasar pág.", "💡 Mouse wheel: turn pages"),
+                Style::default().fg(t.text_muted).italic(),
+            )]))
+            .wrap(Wrap { trim: true })
+            .render(tip_area, buf);
+        }
     }
 
     fn tick(&mut self) {
@@ -1508,9 +1522,6 @@ where
             KeyCode::Char('v') => {
                 self.local_action_tx.send(MangaReaderActions::OpenInWebViewer).ok();
             },
-            KeyCode::Char('p') => {
-                self.local_action_tx.send(MangaReaderActions::ToggleImageProtocol).ok();
-            },
             KeyCode::Char('m') if !self.auto_bookmark => {
                 self.local_action_tx.send(MangaReaderActions::BookMarkCurrentChapter).ok();
             },
@@ -1523,7 +1534,16 @@ where
 
     pub fn init_fetching_pages(&mut self) {
         if self.local_source.is_none() {
-            self.local_source = LocalChapterSource::find(&self.manga_title, &self.current_chapter.id);
+            self.local_source = LocalChapterSource::find_for_chapter(
+                &self.manga_title,
+                &self.current_chapter.id,
+                self.current_chapter.pages_url.len(),
+            );
+        } else if !self.current_chapter.pages_url.is_empty()
+            && let Some(ref source) = self.local_source
+            && source.page_count() != self.current_chapter.pages_url.len()
+        {
+            self.local_source = None;
         }
         if self.current_chapter.pages_url.is_empty() {
             if let Some(ref source) = self.local_source {
@@ -1632,6 +1652,8 @@ mod test {
     use std::time::Duration;
 
     use pretty_assertions::assert_eq;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
     use tokio::time::timeout;
 
     use self::mpsc::unbounded_channel;
@@ -1692,10 +1714,6 @@ mod test {
         press_key(&mut reader_page, KeyCode::Char('v'));
         let action = reader_page.local_action_rx.recv().await.unwrap();
         assert_eq!(MangaReaderActions::OpenInWebViewer, action);
-
-        press_key(&mut reader_page, KeyCode::Char('p'));
-        let action = reader_page.local_action_rx.recv().await.unwrap();
-        assert_eq!(MangaReaderActions::ToggleImageProtocol, action);
 
         press_key(&mut reader_page, KeyCode::Esc);
         let action = reader_page.local_action_rx.recv().await.unwrap();
@@ -2344,50 +2362,6 @@ mod test {
     }
 
     #[tokio::test]
-    async fn test_toggle_image_protocol_with_p_regenerates_protocol_from_raw_image() {
-        use image::DynamicImage;
-
-        use crate::backend::manga_provider::MangaPanel;
-
-        let chapter = ChapterToRead {
-            pages_url: vec!["http://localhost/1".parse().unwrap()],
-            ..Default::default()
-        };
-        let mut picker = Picker::new((8, 16));
-        picker.protocol_type = ProtocolType::Halfblocks;
-
-        let mut manga_reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
-            MangaReader::new(chapter, "manga-1".into(), picker, ReaderPageProvierMock::new().into());
-        manga_reader.init_fetching_pages();
-
-        let panel = MangaPanel {
-            image_decoded: DynamicImage::new_rgb8(100, 140),
-            dimensions: (100, 140),
-        };
-        manga_reader.load_page(PageData { panel, index: 0 });
-
-        assert!(manga_reader.pages[0].raw_image.is_some());
-        assert!(manga_reader.pages[0].cached_protocol.is_some());
-
-        // Toggle with 'p': Halfblocks -> Sixel
-        press_key(&mut manga_reader, KeyCode::Char('p'));
-        let action = manga_reader.local_action_rx.recv().await.unwrap();
-        assert_eq!(action, MangaReaderActions::ToggleImageProtocol);
-        manga_reader.update(action);
-
-        assert_eq!(manga_reader.picker.protocol_type, ProtocolType::Sixel);
-        assert!(manga_reader.needs_terminal_clear);
-        assert!(manga_reader.pages[0].cached_protocol.is_none());
-        assert!(manga_reader.pages[0].get_or_create_protocol(&mut manga_reader.picker).is_some());
-
-        // Toggle again: Sixel -> Halfblocks
-        manga_reader.update(MangaReaderActions::ToggleImageProtocol);
-        assert_eq!(manga_reader.picker.protocol_type, ProtocolType::Halfblocks);
-
-        crate::view::widgets::settings::set_active_image_protocol(crate::config::ImageProtocol::Auto);
-    }
-
-    #[tokio::test]
     async fn test_page_navigation_does_not_wrap_clears_terminal_and_resizes_before_layout() {
         use image::DynamicImage;
         use ratatui::Terminal;
@@ -2605,5 +2579,112 @@ mod test {
         assert!(!bottom_row.contains("ATÁJOS"), "typo ATÁJOS must be fixed: {bottom_row}");
         assert!(bottom_row.contains("ATAJOS") || bottom_row.contains("KEYS"));
         assert!(bottom_row.contains("HALFBLOCKS") || bottom_row.contains("SIXEL"));
+
+        // Verify right-panel mouse wheel tip wraps cleanly without clipping at 140x40
+        let full_backend = TestBackend::new(140, 40);
+        let mut full_terminal = Terminal::new(full_backend).unwrap();
+        full_terminal.draw(|f| reader.render(Rect::new(0, 0, 140, 40), f)).unwrap();
+        let full_rendered: String = (0..40)
+            .map(|y| (0..140).map(|x| full_terminal.backend().buffer()[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(!full_rendered.contains("cambia pá"), "mouse wheel tip must not clip mid-word: {full_rendered}");
+        assert!(full_rendered.contains("pág.") || full_rendered.contains("pages"));
+    }
+
+    #[test]
+    fn init_fetching_pages_discards_incomplete_local_source_when_remote_has_more_pages() {
+        struct TempDir(PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let dir = TempDir(std::env::temp_dir().join(format!("manga_tui_incomplete_cbz_{}", uuid::Uuid::new_v4())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        std::fs::write(dir.0.join("001.jpg"), b"a").unwrap();
+        std::fs::write(dir.0.join("002.jpg"), b"b").unwrap();
+
+        let chapter = ChapterToRead {
+            id: "1198".into(),
+            pages_url: vec![
+                "https://cdn.example.com/1.jpg".parse().unwrap(),
+                "https://cdn.example.com/2.jpg".parse().unwrap(),
+                "https://cdn.example.com/3.jpg".parse().unwrap(),
+                "https://cdn.example.com/4.jpg".parse().unwrap(),
+            ],
+            ..Default::default()
+        };
+        let mut reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(chapter, "m1".into(), Picker::new((8, 16)), ReaderPageProvierMock::new().into());
+        reader.local_source = Some(LocalChapterSource::Directory(dir.0.clone()));
+
+        reader.init_fetching_pages();
+
+        assert!(reader.local_source.is_none(), "incomplete 2-page local source must be discarded for 4-page online chapter");
+        assert_eq!(reader.pages.len(), 4);
+    }
+
+    #[test]
+    fn init_fetching_pages_keeps_local_source_when_offline_or_page_count_matches() {
+        struct TempDir(PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let dir = TempDir(std::env::temp_dir().join(format!("manga_tui_matching_cbz_{}", uuid::Uuid::new_v4())));
+        std::fs::create_dir_all(&dir.0).unwrap();
+        std::fs::write(dir.0.join("001.jpg"), b"a").unwrap();
+        std::fs::write(dir.0.join("002.jpg"), b"b").unwrap();
+
+        // Matching count (2 local == 2 remote) -> kept
+        let ch_matching = ChapterToRead {
+            id: "1198".into(),
+            pages_url: vec!["https://cdn.example.com/1.jpg".parse().unwrap(), "https://cdn.example.com/2.jpg".parse().unwrap()],
+            ..Default::default()
+        };
+        let mut reader_match: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(ch_matching, "m1".into(), Picker::new((8, 16)), ReaderPageProvierMock::new().into());
+        reader_match.local_source = Some(LocalChapterSource::Directory(dir.0.clone()));
+        reader_match.init_fetching_pages();
+        assert!(reader_match.local_source.is_some());
+
+        // Offline mode (empty remote URLs) -> kept and populated with localhost/local/N URLs
+        let ch_offline = ChapterToRead {
+            id: "1198".into(),
+            pages_url: vec![],
+            ..Default::default()
+        };
+        let mut reader_offline: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(ch_offline, "m1".into(), Picker::new((8, 16)), ReaderPageProvierMock::new().into());
+        reader_offline.local_source = Some(LocalChapterSource::Directory(dir.0.clone()));
+        reader_offline.init_fetching_pages();
+        assert!(reader_offline.local_source.is_some());
+        assert_eq!(reader_offline.pages.len(), 2);
+        assert_eq!(reader_offline.current_chapter.pages_url.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn get_pages_to_fetch_skips_failed_pages_until_explicit_reload() {
+        let ch = ChapterToRead {
+            pages_url: vec![
+                "http://localhost/0".parse().unwrap(),
+                "http://localhost/1".parse().unwrap(),
+                "http://localhost/2".parse().unwrap(),
+            ],
+            ..Default::default()
+        };
+        let mut reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(ch, "m1".into(), Picker::new((8, 16)), ReaderPageProvierMock::new().into());
+        reader.init_fetching_pages();
+        reader.failed_page(1);
+
+        let to_fetch = reader.get_pages_to_fetch();
+        assert!(!to_fetch.contains(&1), "failed page 1 should be skipped by background prefetch");
+        assert!(to_fetch.contains(&0));
+        assert!(to_fetch.contains(&2));
     }
 }

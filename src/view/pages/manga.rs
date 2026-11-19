@@ -2420,7 +2420,11 @@ where
                     self.track_manga(self.manga_tracker.clone(), self.manga.title.clone(), chapter_to_read.number as u32, volume);
                     self.local_event_tx.send(MangaPageEvents::CheckChapterStatus).ok();
 
-                    let local_source = crate::view::pages::reader::LocalChapterSource::find(&self.manga.title, &chapter_to_read.id);
+                    let local_source = crate::view::pages::reader::LocalChapterSource::find_for_chapter(
+                        &self.manga.title,
+                        &chapter_to_read.id,
+                        chapter_to_read.pages_url.len(),
+                    );
                     let session = crate::backend::web_viewer::WebViewerSession {
                         manga_id: self.manga.id.clone(),
                         manga_title: self.manga.title.clone(),

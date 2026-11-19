@@ -1019,13 +1019,13 @@ where
         let (mode_label, mode_color) = if self.is_help_modal_open {
             (tr(" ❓ AYUDA ", " ❓ HELP "), t.accent_primary)
         } else if self.is_settings_modal_open {
-            (tr(" ⚙ AJUSTES ", " ⚙ SETTINGS "), t.accent_primary)
+            (tr(" ⚙  AJUSTES ", " ⚙  SETTINGS "), t.accent_primary)
         } else if self.is_queue_modal_open {
             (tr(" ⬇ COLA ", " ⬇ QUEUE "), t.accent_primary)
         } else if is_typing {
-            (tr(" ⌨ ESCRIBIENDO ", " ⌨ TYPING "), t.accent_highlight)
+            (tr(" ⌨  ESCRIBIENDO ", " ⌨  TYPING "), t.accent_highlight)
         } else if self.search_page.is_filter_open() {
-            (tr(" ⚙ FILTROS ", " ⚙ FILTERS "), t.accent_secondary)
+            (tr(" ⚙  FILTROS ", " ⚙  FILTERS "), t.accent_secondary)
         } else {
             match self.current_tab {
                 SelectedPage::Home => (tr(" 🏠 INICIO ", " 🏠 HOME "), t.accent_primary),
@@ -1640,7 +1640,11 @@ where
 
     fn go_to_read_chapter(&mut self, chapter_to_read: ChapterToRead, manga_to_read: MangaToRead, manga_tracker: Option<S>) {
         let Some(picker) = self.picker.as_ref().cloned() else {
-            let local_source = crate::view::pages::reader::LocalChapterSource::find(&manga_to_read.title, &chapter_to_read.id);
+            let local_source = crate::view::pages::reader::LocalChapterSource::find_for_chapter(
+                &manga_to_read.title,
+                &chapter_to_read.id,
+                chapter_to_read.pages_url.len(),
+            );
             let session = crate::backend::web_viewer::WebViewerSession {
                 manga_id: manga_to_read.manga_id,
                 manga_title: manga_to_read.title,
@@ -2412,7 +2416,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn reader_protocol_toggle_syncs_app_picker_for_subsequent_chapters() {
+    async fn image_protocol_event_syncs_app_picker_and_reader_for_subsequent_chapters() {
         use ratatui_image::picker::{Picker, ProtocolType};
 
         let mut initial_picker = Picker::new((10, 22));
@@ -2443,17 +2447,12 @@ mod tests {
             None,
         );
 
-        // Toggle 'p' inside Reader: Sixel -> Halfblocks
-        app.process_global_event(Events::Key(KeyCode::Char('p').into()));
-        // Process MangaReader's local action queue, then drain Events::ImageProtocolChanged
-        app.update_based_on_action();
-        while let Ok(evt) = app.global_event_rx.try_recv() {
-            app.process_global_event(evt);
-        }
+        app.process_global_event(Events::ImageProtocolChanged(crate::config::ImageProtocol::Kitty));
 
-        assert_eq!(app.picker.as_ref().unwrap().protocol_type, ProtocolType::Halfblocks);
+        assert_eq!(app.picker.as_ref().unwrap().protocol_type, ProtocolType::Kitty);
+        assert_eq!(app.manga_reader_page.as_ref().unwrap().picker_protocol_type(), ProtocolType::Kitty);
 
-        // Opening another chapter retains Halfblocks instead of reverting to Sixel
+        // Opening another chapter retains Kitty instead of reverting to Sixel
         app.go_to_read_chapter(
             make_chapter(),
             MangaToRead {
@@ -2464,7 +2463,10 @@ mod tests {
             },
             None,
         );
-        assert_eq!(app.manga_reader_page.as_ref().unwrap().picker_protocol_type(), ProtocolType::Halfblocks);
+        assert_eq!(app.manga_reader_page.as_ref().unwrap().picker_protocol_type(), ProtocolType::Kitty);
+
+        app.process_global_event(Events::ImageProtocolChanged(crate::config::ImageProtocol::None));
+        assert!(app.picker.is_none());
 
         crate::view::widgets::settings::set_active_image_protocol(crate::config::ImageProtocol::Auto);
     }
