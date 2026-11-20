@@ -9,7 +9,7 @@ flowchart LR
     H2["Hito 2<br/>Datos Portables y Actualización<br/>✅ Implementado"]
     H3["Hito 3<br/>Aviso de Versiones del Fork y UI<br/>✅ Implementado"]
     H4["Hito 4<br/>Artefacto ZIP + CI + Prueba E2E<br/>✅ Script/CI · ⏳ Test Windows limpio"]
-    H5["Hito 5<br/>Icono .ico e Instalador<br/>✅ Implementado · ⏳ Test ISCC/CI"]
+    H5["Hito 5<br/>Icono .ico e Instalador<br/>✅ Implementado y verificado"]
 
     Base --> H1 --> H2 --> H3 --> H4 --> H5
 ```
@@ -92,7 +92,7 @@ Antes de publicar la primera release definitiva, validar el `.zip` generado por 
 
 ---
 
-## Hito 5 · Identidad visual (`.ico`) e Instalador de Windows ✅ / ⏳
+## Hito 5 · Identidad visual (`.ico`) e Instalador de Windows ✅
 
 **Implementado en:** [assets/icon.ico](assets/icon.ico), [build.rs](build.rs), [Cargo.toml](Cargo.toml), [scripts/windows-installer.iss](scripts/windows-installer.iss), [scripts/package-windows-installer.ps1](scripts/package-windows-installer.ps1), [scripts/test-windows-installer.ps1](scripts/test-windows-installer.ps1), [.github/workflows/release.yml](.github/workflows/release.yml)
 
@@ -103,4 +103,4 @@ Antes de publicar la primera release definitiva, validar el `.zip` generado por 
 ### Criterios de aceptación (Hito 5)
 - [x] `assets/icon.ico` multi-resolución (`16..256` px) validado por test unitario y verificado incrustado en `manga-tui.exe` junto a `ProductName`, `FileDescription` y `FileVersion`.
 - [x] Tests unitarios de separación de almacenamiento en modo instalado (`StorageMode::System`, sin `portable.txt`) y conservación de `config.toml`, base de datos SQLite y descargas tras actualización y desinstalación.
-- [ ] Ejecutar [scripts/package-windows-installer.ps1](scripts/package-windows-installer.ps1) + [scripts/test-windows-installer.ps1](scripts/test-windows-installer.ps1) con Inno Setup 6 (`ISCC.exe`) en Windows limpio o en el job `build-windows` de CI para validar el `.exe` instalador real de principio a fin.
+- [x] Ejecutados [scripts/package-windows-installer.ps1](scripts/package-windows-installer.ps1) + [scripts/test-windows-installer.ps1](scripts/test-windows-installer.ps1) con Inno Setup 6 (`ISCC.exe`): instalación silenciosa, metadatos/icono Win32, actualización sobre instalación previa y desinstalación limpia validados conservando `config.toml`, base de datos SQLite y descargas (verificados byte a byte con SHA-256).
