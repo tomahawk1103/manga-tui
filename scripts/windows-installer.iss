@@ -1,4 +1,4 @@
-; Inno Setup 6 installer script for Manga TUI (Windows x64)
+﻿; Inno Setup 6 installer script for Manga TUI (Windows x64)
 ; Builds a per-user (or optional all-users) installer with shortcuts, uninstaller,
 ; optional PATH registration, and guaranteed user-data preservation on upgrade/uninstall.
 

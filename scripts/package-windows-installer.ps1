@@ -73,7 +73,7 @@ try {
     $ExePath = if ([string]::IsNullOrWhiteSpace($Target)) {
         Join-Path $RepoRoot "target\release\manga-tui.exe"
     } else {
-        Join-Path $RepoRoot "target\$Target\manga-tui.exe"
+        Join-Path $RepoRoot "target\$Target\release\manga-tui.exe"
     }
 
     if (-not (Test-Path -Path $ExePath -PathType Leaf)) {
@@ -92,12 +92,13 @@ try {
         throw "Verification failed: FileVersion metadata is missing from $ExePath"
     }
 
-    Add-Type -AssemblyName System.Drawing
-    $ExtractedIcon = [System.Drawing.Icon]::ExtractAssociatedIcon((Resolve-Path $ExePath).Path)
-    if ($null -eq $ExtractedIcon) {
-        throw "Verification failed: could not extract embedded icon from $ExePath"
+    if (-not ("Win32IconCheck.Shell32" -as [type])) {
+        Add-Type -Namespace Win32IconCheck -Name Shell32 -MemberDefinition '[DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern uint ExtractIconEx(string lpszFile, int nIconIndex, IntPtr[] phiconLarge, IntPtr[] phiconSmall, uint nIcons);'
     }
-    $ExtractedIcon.Dispose()
+    $EmbeddedIconCount = [Win32IconCheck.Shell32]::ExtractIconEx((Resolve-Path $ExePath).Path, -1, $null, $null, 0)
+    if ($EmbeddedIconCount -lt 1) {
+        throw "Verification failed: no embedded icon resources found in $ExePath"
+    }
 
     $ResolvedOutputDir = if ([System.IO.Path]::IsPathRooted($OutputDir)) {
         $OutputDir

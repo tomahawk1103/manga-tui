@@ -48,7 +48,8 @@ function Seed-UserDataDirectory([string]$RootDir, [string]$ConfigDir, [string]$D
 
     Set-Content -Path $configPath -Value "download_type = `"cbz`"`n# installer-preservation-sentinel`n" -Encoding UTF8
     [System.IO.File]::WriteAllBytes($dbPath, [System.Text.Encoding]::UTF8.GetBytes("SQLite format 3`0sentinel-db-payload"))
-    [System.IO.File]::WriteAllBytes($downloadPath, [System.Text.Encoding]::UTF8.GetBytes("PK`x03`x04sentinel-cbz-payload"))
+    $cbzSentinelBytes = [byte[]](0x50, 0x4B, 0x03, 0x04) + [System.Text.Encoding]::UTF8.GetBytes("sentinel-cbz-payload")
+    [System.IO.File]::WriteAllBytes($downloadPath, $cbzSentinelBytes)
 
     return @{
         ConfigPath   = $configPath
@@ -140,12 +141,13 @@ try {
         throw "FileDescription is empty on installed executable"
     }
 
-    Add-Type -AssemblyName System.Drawing
-    $icon = [System.Drawing.Icon]::ExtractAssociatedIcon($InstalledExe)
-    if ($null -eq $icon) {
-        throw "Failed to extract embedded icon from installed executable"
+    if (-not ("Win32IconCheck.Shell32" -as [type])) {
+        Add-Type -Namespace Win32IconCheck -Name Shell32 -MemberDefinition '[DllImport("shell32.dll", CharSet = CharSet.Unicode)] public static extern uint ExtractIconEx(string lpszFile, int nIconIndex, IntPtr[] phiconLarge, IntPtr[] phiconSmall, uint nIcons);'
     }
-    $icon.Dispose()
+    $embeddedIconCount = [Win32IconCheck.Shell32]::ExtractIconEx($InstalledExe, -1, $null, $null, 0)
+    if ($embeddedIconCount -lt 1) {
+        throw "No embedded icon resources found in installed executable: $InstalledExe"
+    }
 
     $versionOutput = & $InstalledExe --version
     if ($LASTEXITCODE -ne 0) {
