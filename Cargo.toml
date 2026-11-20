@@ -1,10 +1,10 @@
 [package]
 name = "manga-tui"
-version = "0.10.0"
+version = "0.2.0"
 edition = "2024"
-authors = ["Josue <josuebarretogit@gmail.com>"]
+authors = ["tomahawk1103", "drodri22"]
 readme = "README.md"
-repository = "https://github.com/josueBarretogit/manga-tui"
+repository = "https://github.com/tomahawk1103/manga-tui"
 description = "Terminal-based manga reader and downloader with image rendering support"
 keywords = ["cli", "command-line", "terminal", "tui" ]
 categories = ["command-line-interface"]
@@ -75,10 +75,11 @@ winresource = "0.1"
 
 [package.metadata.winresource]
 ProductName = "Manga TUI"
+CompanyName = "tomahawk1103 & drodri22"
 FileDescription = "Terminal-based manga reader and downloader with image rendering support"
 OriginalFilename = "manga-tui.exe"
 InternalName = "manga-tui"
-LegalCopyright = "MIT License - manga-tui"
+LegalCopyright = "Copyright (c) 2026 tomahawk1103 & drodri22 (MIT License)"
 
 [profile.release]
 codegen-units = 1

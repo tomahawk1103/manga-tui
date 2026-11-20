@@ -310,7 +310,7 @@ fn jikan_http_client() -> Option<&'static reqwest::Client> {
         .get_or_init(|| {
             reqwest::Client::builder()
                 .timeout(Duration::from_secs(7))
-                .user_agent("manga-tui/0.10.0")
+                .user_agent(concat!("manga-tui/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .ok()
         })

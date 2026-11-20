@@ -3,7 +3,7 @@
 ; optional PATH registration, and guaranteed user-data preservation on upgrade/uninstall.
 
 #ifndef MyAppVersion
-  #define MyAppVersion "0.10.0"
+  #define MyAppVersion "0.2.0"
 #endif
 
 #ifndef MyAppTarget
@@ -24,7 +24,7 @@
 
 #define MyAppName "Manga TUI"
 #define MyAppExeName "manga-tui.exe"
-#define MyAppPublisher "tomahawk1103"
+#define MyAppPublisher "tomahawk1103 & drodri22"
 #define MyAppURL "https://github.com/tomahawk1103/manga-tui"
 
 [Setup]
@@ -39,7 +39,6 @@ AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={autopf}\{#MyAppName}
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-LicenseFile=..\LICENSE
 PrivilegesRequired=lowest
 PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
