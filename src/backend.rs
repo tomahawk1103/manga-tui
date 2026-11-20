@@ -298,4 +298,84 @@ mod test {
 
         let _ = fs::remove_dir_all("./test_results/Álvaro Mis Mangas Portable");
     }
+
+    #[test]
+    fn windows_icon_is_valid_multi_resolution_ico() {
+        let icon_path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets").join("icon.ico");
+        let bytes = fs::read(&icon_path).expect("assets/icon.ico must exist");
+        assert!(bytes.len() >= 22, "ICO file too small");
+
+        let reserved = u16::from_le_bytes([bytes[0], bytes[1]]);
+        let icon_type = u16::from_le_bytes([bytes[2], bytes[3]]);
+        let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+
+        assert_eq!(reserved, 0, "ICO reserved field must be 0");
+        assert_eq!(icon_type, 1, "ICO type field must be 1 (icon)");
+        assert!(count >= 6, "ICO should contain multiple resolutions, found {count}");
+        assert!(bytes.len() >= 6 + count * 16, "ICO directory table truncated");
+
+        let mut sizes = Vec::with_capacity(count);
+        for i in 0..count {
+            let entry = &bytes[6 + i * 16..6 + (i + 1) * 16];
+            let width = if entry[0] == 0 { 256u16 } else { u16::from(entry[0]) };
+            let height = if entry[1] == 0 { 256u16 } else { u16::from(entry[1]) };
+            let byte_len = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]) as usize;
+            let offset = u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]) as usize;
+
+            assert_eq!(width, height, "ICO entries should be square");
+            assert!(byte_len > 0, "ICO entry {i} must have non-zero size");
+            assert!(offset + byte_len <= bytes.len(), "ICO entry {i} points outside file bounds");
+            sizes.push(width);
+        }
+
+        for expected in [16u16, 24, 32, 48, 64, 128, 256] {
+            assert!(sizes.contains(&expected), "ICO missing {expected}x{expected} resolution (found: {sizes:?})");
+        }
+    }
+
+    #[test]
+    fn installed_mode_preserves_system_user_data_on_upgrade_and_uninstall() {
+        let base = PathBuf::from("./test_results/installer_preservation_test");
+        let _ = fs::remove_dir_all(&base);
+        let install_dir = base.join("Programs").join("Manga TUI");
+        let system_data_dir = base.join("AppData").join("manga-tui").join("data");
+        let system_config_dir = base.join("AppData").join("manga-tui").join("config");
+
+        fs::create_dir_all(&install_dir).unwrap();
+        fs::create_dir_all(&system_data_dir).unwrap();
+        fs::create_dir_all(&system_config_dir).unwrap();
+
+        let exe_path = install_dir.join("manga-tui.exe");
+        fs::write(&exe_path, b"installed-binary-v0.10.0").unwrap();
+        // Installed mode must not have portable.txt next to the executable
+        assert!(!is_portable_next_to_exe(&install_dir));
+
+        let (resolved_data, mode) = resolve_data_dir_with_precedence(None, Some(&install_dir), Some(system_data_dir.clone()));
+        assert_eq!(mode, StorageMode::System);
+        assert_eq!(resolved_data, Some(system_data_dir.clone()));
+
+        AppDirectories::build_if_not_exists(&system_data_dir).unwrap();
+        let config_path = system_config_dir.join("config.toml");
+        let db_path = system_data_dir.join("history").join(DATABASE_FILE);
+        let cbz_path = system_data_dir.join("mangaDownloads").join("Chapter 1.cbz");
+
+        fs::write(&config_path, "download_type = \"cbz\"\n").unwrap();
+        fs::write(&db_path, b"sqlite-user-history").unwrap();
+        fs::write(&cbz_path, b"downloaded-cbz-bytes").unwrap();
+
+        // Simulate in-place installer upgrade
+        fs::write(&exe_path, b"installed-binary-v0.10.1").unwrap();
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), "download_type = \"cbz\"\n");
+        assert_eq!(fs::read(&db_path).unwrap(), b"sqlite-user-history");
+        assert_eq!(fs::read(&cbz_path).unwrap(), b"downloaded-cbz-bytes");
+
+        // Simulate uninstaller deleting the entire installation directory
+        fs::remove_dir_all(&install_dir).unwrap();
+        assert!(!exe_path.exists());
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), "download_type = \"cbz\"\n");
+        assert_eq!(fs::read(&db_path).unwrap(), b"sqlite-user-history");
+        assert_eq!(fs::read(&cbz_path).unwrap(), b"downloaded-cbz-bytes");
+
+        let _ = fs::remove_dir_all(&base);
+    }
 }

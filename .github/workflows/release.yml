@@ -64,11 +64,33 @@ jobs:
         shell: pwsh
         run: ./scripts/package-windows.ps1 -Version ${{ env.RELEASE_VERSION }} -Target x86_64-pc-windows-msvc -OutputDir dist
 
+      - name: Ensure Inno Setup 6 is available
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe") -and -not (Get-Command ISCC.exe -ErrorAction SilentlyContinue)) {
+            choco install innosetup -y --no-progress
+          }
+
+      - name: Package Windows installer (Inno Setup)
+        shell: pwsh
+        run: ./scripts/package-windows-installer.ps1 -Version ${{ env.RELEASE_VERSION }} -Target x86_64-pc-windows-msvc -OutputDir dist -SkipBuild
+
+      - name: Test Windows installer upgrade and uninstall data preservation
+        shell: pwsh
+        run: ./scripts/test-windows-installer.ps1 -ExpectedVersion ${{ env.RELEASE_VERSION }} -TestSystemAppData
+
       - name: Upload Windows portable artifact
         uses: actions/upload-artifact@v5
         with:
           name: release-x86_64-pc-windows-msvc-portable
           path: dist/manga-tui-${{ env.RELEASE_VERSION }}-x86_64-pc-windows-msvc-portable.zip*
+          if-no-files-found: error
+
+      - name: Upload Windows installer artifact
+        uses: actions/upload-artifact@v5
+        with:
+          name: release-x86_64-pc-windows-msvc-installer
+          path: dist/manga-tui-${{ env.RELEASE_VERSION }}-x86_64-pc-windows-msvc-setup.exe*
           if-no-files-found: error
 
   release:

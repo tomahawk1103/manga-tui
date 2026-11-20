@@ -125,7 +125,14 @@ nix profile install 'github:josueBarretogit/manga-tui'
 
 ## Binary release
 
-Download a binary (including the **Windows Portable `.zip`**) from the [releases page](https://github.com/tomahawk1103/manga-tui/releases/latest).
+Download a binary (including the **Windows Installer `.exe`** and **Windows Portable `.zip`**) from the [releases page](https://github.com/tomahawk1103/manga-tui/releases/latest).
+
+### Windows Installer (`.exe`)
+
+Run `manga-tui-*-windows-msvc-setup.exe` for a standard per-user Windows installation (no admin rights required, with optional all-users mode, Start Menu / Desktop shortcuts with custom icon, optional `PATH` registration, and clean uninstaller).
+
+- Installed mode stores user data in `%APPDATA%\manga-tui` (`config.toml`, SQLite history, and `mangaDownloads/`), completely separated from the installation folder.
+- Upgrading or uninstalling preserves all your user configuration, reading history, and downloaded chapters.
 
 ### Windows Portable Mode
 
@@ -154,6 +161,15 @@ Para actualizar sin perder datos, sustituye únicamente `manga-tui.exe` mantenie
 
 > [!NOTE]
 > Las credenciales de AniList configuradas por CLI se guardan en el almacén de credenciales de Windows (`keyring`), por lo que al mover la carpeta portable a otro equipo habrá que volver a configurarlas en ese PC o definir `[anilist]` dentro de `data/config.toml`. Para la guía completa en castellano incluida en el ZIP, consulta [docs/LEEME_PORTABLE.txt](docs/LEEME_PORTABLE.txt).
+
+### Instalador de Windows (Español)
+
+También puedes descargar `manga-tui-*-windows-msvc-setup.exe` desde la página de releases para instalarlo de forma clásica en Windows (por usuario sin necesidad de administrador, o para todos los usuarios), con:
+
+- Icono oficial multi-resolución y metadatos Win32 embebidos en `manga-tui.exe`.
+- Accesos directos en el Menú Inicio y (opcionalmente) en el Escritorio.
+- Registro opcional en el `PATH` del sistema/usuario para ejecutar `manga-tui` desde cualquier terminal.
+- Desinstalador limpio que **conserva siempre tus datos de usuario** (`config.toml`, historial SQLite y descargas en `%APPDATA%\manga-tui`) tanto al actualizar como al desinstalar.
 
 ## Image rendering
 

@@ -9,7 +9,7 @@ flowchart LR
     H2["Hito 2<br/>Datos Portables y Actualización<br/>✅ Implementado"]
     H3["Hito 3<br/>Aviso de Versiones del Fork y UI<br/>✅ Implementado"]
     H4["Hito 4<br/>Artefacto ZIP + CI + Prueba E2E<br/>✅ Script/CI · ⏳ Test Windows limpio"]
-    H5["Hito 5<br/>Icono .ico e Instalador<br/>⏳ Siguiente corte"]
+    H5["Hito 5<br/>Icono .ico e Instalador<br/>✅ Implementado · ⏳ Test ISCC/CI"]
 
     Base --> H1 --> H2 --> H3 --> H4 --> H5
 ```
@@ -92,8 +92,15 @@ Antes de publicar la primera release definitiva, validar el `.zip` generado por 
 
 ---
 
-## Hito 5 · Identidad visual (`.ico`) e Instalador de Windows (Siguiente corte) ⏳
+## Hito 5 · Identidad visual (`.ico`) e Instalador de Windows ✅ / ⏳
 
-- **Identidad del ejecutable**: Crear `assets/icon.ico` multi-resolución e incrustarlo junto con los metadatos Win32 (`ProductName`, `FileDescription`, `FileVersion`) mediante `build.rs` + `winresource`.
-- **Instalador de Windows**: Empaquetar instalador (Inno Setup / MSI) con accesos directos, desinstalador y registro opcional en `PATH`.
-- **Criterio de aceptación (Instalador)**: Prueba específica de **actualización y desinstalación** que compruebe que se conservan los datos del usuario (`config.toml`, base de datos SQLite y carpeta de descargas).
+**Implementado en:** [assets/icon.ico](assets/icon.ico), [build.rs](build.rs), [Cargo.toml](Cargo.toml), [scripts/windows-installer.iss](scripts/windows-installer.iss), [scripts/package-windows-installer.ps1](scripts/package-windows-installer.ps1), [scripts/test-windows-installer.ps1](scripts/test-windows-installer.ps1), [.github/workflows/release.yml](.github/workflows/release.yml)
+
+- **Identidad del ejecutable**: Creado `assets/icon.ico` multi-resolución (`16`, `24`, `32`, `48`, `64`, `128` y `256` px) a partir de `assets/icon.png` e incrustado junto con los metadatos Win32 (`ProductName`, `FileDescription`, `FileVersion`, `ProductVersion`, `OriginalFilename`, `InternalName`, `LegalCopyright`) mediante `build.rs` + `winresource` (condicionado a Windows para no afectar a compilaciones Linux/macOS).
+- **Instalador de Windows (Inno Setup 6)**: Script [scripts/windows-installer.iss](scripts/windows-installer.iss) en español e inglés, instalación por usuario por defecto (sin requerir administrador, con opción de elegir para todos los usuarios), accesos directos en Menú Inicio y Escritorio con el icono incrustado, desinstalador limpio y tarea opcional para registrar/eliminar `{app}` en el `PATH`.
+- **Empaquetado y CI**: [scripts/package-windows-installer.ps1](scripts/package-windows-installer.ps1) valida los metadatos Win32 y el icono del `.exe`, compila `manga-tui-<version>-x86_64-pc-windows-msvc-setup.exe` con `ISCC.exe` y genera su `.sha256`. Integrado en `.github/workflows/release.yml` junto a la prueba automática [scripts/test-windows-installer.ps1](scripts/test-windows-installer.ps1).
+
+### Criterios de aceptación (Hito 5)
+- [x] `assets/icon.ico` multi-resolución (`16..256` px) validado por test unitario y verificado incrustado en `manga-tui.exe` junto a `ProductName`, `FileDescription` y `FileVersion`.
+- [x] Tests unitarios de separación de almacenamiento en modo instalado (`StorageMode::System`, sin `portable.txt`) y conservación de `config.toml`, base de datos SQLite y descargas tras actualización y desinstalación.
+- [ ] Ejecutar [scripts/package-windows-installer.ps1](scripts/package-windows-installer.ps1) + [scripts/test-windows-installer.ps1](scripts/test-windows-installer.ps1) con Inno Setup 6 (`ISCC.exe`) en Windows limpio o en el job `build-windows` de CI para validar el `.exe` instalador real de principio a fin.
