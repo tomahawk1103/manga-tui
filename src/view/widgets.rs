@@ -12,6 +12,7 @@ use crate::i18n::tr;
 use crate::theme::theme;
 use crate::utils::centered_rect;
 
+pub mod cloud;
 pub mod feed;
 pub mod home;
 pub mod manga;
@@ -20,6 +21,7 @@ pub mod search;
 pub mod settings;
 pub mod updater;
 
+pub use cloud::{CloudModal, CloudModalOutcome, CloudModalState};
 pub use settings::{SettingsModal, SettingsModalState, SettingsOutcome};
 pub use updater::{AppUpdateModal, AppUpdateModalState, AppUpdateStage};
 
@@ -550,6 +552,7 @@ impl Widget for HelpModal {
             Self::key_line("i / F2", tr("Ir a Buscar", "Go to Search")),
             Self::key_line("o / F3", tr("Ir a Seguimiento (Biblioteca)", "Go to Feed (Library)")),
             Self::key_line("c / F5", tr("Abrir menú de Ajustes", "Open Settings menu")),
+            Self::key_line("C / F6", tr("Abrir Nube y Sincronización (Drive/iCloud)", "Open Cloud Sync (Drive/iCloud)")),
             Self::key_line(
                 "T",
                 tr("Alternar tema (Tokyo Night/Catppuccin/Clásico)", "Cycle theme (Tokyo Night/Catppuccin/Classic)"),

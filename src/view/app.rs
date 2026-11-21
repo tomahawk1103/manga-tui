@@ -37,8 +37,9 @@ use crate::view::pages::search::SearchScope;
 use crate::view::pages::*;
 use crate::view::tasks::manga::{AutoDownloadItem, download_new_chapters, download_new_favorite_chapters};
 use crate::view::widgets::{
-    AppUpdateModal, AppUpdateModalState, AppUpdateStage, DownloadQueueModal, ErrorModal, HelpModal, NewChapterItem,
-    NewChaptersModal, NewChaptersModalState, SettingsModal, SettingsModalState, SettingsOutcome,
+    AppUpdateModal, AppUpdateModalState, AppUpdateStage, CloudModal, CloudModalOutcome, CloudModalState, DownloadQueueModal,
+    ErrorModal, HelpModal, NewChapterItem, NewChaptersModal, NewChaptersModalState, SettingsModal, SettingsModalState,
+    SettingsOutcome,
 };
 
 const NEW_CHAPTER_CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -186,6 +187,9 @@ where
     pub is_help_modal_open: bool,
     pub is_settings_modal_open: bool,
     pub settings_state: SettingsModalState,
+    pub is_cloud_modal_open: bool,
+    pub cloud_state: CloudModalState,
+    cloud_task: Option<tokio::task::JoinHandle<()>>,
     pub app_update_state: Option<AppUpdateModalState>,
     pub pending_update_install: Option<crate::backend::updater::PreparedUpdate>,
     app_update_task: Option<tokio::task::JoinHandle<()>>,
@@ -236,6 +240,8 @@ where
             HelpModal::new().render(area, frame.buffer_mut());
         } else if self.is_settings_modal_open {
             SettingsModal::new(&self.settings_state).render(area, frame.buffer_mut());
+        } else if self.is_cloud_modal_open {
+            CloudModal::new(&self.cloud_state).render(area, frame.buffer_mut());
         }
     }
 
@@ -425,6 +431,25 @@ where
                     self.display_error_message(err);
                 }
             },
+            Events::CloudSyncProgress(progress) => {
+                self.cloud_state.progress = Some(progress);
+            },
+            Events::CloudSyncFinished(result) => {
+                self.cloud_task = None;
+                let ok = result.is_ok();
+                self.cloud_state.on_sync_finished(result);
+                if ok {
+                    self.home_page.refresh_stats();
+                    self.search_page.refresh_personal_discovery();
+                    if self.current_tab == SelectedPage::Feed {
+                        self.feed_page.init_search();
+                    }
+                }
+            },
+            Events::CloudOAuthFinished(result) => {
+                self.cloud_task = None;
+                self.cloud_state.on_oauth_finished(result);
+            },
             Events::ProviderCheckFinished {
                 active_provider,
                 switched_from,
@@ -539,6 +564,9 @@ where
             is_help_modal_open: false,
             is_settings_modal_open: false,
             settings_state: SettingsModalState::new(),
+            is_cloud_modal_open: false,
+            cloud_state: CloudModalState::new(),
+            cloud_task: None,
             app_update_state: None,
             pending_update_install: None,
             app_update_task: None,
@@ -751,6 +779,101 @@ where
             }
         });
         self.app_update_task = Some(handle);
+    }
+
+    pub fn open_cloud_modal(&mut self) {
+        self.is_settings_modal_open = false;
+        self.cloud_state.refresh_from_disk();
+        self.is_cloud_modal_open = true;
+    }
+
+    pub fn spawn_cloud_oauth_login(&mut self, client_id: String, client_secret: Option<String>) {
+        if let Some(handle) = self.cloud_task.take() {
+            handle.abort();
+        }
+        self.cloud_state.is_busy = true;
+        self.cloud_state.progress = Some(crate::backend::cloud::CloudSyncProgress {
+            step_label: tr(
+                "Abriendo navegador para autorizar Google Drive (OAuth 2.0)...",
+                "Opening browser to authorize Google Drive (OAuth 2.0)...",
+            )
+            .to_string(),
+            completed_items: 1,
+            total_items: 3,
+        });
+
+        let event_tx = self.global_event_tx.clone();
+        let handle = tokio::spawn(async move {
+            let client = crate::backend::cloud::GoogleDriveClient::new();
+            let tx_url = event_tx.clone();
+            let token_res = client
+                .run_loopback_oauth_flow(&client_id, client_secret.as_deref(), move |auth_url| {
+                    #[cfg(not(test))]
+                    let _ = open::that(auth_url);
+                    #[cfg(test)]
+                    let _ = auth_url;
+                    let _ = tx_url.send(Events::CloudSyncProgress(crate::backend::cloud::CloudSyncProgress {
+                        step_label: tr(
+                            "Esperando que completes el inicio de sesión de Google en tu navegador...",
+                            "Waiting for you to complete Google sign-in in your browser...",
+                        )
+                        .to_string(),
+                        completed_items: 2,
+                        total_items: 3,
+                    }));
+                })
+                .await;
+
+            match token_res {
+                Ok(tokens) => {
+                    let mut state = crate::backend::cloud::CloudConnectionState::load();
+                    state.backend = Some(crate::backend::cloud::CloudBackendKind::GoogleDriveApi);
+                    state.save_oauth_tokens(
+                        &client_id,
+                        client_secret.as_deref(),
+                        &tokens.access_token,
+                        tokens.refresh_token.as_deref(),
+                    );
+                    if let Ok(about) = client.get_about_user(&tokens.access_token).await
+                        && let Some(user) = about.user
+                    {
+                        state.account_email = user.email_address;
+                        state.account_display_name = user.display_name;
+                    }
+                    let _ = state.save();
+                    let _ = event_tx.send(Events::CloudOAuthFinished(Ok(state)));
+                },
+                Err(err) => {
+                    let _ = event_tx.send(Events::CloudOAuthFinished(Err(err)));
+                },
+            }
+        });
+        self.cloud_task = Some(handle);
+    }
+
+    pub fn spawn_cloud_sync(&mut self, mode: crate::backend::cloud::CloudSyncMode) {
+        if let Some(handle) = self.cloud_task.take() {
+            handle.abort();
+        }
+        self.cloud_state.is_busy = true;
+        self.cloud_state.progress = Some(crate::backend::cloud::CloudSyncProgress {
+            step_label: format!("{} ({})...", tr("Iniciando sincronización", "Starting sync"), mode.label()),
+            completed_items: 0,
+            total_items: 4,
+        });
+
+        let mut state = self.cloud_state.connection.clone();
+        let event_tx = self.global_event_tx.clone();
+        let handle = tokio::spawn(async move {
+            let client = crate::backend::cloud::GoogleDriveClient::new();
+            let tx_progress = event_tx.clone();
+            let res = crate::backend::cloud::run_cloud_sync(&mut state, mode, &client, move |progress| {
+                let _ = tx_progress.send(Events::CloudSyncProgress(progress));
+            })
+            .await;
+            let _ = event_tx.send(Events::CloudSyncFinished(res));
+        });
+        self.cloud_task = Some(handle);
     }
 
     pub fn check_for_new_downloaded_chapters(&self) {
@@ -1179,6 +1302,8 @@ where
             (tr(" ❓ AYUDA ", " ❓ HELP "), t.accent_primary)
         } else if self.is_settings_modal_open {
             (tr(" ⚙  AJUSTES ", " ⚙  SETTINGS "), t.accent_primary)
+        } else if self.is_cloud_modal_open {
+            (tr(" ☁  NUBE ", " ☁  CLOUD "), t.accent_primary)
         } else if self.is_queue_modal_open {
             (tr(" ⬇ COLA ", " ⬇ QUEUE "), t.accent_primary)
         } else if self.app_update_state.is_some() {
@@ -1296,6 +1421,8 @@ where
             vec![
                 Span::styled(" c ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
                 Span::styled(format!(" {}  ", tr("Ajustes", "Settings")), Style::default().fg(t.text_muted).bg(bar_bg)),
+                Span::styled(" C ", Style::default().fg(t.accent_highlight).bg(chip_bg).bold()),
+                Span::styled(format!(" {}  ", tr("Nube", "Cloud")), Style::default().fg(t.text_muted).bg(bar_bg)),
                 Span::styled(" T ", Style::default().fg(t.accent_secondary).bg(chip_bg).bold()),
                 Span::styled(format!(" {active_theme_label}  "), Style::default().fg(t.text_muted).bg(bar_bg)),
                 Span::styled(" D ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
@@ -1308,6 +1435,8 @@ where
         } else {
             vec![
                 Span::styled(" c ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
+                Span::styled(" ", Style::default().bg(bar_bg)),
+                Span::styled(" C ", Style::default().fg(t.accent_highlight).bg(chip_bg).bold()),
                 Span::styled(" ", Style::default().bg(bar_bg)),
                 Span::styled(" T ", Style::default().fg(t.accent_secondary).bg(chip_bg).bold()),
                 Span::styled(" ", Style::default().bg(bar_bg)),
@@ -1369,11 +1498,17 @@ where
         if let Some(handle) = self.app_update_task.take() {
             handle.abort();
         }
+        if let Some(handle) = self.cloud_task.take() {
+            handle.abort();
+        }
+        self.cloud_state.is_busy = false;
+        self.cloud_state.progress = None;
         self.app_update_state = None;
         self.new_chapters_state = None;
         self.is_queue_modal_open = false;
         self.is_help_modal_open = false;
         self.is_settings_modal_open = false;
+        self.is_cloud_modal_open = false;
     }
 
     fn dismiss_new_chapters_notification(&mut self) -> Result<(), String> {
@@ -1407,6 +1542,7 @@ where
             || self.is_queue_modal_open
             || self.is_help_modal_open
             || self.is_settings_modal_open
+            || self.is_cloud_modal_open
     }
 
     /// Returns `true` when any global modal or page-level popup overlay is currently open.
@@ -1540,7 +1676,34 @@ where
                 SettingsOutcome::CheckForUpdates => {
                     self.spawn_manual_update_check();
                 },
+                SettingsOutcome::OpenCloudSync => {
+                    self.open_cloud_modal();
+                },
                 _ => {},
+            }
+            return;
+        }
+
+        if self.is_cloud_modal_open {
+            match self.cloud_state.handle_key_event(key_event) {
+                CloudModalOutcome::Close => {
+                    self.is_cloud_modal_open = false;
+                },
+                CloudModalOutcome::StartOAuthLogin {
+                    client_id,
+                    client_secret,
+                } => {
+                    self.spawn_cloud_oauth_login(client_id, client_secret);
+                },
+                CloudModalOutcome::StartSync(mode) => {
+                    self.spawn_cloud_sync(mode);
+                },
+                CloudModalOutcome::CancelRunningTask => {
+                    if let Some(handle) = self.cloud_task.take() {
+                        handle.abort();
+                    }
+                },
+                CloudModalOutcome::None => {},
             }
             return;
         }
@@ -1754,6 +1917,15 @@ where
             self.settings_state.status_message = None;
             self.settings_state.status_is_error = false;
             self.is_settings_modal_open = true;
+            return;
+        }
+
+        if !is_typing
+            && !self.search_page.is_filter_open()
+            && self.current_tab != SelectedPage::ReaderTab
+            && matches!(key_event.code, KeyCode::Char('C') | KeyCode::F(6))
+        {
+            self.open_cloud_modal();
             return;
         }
 

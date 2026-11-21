@@ -458,6 +458,7 @@ pub enum SettingsOutcome {
     ThemeChanged(ThemeVariant),
     ImageProtocolChanged(ImageProtocol),
     CheckForUpdates,
+    OpenCloudSync,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -671,6 +672,7 @@ impl SettingsModalState {
                     Some(tr("🔍 Buscando actualizaciones en GitHub...", "🔍 Checking GitHub for updates...").to_string());
                 SettingsOutcome::CheckForUpdates
             },
+            KeyCode::Char('g') | KeyCode::Char('G') | KeyCode::F(6) => SettingsOutcome::OpenCloudSync,
             KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::F(5) | KeyCode::Char('q') | KeyCode::Esc => SettingsOutcome::Close,
             _ => SettingsOutcome::Noop,
         }
@@ -889,6 +891,8 @@ impl<'a> Widget for SettingsModal<'a> {
                     Span::styled(tr(" Cambiar  ", " Change  "), Style::default().fg(t.text_muted)),
                     t.key_chip("o"),
                     Span::styled(tr(" Carpeta  ", " Folder  "), Style::default().fg(t.text_muted)),
+                    t.key_chip("g"),
+                    Span::styled(tr(" Nube  ", " Cloud  "), Style::default().fg(t.text_muted)),
                     t.key_chip("u"),
                     Span::styled(tr(" Actualizar  ", " Update  "), Style::default().fg(t.text_muted)),
                     t.key_chip("c / F5 / Esc"),

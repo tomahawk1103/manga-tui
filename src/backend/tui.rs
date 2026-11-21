@@ -71,6 +71,9 @@ pub enum Events {
     AppUpdateDownloadProgress(crate::backend::updater::UpdateProgress),
     AppUpdateReadyToInstall(crate::backend::updater::PreparedUpdate),
     AppUpdateFailed(String),
+    CloudSyncProgress(crate::backend::cloud::CloudSyncProgress),
+    CloudSyncFinished(Result<crate::backend::cloud::CloudSyncReport, String>),
+    CloudOAuthFinished(Result<crate::backend::cloud::CloudConnectionState, String>),
 }
 
 static MEASURED_FONT_SIZE: std::sync::OnceLock<(u16, u16)> = std::sync::OnceLock::new();

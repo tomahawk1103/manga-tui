@@ -11,6 +11,7 @@ use crate::config::build_config_file;
 use crate::logger::ILogger;
 
 pub mod cache;
+pub mod cloud;
 pub mod database;
 pub mod download_queue;
 pub mod error_log;

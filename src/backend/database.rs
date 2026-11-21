@@ -1078,6 +1078,250 @@ impl<'a> Database<'a> {
         Ok(OfflineCatalogMetadata { mangas, chapters })
     }
 
+    /// Exports the complete library, reading progress, bookmarks, favorites,
+    /// dismissed notifications, and search history as a portable `LibrarySyncSnapshot`.
+    pub fn export_library_sync_snapshot(&self) -> rusqlite::Result<crate::backend::cloud::LibrarySyncSnapshot> {
+        use std::collections::HashSet;
+
+        use crate::backend::cloud::{
+            LIBRARY_SYNC_SCHEMA_VERSION, LibrarySyncSnapshot, SyncChapterRecord, SyncDismissedRecord, SyncFavoriteRecord,
+            SyncMangaRecord, SyncSearchRecord,
+        };
+
+        let reading_type_id = self.get_history_type(MangaHistoryType::ReadingHistory)?;
+        let plan_type_id = self.get_history_type(MangaHistoryType::PlanToRead)?;
+
+        let mut reading_set: HashSet<String> = HashSet::new();
+        let mut plan_set: HashSet<String> = HashSet::new();
+        {
+            let mut stmt = self.connection.prepare("SELECT manga_id, type_id FROM manga_history_union")?;
+            let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i32>(1)?)))?;
+            for row in rows {
+                let (manga_id, type_id) = row?;
+                if type_id == reading_type_id {
+                    reading_set.insert(manga_id);
+                } else if type_id == plan_type_id {
+                    plan_set.insert(manga_id);
+                }
+            }
+        }
+
+        let mut mangas = Vec::new();
+        {
+            let mut stmt = self.connection.prepare(
+                "SELECT id, title, created_at, updated_at, last_read, deleted_at, img_url, manga_provider
+                 FROM mangas ORDER BY id",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                let id: String = row.get(0)?;
+                Ok(SyncMangaRecord {
+                    in_reading_history: reading_set.contains(&id),
+                    in_plan_to_read: plan_set.contains(&id),
+                    id,
+                    title: row.get(1)?,
+                    created_at: row.get(2).ok(),
+                    updated_at: row.get(3).ok(),
+                    last_read: row.get(4).ok(),
+                    deleted_at: row.get(5).ok(),
+                    img_url: row.get(6).ok(),
+                    manga_provider: row.get(7)?,
+                })
+            })?;
+            for r in rows {
+                mangas.push(r?);
+            }
+        }
+
+        let mut chapters = Vec::new();
+        {
+            let mut stmt = self.connection.prepare(
+                "SELECT id, title, manga_id, is_read, is_downloaded, is_bookmarked, translated_language, number_page_bookmarked
+                 FROM chapters ORDER BY id",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(SyncChapterRecord {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    manga_id: row.get(2)?,
+                    is_read: row.get(3)?,
+                    is_downloaded: row.get(4)?,
+                    is_bookmarked: row.get(5)?,
+                    translated_language: row.get(6).ok(),
+                    number_page_bookmarked: row.get(7).ok(),
+                })
+            })?;
+            for r in rows {
+                chapters.push(r?);
+            }
+        }
+
+        let mut favorites = Vec::new();
+        {
+            let mut stmt = self
+                .connection
+                .prepare("SELECT manga_id, provider, title, created_at FROM favorite_mangas ORDER BY manga_id, provider")?;
+            let rows = stmt.query_map([], |row| {
+                Ok(SyncFavoriteRecord {
+                    manga_id: row.get(0)?,
+                    provider: row.get(1)?,
+                    title: row.get(2)?,
+                    created_at: row.get(3).ok(),
+                })
+            })?;
+            for r in rows {
+                favorites.push(r?);
+            }
+        }
+
+        let mut dismissed_notifications = Vec::new();
+        {
+            let mut stmt = self.connection.prepare(
+                "SELECT manga_id, provider, chapter_id FROM chapter_notification_dismissals ORDER BY manga_id, provider, chapter_id",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok(SyncDismissedRecord {
+                    manga_id: row.get(0)?,
+                    provider: row.get(1)?,
+                    chapter_id: row.get(2)?,
+                })
+            })?;
+            for r in rows {
+                dismissed_notifications.push(r?);
+            }
+        }
+
+        let mut search_history = Vec::new();
+        {
+            let mut stmt = self
+                .connection
+                .prepare("SELECT query, searched_at FROM search_history ORDER BY searched_at DESC")?;
+            let rows = stmt.query_map([], |row| {
+                Ok(SyncSearchRecord {
+                    query: row.get(0)?,
+                    searched_at: row.get(1)?,
+                })
+            })?;
+            for r in rows {
+                search_history.push(r?);
+            }
+        }
+
+        Ok(LibrarySyncSnapshot {
+            schema_version: LIBRARY_SYNC_SCHEMA_VERSION,
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            synced_at: Utc::now().to_rfc3339(),
+            mangas,
+            chapters,
+            favorites,
+            dismissed_notifications,
+            search_history,
+        })
+    }
+
+    /// Merges a remote `LibrarySyncSnapshot` with the local database and applies the merged state atomically.
+    pub fn import_and_merge_library_sync_snapshot(
+        &self,
+        remote: &crate::backend::cloud::LibrarySyncSnapshot,
+    ) -> rusqlite::Result<crate::backend::cloud::LibrarySyncSnapshot> {
+        let local = self.export_library_sync_snapshot()?;
+        let merged = crate::backend::cloud::merge_library_snapshots(&local, remote);
+
+        let reading_type_id = self.get_history_type(MangaHistoryType::ReadingHistory)?;
+        let plan_type_id = self.get_history_type(MangaHistoryType::PlanToRead)?;
+
+        let tx = self.connection.unchecked_transaction()?;
+
+        for m in &merged.mangas {
+            tx.execute(
+                "INSERT INTO mangas (id, title, created_at, updated_at, last_read, deleted_at, img_url, manga_provider)
+                 VALUES (?1, ?2, COALESCE(?3, datetime('now')), COALESCE(?4, datetime('now')), COALESCE(?5, datetime('now')), ?6, ?7, ?8)
+                 ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    created_at = COALESCE(excluded.created_at, mangas.created_at),
+                    updated_at = COALESCE(excluded.updated_at, mangas.updated_at),
+                    last_read = COALESCE(excluded.last_read, mangas.last_read),
+                    deleted_at = excluded.deleted_at,
+                    img_url = COALESCE(excluded.img_url, mangas.img_url),
+                    manga_provider = excluded.manga_provider",
+                params![
+                    m.id,
+                    m.title,
+                    m.created_at,
+                    m.updated_at,
+                    m.last_read,
+                    m.deleted_at,
+                    m.img_url,
+                    m.manga_provider
+                ],
+            )?;
+
+            if m.in_reading_history {
+                tx.execute("INSERT OR IGNORE INTO manga_history_union (manga_id, type_id) VALUES (?1, ?2)", params![
+                    m.id,
+                    reading_type_id
+                ])?;
+            }
+            if m.in_plan_to_read {
+                tx.execute("INSERT OR IGNORE INTO manga_history_union (manga_id, type_id) VALUES (?1, ?2)", params![
+                    m.id,
+                    plan_type_id
+                ])?;
+            }
+        }
+
+        tx.execute("UPDATE chapters SET is_bookmarked = 0", [])?;
+
+        for ch in &merged.chapters {
+            tx.execute(
+                "INSERT INTO chapters (id, title, manga_id, is_read, is_downloaded, is_bookmarked, translated_language, number_page_bookmarked)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                 ON CONFLICT(id) DO UPDATE SET
+                    title = excluded.title,
+                    is_read = excluded.is_read,
+                    is_downloaded = excluded.is_downloaded,
+                    is_bookmarked = excluded.is_bookmarked,
+                    translated_language = COALESCE(excluded.translated_language, chapters.translated_language),
+                    number_page_bookmarked = excluded.number_page_bookmarked",
+                params![
+                    ch.id,
+                    ch.title,
+                    ch.manga_id,
+                    ch.is_read,
+                    ch.is_downloaded,
+                    ch.is_bookmarked,
+                    ch.translated_language,
+                    ch.number_page_bookmarked
+                ],
+            )?;
+        }
+
+        for fav in &merged.favorites {
+            tx.execute(
+                "INSERT OR REPLACE INTO favorite_mangas (manga_id, provider, title, created_at)
+                 VALUES (?1, ?2, ?3, COALESCE(?4, datetime('now')))",
+                params![fav.manga_id, fav.provider, fav.title, fav.created_at],
+            )?;
+        }
+
+        for d in &merged.dismissed_notifications {
+            tx.execute(
+                "INSERT OR IGNORE INTO chapter_notification_dismissals (manga_id, provider, chapter_id)
+                 VALUES (?1, ?2, ?3)",
+                params![d.manga_id, d.provider, d.chapter_id],
+            )?;
+        }
+
+        for s in &merged.search_history {
+            tx.execute("INSERT OR REPLACE INTO search_history (query, searched_at) VALUES (?1, ?2)", params![
+                s.query,
+                s.searched_at
+            ])?;
+        }
+
+        tx.commit()?;
+        Ok(merged)
+    }
+
     pub fn get_dismissed_chapter_ids(&self, manga_id: &str, provider: MangaProviders) -> rusqlite::Result<Vec<String>> {
         let mut statement = self.connection.prepare(
             "SELECT chapter_id FROM chapter_notification_dismissals

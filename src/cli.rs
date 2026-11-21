@@ -35,6 +35,39 @@ pub enum AnilistCommand {
 }
 
 #[derive(Subcommand, Clone)]
+pub enum CloudCommand {
+    /// Link Google Drive API (OAuth 2.0 PKCE) or a local Google Drive / iCloud Drive folder
+    Login {
+        /// Google Cloud OAuth 2.0 Client ID (optional if already saved or set via MANGA_TUI_GDRIVE_CLIENT_ID)
+        #[arg(long)]
+        client_id: Option<String>,
+        /// Google Cloud OAuth 2.0 Client Secret (optional for Desktop PKCE clients)
+        #[arg(long)]
+        client_secret: Option<String>,
+        /// Link a specific local Google Drive Desktop or iCloud Drive folder path
+        #[arg(long)]
+        folder: Option<String>,
+        /// Automatically detect and link an installed Google Drive Desktop / iCloud Drive / OneDrive folder
+        #[arg(long)]
+        auto_folder: bool,
+    },
+    /// Show current cloud connection status, detected drives, and last sync summary
+    Status,
+    /// Synchronize reading progress, bookmarks, favorites, Plan to Read, and optionally downloaded chapters
+    Sync {
+        /// Also upload and download chapter archives (.cbz, .epub, .pdf)
+        #[arg(short, long)]
+        downloads: bool,
+    },
+    /// Upload local downloaded chapters (.cbz, .epub, .pdf) to the cloud
+    PushDownloads,
+    /// Download cloud chapter archives (.cbz, .epub, .pdf) into local mangaDownloads
+    PullDownloads,
+    /// Unlink the active cloud account and clear stored OAuth tokens
+    Logout,
+}
+
+#[derive(Subcommand, Clone)]
 pub enum Commands {
     Lang {
         #[arg(short, long)]
@@ -46,6 +79,12 @@ pub enum Commands {
     Anilist {
         #[command(subcommand)]
         command: AnilistCommand,
+    },
+
+    /// Cloud synchronization with Google Drive API or iCloud Drive / Google Drive folders
+    Cloud {
+        #[command(subcommand)]
+        command: CloudCommand,
     },
 
     /// Check for, download, and install application updates
@@ -324,6 +363,14 @@ impl CliArgs {
                     },
                 },
 
+                Commands::Cloud { command } => {
+                    if let Err(err) = run_cli_cloud(command).await {
+                        eprintln!("Error: {err}");
+                        exit(1);
+                    }
+                    exit(0)
+                },
+
                 Commands::Update { check, yes } => {
                     if let Err(err) = run_cli_update(*check, *yes).await {
                         eprintln!("Error: {err}");
@@ -444,6 +491,215 @@ async fn run_cli_update(check_only: bool, assume_yes: bool) -> Result<(), String
         )
     );
     Ok(())
+}
+
+async fn run_cli_cloud(command: &CloudCommand) -> Result<(), String> {
+    use std::io::Write;
+    use std::path::PathBuf;
+
+    use crate::backend::cloud::{
+        CLOUD_ROOT_FOLDER_NAME, CloudBackendKind, CloudConnectionState, CloudSyncMode, GoogleDriveClient,
+        detect_installed_cloud_folders, run_cloud_sync,
+    };
+    use crate::i18n::tr;
+    use crate::view::widgets::updater::format_byte_size;
+
+    let mut state = CloudConnectionState::load();
+
+    match command {
+        CloudCommand::Status => {
+            println!(
+                "☁  Manga TUI Cloud Sync — {}: {}",
+                tr("Estado", "Status"),
+                if state.is_connected() {
+                    format!("🟢 {}", state.connection_summary())
+                } else {
+                    format!("⚪ {}", tr("Sin vincular", "Not linked"))
+                }
+            );
+            if let Some(report) = &state.last_sync_report {
+                println!(
+                    "   {}: {} · {} mangas · {} {} · ↑{} / ↓{} ({})",
+                    tr("Última sincronización", "Last sync"),
+                    report.synced_at,
+                    report.total_mangas,
+                    report.total_read_chapters,
+                    tr("cap. leídos", "read ch."),
+                    report.chapters_uploaded,
+                    report.chapters_downloaded,
+                    format_byte_size(report.bytes_transferred)
+                );
+            }
+            let detected = detect_installed_cloud_folders();
+            if !detected.is_empty() {
+                println!(
+                    "\n{}:",
+                    tr("📁 Unidades en la nube detectadas en este equipo", "📁 Cloud drives detected on this machine")
+                );
+                for d in detected {
+                    println!("   • {} -> {}", d.provider_label, d.manga_tui_folder.display());
+                }
+            }
+            Ok(())
+        },
+        CloudCommand::Logout => {
+            state.clear_credentials();
+            state.save()?;
+            println!("{}", tr("✓ Cuenta en la nube desvinculada correctamente.", "✓ Cloud account unlinked successfully."));
+            Ok(())
+        },
+        CloudCommand::Login {
+            client_id,
+            client_secret,
+            folder,
+            auto_folder,
+        } => {
+            if *auto_folder {
+                let detected = detect_installed_cloud_folders();
+                let Some(chosen) = detected.into_iter().next() else {
+                    return Err(tr(
+                        "No se detectó ninguna carpeta local de Google Drive Desktop, iCloud Drive o OneDrive. Usa `--folder <ruta>`.",
+                        "No local Google Drive Desktop, iCloud Drive, or OneDrive folder detected. Use `--folder <path>`.",
+                    )
+                    .to_string());
+                };
+                std::fs::create_dir_all(&chosen.manga_tui_folder).map_err(|e| e.to_string())?;
+                state.backend = Some(CloudBackendKind::LocalCloudFolder);
+                state.local_folder_path = Some(chosen.manga_tui_folder.clone());
+                state.local_folder_provider_label = Some(chosen.provider_label.clone());
+                state.save()?;
+                println!(
+                    "✓ {}: {} ({})",
+                    tr("Vinculado con", "Linked with"),
+                    chosen.provider_label,
+                    chosen.manga_tui_folder.display()
+                );
+                return Ok(());
+            }
+
+            if let Some(raw_folder) = folder {
+                let base = PathBuf::from(raw_folder.trim().trim_matches('"'));
+                let target = if base.file_name().is_some_and(|n| n == CLOUD_ROOT_FOLDER_NAME) {
+                    base
+                } else {
+                    base.join(CLOUD_ROOT_FOLDER_NAME)
+                };
+                std::fs::create_dir_all(&target).map_err(|e| e.to_string())?;
+                state.backend = Some(CloudBackendKind::LocalCloudFolder);
+                state.local_folder_path = Some(target.clone());
+                state.local_folder_provider_label = Some(tr("Carpeta en la nube", "Cloud Folder").to_string());
+                state.save()?;
+                println!("✓ {}: {}", tr("Carpeta en la nube vinculada", "Linked cloud folder"), target.display());
+                return Ok(());
+            }
+
+            let resolved_client_id = match client_id.clone().or_else(|| state.get_client_id()) {
+                Some(id) if !id.trim().is_empty() => id.trim().to_string(),
+                _ => {
+                    print!(
+                        "{}",
+                        tr(
+                            "Introduce tu Google OAuth Client ID (o escribe 'auto' para vincular carpeta local de Google Drive/iCloud): ",
+                            "Enter your Google OAuth Client ID (or type 'auto' to link local Google Drive/iCloud folder): "
+                        )
+                    );
+                    let _ = std::io::stdout().flush();
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input).map_err(|e| e.to_string())?;
+                    let trimmed = input.trim();
+                    if trimmed.eq_ignore_ascii_case("auto") {
+                        return Box::pin(run_cli_cloud(&CloudCommand::Login {
+                            client_id: None,
+                            client_secret: None,
+                            folder: None,
+                            auto_folder: true,
+                        }))
+                        .await;
+                    }
+                    trimmed.to_string()
+                },
+            };
+
+            let resolved_secret = client_secret.clone().or_else(|| state.get_client_secret());
+            let drive_client = GoogleDriveClient::new();
+            let tokens = drive_client
+                .run_loopback_oauth_flow(&resolved_client_id, resolved_secret.as_deref(), |auth_url| {
+                    println!(
+                        "\n{}\n{auth_url}\n",
+                        tr(
+                            "🌐 Abriendo navegador para autorizar Google Drive...",
+                            "🌐 Opening browser to authorize Google Drive..."
+                        )
+                    );
+                    let _ = open::that(auth_url);
+                })
+                .await?;
+
+            state.backend = Some(CloudBackendKind::GoogleDriveApi);
+            state.save_oauth_tokens(
+                &resolved_client_id,
+                resolved_secret.as_deref(),
+                &tokens.access_token,
+                tokens.refresh_token.as_deref(),
+            );
+            if let Ok(about) = drive_client.get_about_user(&tokens.access_token).await
+                && let Some(user) = about.user
+            {
+                state.account_email = user.email_address;
+                state.account_display_name = user.display_name;
+            }
+            state.save()?;
+            println!("✓ {}: {}", tr("Conectado correctamente", "Successfully connected"), state.connection_summary());
+            Ok(())
+        },
+        CloudCommand::Sync { downloads } => {
+            let mode = if *downloads { CloudSyncMode::FullSync } else { CloudSyncMode::LibraryOnly };
+            let client = GoogleDriveClient::new();
+            let report = run_cloud_sync(&mut state, mode, &client, |p| {
+                println!("  • {}", p.step_label);
+            })
+            .await?;
+            println!(
+                "✓ {}: {} mangas · {} {} · ↑{} / ↓{} ({})",
+                tr("Sincronización completada", "Sync completed"),
+                report.total_mangas,
+                report.total_read_chapters,
+                tr("cap. leídos", "read ch."),
+                report.chapters_uploaded,
+                report.chapters_downloaded,
+                format_byte_size(report.bytes_transferred)
+            );
+            Ok(())
+        },
+        CloudCommand::PushDownloads => {
+            let client = GoogleDriveClient::new();
+            let report = run_cloud_sync(&mut state, CloudSyncMode::PushDownloadsOnly, &client, |p| {
+                println!("  • {}", p.step_label);
+            })
+            .await?;
+            println!(
+                "✓ {}: ↑{} ({})",
+                tr("Capítulos subidos a la nube", "Chapters uploaded to cloud"),
+                report.chapters_uploaded,
+                format_byte_size(report.bytes_transferred)
+            );
+            Ok(())
+        },
+        CloudCommand::PullDownloads => {
+            let client = GoogleDriveClient::new();
+            let report = run_cloud_sync(&mut state, CloudSyncMode::PullDownloadsOnly, &client, |p| {
+                println!("  • {}", p.step_label);
+            })
+            .await?;
+            println!(
+                "✓ {}: ↓{} ({})",
+                tr("Capítulos descargados de la nube", "Chapters downloaded from cloud"),
+                report.chapters_downloaded,
+                format_byte_size(report.bytes_transferred)
+            );
+            Ok(())
+        },
+    }
 }
 
 #[cfg(test)]

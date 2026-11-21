@@ -94,7 +94,7 @@ mod tests {
         assert!(!should_relaunch_in_windows_terminal(true, false, true, &exe));
 
         // Non-interactive CLI arguments should run directly without opening a new tab
-        for flag in ["-h", "--help", "-V", "--version", "lang", "anilist", "update"] {
+        for flag in ["-h", "--help", "-V", "--version", "lang", "anilist", "update", "cloud"] {
             let args = vec!["manga-tui.exe".to_string(), flag.to_string()];
             assert!(!should_relaunch_in_windows_terminal(true, false, false, &args), "expected no relaunch for CLI arg {flag}");
         }
@@ -187,7 +187,7 @@ fn should_relaunch_in_windows_terminal(
         return false;
     }
 
-    const NON_INTERACTIVE_TOKENS: [&str; 7] = ["-h", "--help", "-V", "--version", "lang", "anilist", "update"];
+    const NON_INTERACTIVE_TOKENS: [&str; 8] = ["-h", "--help", "-V", "--version", "lang", "anilist", "update", "cloud"];
     !args.iter().skip(1).any(|arg| NON_INTERACTIVE_TOKENS.iter().any(|token| arg == token))
 }
 
