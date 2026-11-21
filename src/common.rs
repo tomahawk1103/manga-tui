@@ -30,9 +30,9 @@ impl ImageState {
         self.image_state.insert(id_manga, protocol);
     }
 
-    pub fn rebuild_protocols(&mut self, mut picker: Option<&mut Picker>) {
+    pub fn rebuild_protocols(&mut self, picker: Option<&mut Picker>) {
         self.image_state.clear();
-        if let Some(picker) = picker.as_deref_mut() {
+        if let Some(picker) = picker {
             for (id, raw) in &self.raw_images {
                 self.image_state.insert(id.clone(), picker.new_resize_protocol(raw.clone()));
             }

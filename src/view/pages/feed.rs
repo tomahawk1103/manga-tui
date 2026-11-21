@@ -64,7 +64,8 @@ use tui_input::backend::crossterm::EventHandler;
 
 use crate::backend::database::{Database, GetHistoryArgs, MangaHistoryResponse, MangaHistoryType};
 use crate::backend::error_log::{ErrorType, write_to_error_log};
-use crate::backend::manga_provider::{Chapter, FeedPageProvider, LatestChapter, MangaProviders};
+use crate::backend::manga_provider::{Chapter, ChapterToRead, FeedPageProvider, LatestChapter, MangaProviders};
+use crate::backend::offline::{LocalChapterSource, OfflineManga, find_offline_manga, scan_offline_mangas};
 use crate::backend::tui::Events;
 use crate::global::ERROR_STYLE;
 use crate::i18n::tr;
@@ -73,7 +74,7 @@ use crate::utils::render_search_bar;
 use crate::view::app::MangaToRead;
 use crate::view::widgets::Component;
 use crate::view::widgets::feed::{
-    AskConfirmationDeleteAllModal, FeedTabs, HistoryWidget, MangasRead, TimelineChapterItem, TimelineWidget,
+    AskConfirmationDeleteAllModal, FeedTabs, HistoryWidget, MangasRead, OfflineDownloadsWidget, TimelineChapterItem, TimelineWidget,
 };
 
 /// Represents the current state of the feed page UI.
@@ -124,6 +125,8 @@ pub enum FeedActions {
     ToggleFavorite,
     /// Refresh timeline feed (Shift+R key)
     RefreshTimeline,
+    /// Open selected downloaded manga directly in the local Web Viewer HD (v key)
+    OpenOfflineWebViewer,
 }
 
 /// Internal events for managing async operations and state changes.
@@ -146,6 +149,10 @@ pub enum FeedEvents {
     SearchTimeline,
     /// Load timeline items
     LoadTimeline(Vec<TimelineChapterItem>),
+    /// Trigger scanning downloaded chapters on disk
+    SearchOfflineDownloads,
+    /// Load offline downloaded mangas scanned from disk
+    LoadOfflineDownloads(Vec<OfflineManga>),
 }
 
 /// Main feed page component for displaying and managing manga collections.
@@ -169,6 +176,8 @@ where
     pub history: Option<HistoryWidget>,
     /// Widget for displaying chronological updates feed
     pub timeline: Option<TimelineWidget>,
+    /// Widget for displaying locally downloaded mangas for 100% offline reading
+    pub offline_downloads: Option<OfflineDownloadsWidget>,
     /// Loading animation state
     pub loading_state: Option<ThrobberState>,
     /// Channel for sending events to the main application
@@ -209,6 +218,7 @@ where
             loading_state: None,
             history: None,
             timeline: None,
+            offline_downloads: None,
             state: FeedState::DisplayingHistory,
             global_event_tx: None,
             local_action_tx,
@@ -347,9 +357,21 @@ where
         }
     }
 
+    fn render_offline_downloads(&mut self, area: Rect, buf: &mut Buffer) {
+        if let Some(offline) = self.offline_downloads.as_mut() {
+            StatefulWidget::render(offline.clone(), area, buf, &mut offline.state);
+        } else {
+            let mut empty_widget = OfflineDownloadsWidget {
+                is_loading: self.state == FeedState::SearchingHistory,
+                ..Default::default()
+            };
+            StatefulWidget::render(empty_widget.clone(), area, buf, &mut empty_widget.state);
+        }
+    }
+
     fn render_tabs_and_search_bar(&mut self, area: Rect, frame: &mut Frame) {
         let t = theme();
-        let [tabs_area, search_bar_area] = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(area);
+        let [tabs_area, search_bar_area] = Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)]).areas(area);
         self.tabs_area = tabs_area;
         self.search_bar_area = search_bar_area;
 
@@ -357,11 +379,12 @@ where
             FeedTabs::Timeline => 0,
             FeedTabs::ContinueReading => 1,
             FeedTabs::Library => 2,
+            FeedTabs::Downloads => 3,
         };
 
         let tabs_title = Line::from(vec![
             Span::styled(tr(" 📚 Seguimiento ", " 📚 Feed "), Style::default().fg(t.accent_primary).bold()),
-            Span::styled("<Tab | 1-3> ", Style::default().fg(t.accent_highlight).bold()),
+            Span::styled("<Tab | 1-4> ", Style::default().fg(t.accent_highlight).bold()),
             Span::styled(tr("Pestaña ", "Tab "), Style::default().fg(t.text_muted)),
         ]);
 
@@ -395,8 +418,9 @@ where
 
             Tabs::new(vec![
                 tr(" ⚡ Novedades ", " ⚡ Updates "),
-                tr(" 📖 Continuar leyendo ", " 📖 Continue Reading "),
+                tr(" 📖 Continuar ", " 📖 Continue "),
                 tr(" 📚 Biblioteca ", " 📚 Library "),
+                tr(" 💾 Descargas ", " 💾 Downloads "),
             ])
             .select(selected_tab)
             .style(Style::default().fg(t.text_muted))
@@ -464,6 +488,10 @@ where
                     "💡 Tus mangas favoritos (★) y pendientes por leer (📋)",
                     "💡 Your favorite (★) and plan-to-read (📋) mangas",
                 ),
+                FeedTabs::Downloads => tr(
+                    "💡 Capítulos guardados en disco (100% sin conexión · CBZ, RAW, EPUB, PDF)",
+                    "💡 Chapters saved on disk (100% offline · CBZ, RAW, EPUB, PDF)",
+                ),
             };
             Paragraph::new(Line::from(Span::styled(hint, Style::default().fg(t.text_dim)))).render(area, buf);
         }
@@ -491,6 +519,9 @@ where
             FeedTabs::Timeline => {
                 self.local_event_tx.send(FeedEvents::SearchTimeline).ok();
             },
+            FeedTabs::Downloads => {
+                self.local_event_tx.send(FeedEvents::SearchOfflineDownloads).ok();
+            },
             _ => {
                 self.local_event_tx.send(FeedEvents::SearchHistory).ok();
             },
@@ -499,7 +530,7 @@ where
 
     /// Removes the currently selected manga from history or library.
     fn remove_currently_selected_manga(&mut self) {
-        if self.tabs == FeedTabs::Timeline {
+        if matches!(self.tabs, FeedTabs::Timeline | FeedTabs::Downloads) {
             return;
         }
 
@@ -541,6 +572,11 @@ where
                 .as_ref()
                 .and_then(|t| t.get_current_selected())
                 .map(|item| (item.manga_id.clone(), item.provider, item.manga_title.clone())),
+            FeedTabs::Downloads => self
+                .offline_downloads
+                .as_ref()
+                .and_then(|w| w.get_current_selected())
+                .and_then(|m| m.provider.map(|p| (m.manga_id.clone(), p, m.title.clone()))),
             _ => self
                 .history
                 .as_ref()
@@ -559,7 +595,7 @@ where
 
     /// Removes all manga from the current provider and history type.
     fn remove_all_mangas(&mut self) {
-        if self.tabs == FeedTabs::Timeline {
+        if matches!(self.tabs, FeedTabs::Timeline | FeedTabs::Downloads) {
             self.state = FeedState::DisplayingHistory;
             return;
         }
@@ -577,7 +613,7 @@ where
         let hist_type = match self.tabs {
             FeedTabs::Library => MangaHistoryType::PlanToRead,
             FeedTabs::ContinueReading => MangaHistoryType::ReadingHistory,
-            FeedTabs::Timeline => return,
+            FeedTabs::Timeline | FeedTabs::Downloads => return,
         };
         let provider = self.manga_provider.as_ref().map(|p| p.name()).unwrap_or_default();
 
@@ -624,6 +660,9 @@ where
                 KeyCode::Char('3') => {
                     self.local_action_tx.send(FeedActions::SetTab(FeedTabs::Library)).ok();
                 },
+                KeyCode::Char('4') => {
+                    self.local_action_tx.send(FeedActions::SetTab(FeedTabs::Downloads)).ok();
+                },
                 KeyCode::Char('j') | KeyCode::Down => {
                     self.local_action_tx.send(FeedActions::ScrollHistoryDown).ok();
                 },
@@ -646,6 +685,9 @@ where
                 KeyCode::Char('r') | KeyCode::Char('m') => {
                     self.local_action_tx.send(FeedActions::GoToMangaPage).ok();
                 },
+                KeyCode::Char('v') if self.tabs == FeedTabs::Downloads => {
+                    self.local_action_tx.send(FeedActions::OpenOfflineWebViewer).ok();
+                },
                 KeyCode::Char('s') => {
                     self.local_action_tx.send(FeedActions::ToggleSearchBar).ok();
                 },
@@ -658,11 +700,11 @@ where
                 KeyCode::Char('d') => {
                     if self.tabs == FeedTabs::Timeline {
                         self.download_timeline_chapter();
-                    } else {
+                    } else if self.tabs != FeedTabs::Downloads {
                         self.remove_currently_selected_manga();
                     }
                 },
-                KeyCode::Char('X') if self.tabs != FeedTabs::Timeline => {
+                KeyCode::Char('X') if !matches!(self.tabs, FeedTabs::Timeline | FeedTabs::Downloads) => {
                     self.state = FeedState::AskingDeleteAllConfirmation;
                 },
                 _ => {},
@@ -686,6 +728,8 @@ where
                 },
                 FeedEvents::SearchTimeline => self.search_timeline(),
                 FeedEvents::LoadTimeline(items) => self.load_timeline(items),
+                FeedEvents::SearchOfflineDownloads => self.search_offline_downloads(),
+                FeedEvents::LoadOfflineDownloads(items) => self.load_offline_downloads(items),
             }
         }
     }
@@ -821,6 +865,30 @@ where
         self.state = FeedState::DisplayingHistory;
     }
 
+    fn search_offline_downloads(&mut self) {
+        self.state = FeedState::SearchingHistory;
+        let tx = self.local_event_tx.clone();
+        self.tasks.abort_all();
+        let search_filter = self.search_bar.value().trim().to_lowercase();
+
+        self.tasks.spawn(async move {
+            let mut mangas = tokio::task::spawn_blocking(scan_offline_mangas).await.unwrap_or_default();
+
+            if !search_filter.is_empty() {
+                mangas.retain(|m| {
+                    m.title.to_lowercase().contains(&search_filter) || m.folder_name.to_lowercase().contains(&search_filter)
+                });
+            }
+
+            tx.send(FeedEvents::LoadOfflineDownloads(mangas)).ok();
+        });
+    }
+
+    fn load_offline_downloads(&mut self, mangas: Vec<OfflineManga>) {
+        self.offline_downloads = Some(OfflineDownloadsWidget::from_offline_mangas(mangas));
+        self.state = FeedState::DisplayingHistory;
+    }
+
     fn display_error_searching_manga(&mut self) {
         self.loading_state = None;
         self.state = FeedState::MangaPageNotFound;
@@ -830,6 +898,10 @@ where
     fn search_history(&mut self) {
         if self.tabs == FeedTabs::Timeline {
             self.search_timeline();
+            return;
+        }
+        if self.tabs == FeedTabs::Downloads {
+            self.search_offline_downloads();
             return;
         }
 
@@ -941,20 +1013,30 @@ where
 
     /// Navigates to the detailed manga page for the currently selected item.
     pub fn go_to_manga_page(&mut self) {
+        if self.tabs == FeedTabs::Downloads {
+            if let Some(offline_manga) = self.offline_downloads.as_ref().and_then(|w| w.get_current_selected()).cloned()
+                && let Some(tx) = &self.global_event_tx
+            {
+                tx.send(Events::GoToOfflineMangaPage(offline_manga)).ok();
+            }
+            self.state = FeedState::DisplayingHistory;
+            return;
+        }
+
         self.state = FeedState::SearchingMangaPage;
         let manga_and_provider = if self.tabs == FeedTabs::Timeline && self.timeline.is_some() {
             self.timeline
                 .as_ref()
                 .and_then(|t| t.get_current_selected())
-                .map(|item| (item.manga_id.clone(), item.provider))
+                .map(|item| (item.manga_id.clone(), item.provider, item.manga_title.clone()))
         } else {
             self.history
                 .as_ref()
                 .and_then(|h| h.get_current_manga_selected())
-                .map(|manga| (manga.id.clone(), manga.provider))
+                .map(|manga| (manga.id.clone(), manga.provider, manga.title.clone()))
         };
 
-        if let Some((manga_id, provider)) = manga_and_provider {
+        if let Some((manga_id, provider, manga_title)) = manga_and_provider {
             let tx = self.global_event_tx.as_ref().cloned().unwrap();
             let local_tx = self.local_event_tx.clone();
 
@@ -975,14 +1057,25 @@ where
                     crate::backend::multi_provider::get_manga_by_id_for_provider(provider, &manga_id)
                         .await
                         .map_err(|e| e as Box<dyn std::error::Error>)
-                };
+                }
+                .map_err(|e| e.to_string());
                 match response {
                     Ok(res) => {
                         tx.send(Events::GoToMangaPage(res)).ok();
                     },
-                    Err(e) => {
-                        write_to_error_log(format!("{e}").into());
-                        local_tx.send(FeedEvents::ErrorSearchingMangaData).ok();
+                    Err(err_msg) => {
+                        let offline_fallback =
+                            tokio::task::spawn_blocking(move || find_offline_manga(&manga_id, &manga_title, Some(provider)))
+                                .await
+                                .ok()
+                                .flatten();
+
+                        if let Some(offline_manga) = offline_fallback {
+                            tx.send(Events::GoToOfflineMangaPage(offline_manga)).ok();
+                        } else {
+                            write_to_error_log(err_msg.into());
+                            local_tx.send(FeedEvents::ErrorSearchingMangaData).ok();
+                        }
                     },
                 }
             });
@@ -997,6 +1090,9 @@ where
             if let Some(item) = timeline.get_current_selected() {
                 let manga_id = item.manga_id.clone();
                 let chapter_id = item.chapter_id.clone();
+                let chapter_title = item.chapter_title.clone();
+                let chapter_number = item.chapter_number.parse::<f64>().unwrap_or(0.0);
+                let chapter_lang = item.language;
                 let manga_title = item.manga_title.clone();
                 let provider = item.provider;
 
@@ -1008,8 +1104,9 @@ where
                 self.loading_state = Some(ThrobberState::default());
 
                 self.tasks.spawn(async move {
-                    let response =
-                        crate::backend::multi_provider::read_chapter_for_provider(provider, &chapter_id, &manga_id).await;
+                    let response = crate::backend::multi_provider::read_chapter_for_provider(provider, &chapter_id, &manga_id)
+                        .await
+                        .map_err(|e| e.to_string());
                     match response {
                         Ok((chapter_to_read, list)) => {
                             tx.send(Events::ReadChapter(chapter_to_read, MangaToRead {
@@ -1017,17 +1114,107 @@ where
                                 manga_id,
                                 list,
                                 provider: Some(provider),
+                                ..Default::default()
                             }))
                             .ok();
                         },
-                        Err(e) => {
-                            write_to_error_log(format!("{e}").into());
+                        Err(err_msg) => {
+                            let title_clone = manga_title.clone();
+                            let ch_id_clone = chapter_id.clone();
+                            let local_src = tokio::task::spawn_blocking(move || {
+                                LocalChapterSource::find(&title_clone, &ch_id_clone)
+                                    .map(|src| {
+                                        let count = src.page_count();
+                                        (src, count)
+                                    })
+                                    .filter(|(_, count)| *count > 0)
+                            })
+                            .await
+                            .ok()
+                            .flatten();
+
+                            if let Some((source, count)) = local_src {
+                                let dummy_urls = (0..count)
+                                    .filter_map(|i| reqwest::Url::parse(&format!("http://localhost/local/{i}")).ok())
+                                    .collect();
+                                let chapter_to_read = ChapterToRead {
+                                    id: chapter_id.clone(),
+                                    title: chapter_title,
+                                    number: chapter_number,
+                                    volume_number: Some("none".to_string()),
+                                    num_page_bookmarked: None,
+                                    language: chapter_lang,
+                                    pages_url: dummy_urls,
+                                };
+                                let mut offline_sources = std::collections::HashMap::new();
+                                offline_sources.insert(chapter_id, source);
+                                tx.send(Events::ReadChapter(chapter_to_read, MangaToRead {
+                                    title: manga_title,
+                                    manga_id,
+                                    list: Default::default(),
+                                    provider: Some(provider),
+                                    offline_sources,
+                                    is_offline_mode: true,
+                                }))
+                                .ok();
+                                return;
+                            }
+
+                            write_to_error_log(err_msg.into());
                             local_tx.send(FeedEvents::ErrorSearchingMangaData).ok();
                         },
                     }
                 });
             }
         }
+    }
+
+    fn open_offline_web_viewer(&mut self) {
+        if self.tabs != FeedTabs::Downloads {
+            return;
+        }
+        let Some(offline_manga) = self.offline_downloads.as_ref().and_then(|w| w.get_current_selected()).cloned() else {
+            return;
+        };
+        let Some(target_chapter_id) = offline_manga
+            .chapters
+            .iter()
+            .rev()
+            .find(|c| !c.is_read)
+            .or_else(|| offline_manga.chapters.last())
+            .map(|c| c.chapter.id.clone())
+        else {
+            return;
+        };
+
+        self.tasks.spawn(async move {
+            let session_opt = tokio::task::spawn_blocking(move || {
+                let chapter = offline_manga.chapter_to_read(&target_chapter_id)?;
+                let offline_sources = offline_manga.sources_map();
+                let local_source = offline_sources.get(&target_chapter_id).cloned();
+                let list_of_chapters = offline_manga.build_list_of_chapters();
+                Some(crate::backend::web_viewer::WebViewerSession {
+                    manga_id: offline_manga.manga_id,
+                    manga_title: offline_manga.title,
+                    manga_cover_url: None,
+                    provider: offline_manga.provider.unwrap_or_default(),
+                    chapter,
+                    list_of_chapters,
+                    local_source,
+                    offline_sources,
+                    is_offline_mode: true,
+                })
+            })
+            .await
+            .ok()
+            .flatten();
+
+            if let Some(session) = session_opt
+                && let Err(e) = crate::backend::web_viewer::open_chapter_in_browser(session).await
+            {
+                write_to_error_log(ErrorType::String(&e));
+            }
+        });
     }
 
     /// Enqueues the selected timeline chapter for download.
@@ -1101,11 +1288,12 @@ where
                 if self.tabs_area.contains(pos) {
                     self.is_typing = false;
                     let idx =
-                        ((pos.x.saturating_sub(self.tabs_area.x) as usize) * 3 / (self.tabs_area.width.max(1) as usize)).min(2);
+                        ((pos.x.saturating_sub(self.tabs_area.x) as usize) * 4 / (self.tabs_area.width.max(1) as usize)).min(3);
                     let tab = match idx {
                         0 => FeedTabs::Timeline,
                         1 => FeedTabs::ContinueReading,
-                        _ => FeedTabs::Library,
+                        2 => FeedTabs::Library,
+                        _ => FeedTabs::Downloads,
                     };
                     self.local_action_tx.send(FeedActions::SetTab(tab)).ok();
                 } else if self.search_bar_area.contains(pos) {
@@ -1124,6 +1312,14 @@ where
                                 if target < timeline.items.len() {
                                     timeline.state.select(Some(target));
                                     self.read_timeline_chapter();
+                                }
+                            }
+                        } else if self.tabs == FeedTabs::Downloads {
+                            if let Some(offline) = self.offline_downloads.as_mut() {
+                                let target = offline.state.scroll_offset_index() + rel_y / 7;
+                                if target < offline.items.len() {
+                                    offline.state.select(Some(target));
+                                    self.local_action_tx.send(FeedActions::GoToMangaPage).ok();
                                 }
                             }
                         } else if let Some(history) = self.history.as_mut() {
@@ -1163,6 +1359,8 @@ where
 
         if self.tabs == FeedTabs::Timeline {
             self.render_timeline(content_area, frame.buffer_mut());
+        } else if self.tabs == FeedTabs::Downloads {
+            self.render_offline_downloads(content_area, frame.buffer_mut());
         } else {
             self.render_history(content_area, frame.buffer_mut());
         }
@@ -1181,6 +1379,10 @@ where
                     && let Some(timeline) = &mut self.timeline
                 {
                     timeline.select_previous();
+                } else if self.tabs == FeedTabs::Downloads
+                    && let Some(offline) = &mut self.offline_downloads
+                {
+                    offline.select_previous();
                 } else {
                     self.select_previous_manga();
                 }
@@ -1190,6 +1392,10 @@ where
                     && let Some(timeline) = &mut self.timeline
                 {
                     timeline.select_next();
+                } else if self.tabs == FeedTabs::Downloads
+                    && let Some(offline) = &mut self.offline_downloads
+                {
+                    offline.select_next();
                 } else {
                     self.select_next_manga();
                 }
@@ -1198,6 +1404,7 @@ where
             FeedActions::SetTab(tab) => self.set_tab(tab),
             FeedActions::ToggleFavorite => self.toggle_favorite_selected_manga(),
             FeedActions::RefreshTimeline => self.init_search(),
+            FeedActions::OpenOfflineWebViewer => self.open_offline_web_viewer(),
         }
     }
 
@@ -1206,6 +1413,7 @@ where
         self.search_bar.reset();
         self.history = None;
         self.timeline = None;
+        self.offline_downloads = None;
         self.loading_state = None;
         self.is_typing = false;
     }
@@ -1233,6 +1441,7 @@ mod tests {
     use self::mpsc::unbounded_channel;
     use super::*;
     use crate::backend::database::MangaHistory;
+    use crate::backend::manga_provider::Languages;
     use crate::backend::manga_provider::mock::MockMangaPageProvider;
     use crate::view::widgets::press_key;
 
@@ -1458,6 +1667,10 @@ mod tests {
 
         feed_page.switch_tabs();
 
+        assert_eq!(feed_page.tabs, FeedTabs::Downloads);
+
+        feed_page.switch_tabs();
+
         assert_eq!(feed_page.tabs, FeedTabs::Timeline);
     }
 
@@ -1669,10 +1882,10 @@ mod tests {
         feed_page.tabs_area = Rect::new(0, 0, 60, 4);
         assert_eq!(feed_page.tabs, FeedTabs::Timeline);
 
-        // Click middle third -> ContinueReading
+        // Click second quarter -> ContinueReading
         feed_page.handle_mouse_event(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: 30,
+            column: 20,
             row: 1,
             modifiers: KeyModifiers::NONE,
         });
@@ -1681,10 +1894,10 @@ mod tests {
         feed_page.update(action);
         assert_eq!(feed_page.tabs, FeedTabs::ContinueReading);
 
-        // Click right third -> Library
+        // Click third quarter -> Library
         feed_page.handle_mouse_event(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
-            column: 50,
+            column: 35,
             row: 1,
             modifiers: KeyModifiers::NONE,
         });
@@ -1693,7 +1906,19 @@ mod tests {
         feed_page.update(action);
         assert_eq!(feed_page.tabs, FeedTabs::Library);
 
-        // Click left third -> Timeline
+        // Click fourth quarter -> Downloads
+        feed_page.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: 50,
+            row: 1,
+            modifiers: KeyModifiers::NONE,
+        });
+        let action = feed_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(action, FeedActions::SetTab(FeedTabs::Downloads));
+        feed_page.update(action);
+        assert_eq!(feed_page.tabs, FeedTabs::Downloads);
+
+        // Click first quarter -> Timeline
         feed_page.handle_mouse_event(MouseEvent {
             kind: MouseEventKind::Down(MouseButton::Left),
             column: 5,
@@ -1752,5 +1977,51 @@ mod tests {
 
         assert_eq!(feed_page.history.as_ref().unwrap().state.selected, Some(1));
         assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::GoToMangaPage);
+    }
+
+    #[tokio::test]
+    async fn downloads_tab_key_4_opens_offline_manga_without_network_and_ignores_delete() {
+        let (tx, mut rx) = unbounded_channel::<Events>();
+        let mut feed_page: Feed<MockMangaPageProvider> = Feed::new()
+            .with_global_sender(tx)
+            .with_api_client(MockMangaPageProvider::with_failing_response().into());
+
+        // Press '4' -> switches to Downloads tab
+        press_key(&mut feed_page, KeyCode::Char('4'));
+        let action = feed_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(action, FeedActions::SetTab(FeedTabs::Downloads));
+        feed_page.update(action);
+        assert_eq!(feed_page.tabs, FeedTabs::Downloads);
+
+        let offline_manga = OfflineManga {
+            manga_id: "offline::Berserk".into(),
+            title: "Berserk".into(),
+            folder_name: "Berserk".into(),
+            provider: Some(MangaProviders::Inmanga),
+            is_favorite: false,
+            chapters: vec![],
+            total_size_bytes: 1024,
+            languages: vec![Languages::Spanish],
+        };
+        feed_page.load_offline_downloads(vec![offline_manga.clone()]);
+        assert_eq!(feed_page.state, FeedState::DisplayingHistory);
+
+        // 'd' and 'X' do not trigger deletion or bulk confirmation modal on Downloads tab
+        press_key(&mut feed_page, KeyCode::Char('d'));
+        press_key(&mut feed_page, KeyCode::Char('X'));
+        assert!(!feed_page.is_overlay_open());
+        assert_eq!(feed_page.state, FeedState::DisplayingHistory);
+
+        // Enter / 'r' opens Events::GoToOfflineMangaPage immediately with zero network
+        press_key(&mut feed_page, KeyCode::Enter);
+        let open_action = feed_page.local_action_rx.recv().await.unwrap();
+        assert_eq!(open_action, FeedActions::GoToMangaPage);
+        feed_page.update(open_action);
+
+        let global_evt = rx.recv().await.expect("should send GoToOfflineMangaPage");
+        match global_evt {
+            Events::GoToOfflineMangaPage(m) => assert_eq!(m.title, "Berserk"),
+            other => panic!("expected GoToOfflineMangaPage, got {other:?}"),
+        }
     }
 }

@@ -9,7 +9,7 @@ flowchart LR
     H2["Hito 2<br/>Datos Portables y Actualización<br/>✅ Implementado"]
     H3["Hito 3<br/>Aviso de Versiones del Fork y UI<br/>✅ Implementado"]
     H4["Hito 4<br/>Artefacto ZIP + CI + Prueba E2E<br/>✅ Script/CI · ⏳ Test Windows limpio"]
-    H5["Hito 5<br/>Icono .ico e Instalador<br/>✅ Implementado y verificado"]
+    H5["Hito 5<br/>Icono .ico, Instalador y Lectura 100% Offline<br/>✅ Implementado y verificado"]
 
     Base --> H1 --> H2 --> H3 --> H4 --> H5
 ```
@@ -92,15 +92,20 @@ Antes de publicar la primera release definitiva, validar el `.zip` generado por 
 
 ---
 
-## Hito 5 · Identidad visual (`.ico`) e Instalador de Windows ✅
+## Hito 5 · Identidad visual (`.ico`), Instalador de Windows y Lectura 100% Offline ✅
 
-**Implementado en:** [assets/icon.ico](assets/icon.ico), [build.rs](build.rs), [Cargo.toml](Cargo.toml), [scripts/windows-installer.iss](scripts/windows-installer.iss), [scripts/package-windows-installer.ps1](scripts/package-windows-installer.ps1), [scripts/test-windows-installer.ps1](scripts/test-windows-installer.ps1), [.github/workflows/release.yml](.github/workflows/release.yml)
+**Implementado en:** [assets/icon.ico](assets/icon.ico), [build.rs](build.rs), [Cargo.toml](Cargo.toml), [scripts/windows-installer.iss](scripts/windows-installer.iss), [scripts/package-windows-installer.ps1](scripts/package-windows-installer.ps1), [scripts/test-windows-installer.ps1](scripts/test-windows-installer.ps1), [.github/workflows/release.yml](.github/workflows/release.yml), [src/backend/offline.rs](src/backend/offline.rs), [src/backend/web_viewer.rs](src/backend/web_viewer.rs), [src/view/widgets/feed.rs](src/view/widgets/feed.rs), [src/view/pages/feed.rs](src/view/pages/feed.rs), [src/view/pages/manga.rs](src/view/pages/manga.rs), [src/view/pages/reader.rs](src/view/pages/reader.rs), [src/view/app.rs](src/view/app.rs)
 
 - **Identidad del ejecutable**: Creado `assets/icon.ico` multi-resolución (`16`, `24`, `32`, `48`, `64`, `128` y `256` px) a partir de `assets/icon.png` e incrustado junto con los metadatos Win32 (`ProductName`, `FileDescription`, `FileVersion`, `ProductVersion`, `OriginalFilename`, `InternalName`, `LegalCopyright`) mediante `build.rs` + `winresource` (condicionado a Windows para no afectar a compilaciones Linux/macOS).
 - **Instalador de Windows (Inno Setup 6)**: Script [scripts/windows-installer.iss](scripts/windows-installer.iss) en español e inglés, instalación por usuario por defecto (sin requerir administrador, con opción de elegir para todos los usuarios), accesos directos en Menú Inicio y Escritorio con el icono incrustado, desinstalador limpio y tarea opcional para registrar/eliminar `{app}` en el `PATH`.
 - **Empaquetado y CI**: [scripts/package-windows-installer.ps1](scripts/package-windows-installer.ps1) valida los metadatos Win32 y el icono del `.exe`, compila `manga-tui-<version>-x86_64-pc-windows-msvc-setup.exe` con `ISCC.exe` y genera su `.sha256`. Integrado en `.github/workflows/release.yml` junto a la prueba automática [scripts/test-windows-installer.ps1](scripts/test-windows-installer.ps1).
+- **Lectura 100% Offline (sin conexión)**:
+  - Nueva 4.ª pestaña `💾 Descargas` (`<o>` → `<4>`) en Seguimiento que escanea `mangaDownloads/` en disco, reconcilia metadatos de SQLite (capítulos leídos, marcadores, favoritos y proveedor) sin migración de esquema y permite leer mangas y capítulos sin conexión en los 4 formatos soportados (`CBZ`, `RAW`, `EPUB` y `PDF`).
+  - Fallback offline automático al abrir mangas desde `Continuar leyendo` (`<2>`), `Biblioteca` (`<3>`), línea temporal o marcadores (`Tab`), junto a navegación entre capítulos descargados (`w`/`b` en lector TUI y `/navigate` en Visor Web HD `<v>`) y badge `✈ OFFLINE` / `💾 LOCAL`.
 
 ### Criterios de aceptación (Hito 5)
 - [x] `assets/icon.ico` multi-resolución (`16..256` px) validado por test unitario y verificado incrustado en `manga-tui.exe` junto a `ProductName`, `FileDescription` y `FileVersion`.
 - [x] Tests unitarios de separación de almacenamiento en modo instalado (`StorageMode::System`, sin `portable.txt`) y conservación de `config.toml`, base de datos SQLite y descargas tras actualización y desinstalación.
 - [x] Ejecutados [scripts/package-windows-installer.ps1](scripts/package-windows-installer.ps1) + [scripts/test-windows-installer.ps1](scripts/test-windows-installer.ps1) con Inno Setup 6 (`ISCC.exe`): instalación silenciosa, metadatos/icono Win32, actualización sobre instalación previa y desinstalación limpia validados conservando `config.toml`, base de datos SQLite y descargas (verificados byte a byte con SHA-256).
+- [x] Pestaña `💾 Descargas` (`<o>` → `<4>`) operativa sin conexión: escanea `mangaDownloads/`, reconcilia historial/favoritos/marcadores SQLite y permite leer mangas y capítulos en los 4 formatos (`CBZ`, `RAW`, `EPUB`, `PDF`).
+- [x] Fallback offline automático desde `Continuar leyendo`, `Biblioteca`, línea temporal, ficha de manga y lector (TUI y Visor Web HD `<v>` con navegación entre capítulos locales).

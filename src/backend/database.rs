@@ -95,6 +95,7 @@ impl From<FeedTabs> for MangaHistoryType {
             FeedTabs::Timeline => Self::ReadingHistory,
             FeedTabs::ContinueReading => Self::ReadingHistory,
             FeedTabs::Library => Self::PlanToRead,
+            FeedTabs::Downloads => Self::ReadingHistory,
         }
     }
 }
@@ -182,6 +183,32 @@ pub struct FavoriteMangaRecord {
     pub manga_id: String,
     pub provider: MangaProviders,
     pub title: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfflineDbManga {
+    pub id: String,
+    pub title: String,
+    pub provider: MangaProviders,
+    pub is_favorite: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OfflineDbChapter {
+    pub id: String,
+    pub title: String,
+    pub manga_id: String,
+    pub is_read: bool,
+    pub is_downloaded: bool,
+    pub is_bookmarked: bool,
+    pub translated_language: String,
+    pub number_page_bookmarked: Option<u32>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct OfflineCatalogMetadata {
+    pub mangas: Vec<OfflineDbManga>,
+    pub chapters: Vec<OfflineDbChapter>,
 }
 
 /// User statistics displayed in the Home page hero header.
@@ -989,6 +1016,66 @@ impl<'a> Database<'a> {
         }
 
         Ok(mangas.into_values().collect())
+    }
+
+    pub fn get_offline_catalog_metadata(&self) -> rusqlite::Result<OfflineCatalogMetadata> {
+        let mut fav_set = std::collections::HashSet::new();
+        {
+            let mut fav_stmt = self.connection.prepare("SELECT manga_id, provider FROM favorite_mangas")?;
+            let fav_rows = fav_stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?;
+            for row in fav_rows {
+                let (manga_id, provider_str) = row?;
+                if let Ok(provider) = provider_str.parse::<MangaProviders>() {
+                    fav_set.insert((provider, manga_id));
+                }
+            }
+        }
+
+        let mut mangas = Vec::new();
+        {
+            let mut manga_stmt = self
+                .connection
+                .prepare("SELECT id, title, manga_provider FROM mangas WHERE deleted_at IS NULL")?;
+            let manga_rows = manga_stmt
+                .query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))?;
+            for row in manga_rows {
+                let (id, title, provider_str) = row?;
+                let provider = provider_str.parse::<MangaProviders>().unwrap_or_default();
+                let is_favorite = fav_set.contains(&(provider, id.clone()));
+                mangas.push(OfflineDbManga {
+                    id,
+                    title,
+                    provider,
+                    is_favorite,
+                });
+            }
+        }
+
+        let mut chapters = Vec::new();
+        {
+            let mut ch_stmt = self.connection.prepare(
+                "SELECT id, title, manga_id, is_read, is_downloaded, is_bookmarked,
+                        COALESCE(translated_language, ''), number_page_bookmarked
+                 FROM chapters",
+            )?;
+            let ch_rows = ch_stmt.query_map([], |row| {
+                Ok(OfflineDbChapter {
+                    id: row.get(0)?,
+                    title: row.get(1)?,
+                    manga_id: row.get(2)?,
+                    is_read: row.get(3)?,
+                    is_downloaded: row.get(4)?,
+                    is_bookmarked: row.get(5)?,
+                    translated_language: row.get(6)?,
+                    number_page_bookmarked: row.get(7)?,
+                })
+            })?;
+            for row in ch_rows {
+                chapters.push(row?);
+            }
+        }
+
+        Ok(OfflineCatalogMetadata { mangas, chapters })
     }
 
     pub fn get_dismissed_chapter_ids(&self, manga_id: &str, provider: MangaProviders) -> rusqlite::Result<Vec<String>> {

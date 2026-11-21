@@ -587,7 +587,10 @@ impl Widget for HelpModal {
             Self::key_line("Tab / m", tr("Ir a marcador / Guardar marcador", "Read / Save bookmark")),
             Line::raw(""),
             Self::section_title(tr("Biblioteca y Lector", "Library & Reader")),
-            Self::key_line("Tab / 1-3", tr("Cambiar pestaña en Seguimiento", "Switch tab in Feed")),
+            Self::key_line(
+                "Tab / 1-4",
+                tr("Cambiar pestaña en Seguimiento (4: Descargas Offline)", "Switch tab in Feed (4: Offline Downloads)"),
+            ),
             Self::key_line("R", tr("Actualizar novedades (Seguimiento)", "Refresh updates (Feed)")),
             Self::key_line("d / X", tr("Descargar o quitar / Vaciar lista", "Download or remove / Clear list")),
             Self::key_line("j / k", tr("Pasar página en el lector", "Next / prev page in reader")),

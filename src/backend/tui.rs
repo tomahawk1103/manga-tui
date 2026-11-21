@@ -34,6 +34,7 @@ pub enum Events {
     Key(KeyEvent),
     Mouse(MouseEvent),
     GoToMangaPage(Manga),
+    GoToOfflineMangaPage(crate::backend::offline::OfflineManga),
     GoBackMangaPage,
     GoToHome,
     GoSearchPage,
@@ -284,7 +285,7 @@ fn query_windows_terminal_cell_size() -> Option<(u16, u16)> {
         if unsafe { PeekConsoleInputW(stdin_handle, &mut peek_record, 1, &mut read_count) } == 0 || read_count == 0 {
             return None;
         }
-        if peek_record.EventType as u32 != KEY_EVENT as u32 {
+        if peek_record.EventType as u32 != KEY_EVENT {
             let mut discard: INPUT_RECORD = unsafe { std::mem::zeroed() };
             let mut got = 0u32;
             let _ = unsafe { ReadConsoleInputW(stdin_handle, &mut discard, 1, &mut got) };
@@ -325,7 +326,7 @@ fn query_windows_terminal_cell_size() -> Option<(u16, u16)> {
         if unsafe { ReadConsoleInputW(stdin_handle, &mut record, 1, &mut got) } == 0 || got == 0 {
             break;
         }
-        if record.EventType as u32 == KEY_EVENT as u32 && unsafe { record.Event.KeyEvent.bKeyDown } != 0 {
+        if record.EventType as u32 == KEY_EVENT && unsafe { record.Event.KeyEvent.bKeyDown } != 0 {
             let code_unit = unsafe { record.Event.KeyEvent.uChar.UnicodeChar };
             if let Some(ch) = char::from_u32(code_unit as u32)
                 && ch != '\0'

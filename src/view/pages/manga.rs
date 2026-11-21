@@ -28,6 +28,7 @@ use crate::backend::manga_provider::{
     Chapter, ChapterFilters, ChapterOrderBy, ChapterToRead, GetChaptersResponse, Languages, ListOfChapters, Manga,
     MangaPageProvider, Pagination, SearchManga,
 };
+use crate::backend::offline::{LocalChapterSource, OfflineChapter, OfflineManga, find_offline_manga};
 use crate::backend::tracker::{MangaTracker, track_manga};
 use crate::backend::tui::Events;
 use crate::common::{clear_image_canvas, format_error_message_tracking_reading_history, render_stateful_image_cleared};
@@ -146,6 +147,8 @@ pub enum MangaPageEvents {
     TrackingFailed(String),
     LoadAlternativeProviders(Vec<SearchManga>),
     SwitchToProviderManga(Manga),
+    LoadOfflineFallback(OfflineManga),
+    SearchOfflineCover,
 }
 
 pub struct MangaPage<T, S>
@@ -184,6 +187,9 @@ where
     download_all_chapters_state: DownloadAllChaptersState,
     pub selected_chapters: HashMap<String, Chapter>,
     pub is_favorite: bool,
+    pub is_offline_mode: bool,
+    offline_catalog: Option<OfflineManga>,
+    offline_sources: HashMap<String, LocalChapterSource>,
     manga_tracker: Option<S>,
     manga_provider: Arc<T>,
 }
@@ -301,6 +307,9 @@ where
             download_all_chapters_state: DownloadAllChaptersState::new(local_event_tx),
             selected_chapters: HashMap::new(),
             is_favorite,
+            is_offline_mode: false,
+            offline_catalog: None,
+            offline_sources: HashMap::new(),
             cover_area,
             chapters_list_area: Rect::default(),
             manga_tracker: None,
@@ -310,6 +319,86 @@ where
                 language: chapter_language,
             },
         }
+    }
+
+    pub fn new_offline(offline_manga: OfflineManga, picker: Option<Picker>, provider: Arc<T>) -> Self {
+        let (local_action_tx, local_action_rx) = mpsc::unbounded_channel::<MangaPageActions>();
+        let (local_event_tx, local_event_rx) = mpsc::unbounded_channel::<MangaPageEvents>();
+
+        let manga = offline_manga.to_manga();
+        let provider_name = manga.provider.unwrap_or_else(|| provider.name());
+        let is_favorite = Database::get_connection()
+            .and_then(|conn| Database::new(&conn).is_favorite(&manga.id, provider_name))
+            .unwrap_or(offline_manga.is_favorite);
+
+        let preferred = *Languages::get_preferred_lang();
+        let chapter_language = manga
+            .languages
+            .iter()
+            .find(|lang| **lang == preferred)
+            .cloned()
+            .or_else(|| {
+                if preferred == Languages::Spanish {
+                    manga.languages.iter().find(|lang| **lang == Languages::SpanishLa).cloned()
+                } else if preferred == Languages::SpanishLa {
+                    manga.languages.iter().find(|lang| **lang == Languages::Spanish).cloned()
+                } else {
+                    None
+                }
+            })
+            .or_else(|| manga.languages.iter().find(|lang| **lang == Languages::English).cloned())
+            .or_else(|| manga.languages.first().cloned())
+            .unwrap_or_default();
+
+        let offline_sources = offline_manga.sources_map();
+
+        let mut page = Self {
+            manga,
+            image_state: None,
+            cover_image: None,
+            picker,
+            global_event_tx: None,
+            local_action_tx,
+            local_action_rx,
+            local_event_tx: local_event_tx.clone(),
+            local_event_rx,
+            chapters: None,
+            state: PageState::DisplayingChapters,
+            bookmark_state: BookMarkState::default(),
+            tasks: JoinSet::new(),
+            available_languages_state: ListState::default(),
+            is_list_languages_open: false,
+            is_provider_switcher_open: false,
+            is_chapter_search_open: false,
+            chapter_search_bar: Input::default(),
+            chapter_search_status: None,
+            pending_select_last: false,
+            pending_target_chapter: None,
+            is_searching_alternatives: false,
+            alternative_providers: Vec::new(),
+            alternative_providers_state: ListState::default(),
+            migrated_read_chapter_numbers: HashSet::new(),
+            download_all_chapters_state: DownloadAllChaptersState::new(local_event_tx),
+            selected_chapters: HashMap::new(),
+            is_favorite,
+            is_offline_mode: true,
+            offline_catalog: Some(offline_manga),
+            offline_sources,
+            cover_area: Rect::default(),
+            chapters_list_area: Rect::default(),
+            manga_tracker: None,
+            manga_provider: provider,
+            chapter_filters: ChapterFilters {
+                order: ChapterOrderBy::default(),
+                language: chapter_language,
+            },
+        };
+
+        page.load_offline_chapters_page();
+        if page.picker.is_some() {
+            page.local_event_tx.send(MangaPageEvents::SearchOfflineCover).ok();
+        }
+        page
     }
 
     pub fn with_global_sender(mut self, sender: UnboundedSender<Events>) -> Self {
@@ -467,6 +556,14 @@ where
             meta_spans.push(Span::styled(
                 format!(" 📚 {} {} ", chapters.pagination.total_items, tr("caps.", "chs.")),
                 Style::default().fg(t.accent_primary).bg(t.chip_bg).bold(),
+            ));
+            meta_spans.push(Span::raw(" "));
+        }
+
+        if self.is_offline_mode {
+            meta_spans.push(Span::styled(
+                format!(" ✈ {} ", tr("OFFLINE", "OFFLINE")),
+                Style::default().fg(Color::Black).bg(t.status_success).bold(),
             ));
             meta_spans.push(Span::raw(" "));
         }
@@ -969,14 +1066,22 @@ where
                         self.local_action_tx.send(MangaPageActions::ReadChapter).ok();
                     },
                     KeyCode::Char('d') => {
-                        if self.selected_chapters.is_empty() {
+                        if self.is_offline_mode {
+                            self.chapter_search_status =
+                                Some(tr("ℹ Ya está descargado (modo offline)", "ℹ Already downloaded (offline mode)").to_string());
+                        } else if self.selected_chapters.is_empty() {
                             self.local_action_tx.send(MangaPageActions::DownloadChapter).ok();
                         } else {
                             self.local_action_tx.send(MangaPageActions::AskDownloadSelectedChapters).ok();
                         }
                     },
                     KeyCode::Char('a') => {
-                        self.local_action_tx.send(MangaPageActions::AskDownloadAllChapters).ok();
+                        if self.is_offline_mode {
+                            self.chapter_search_status =
+                                Some(tr("ℹ Ya está descargado (modo offline)", "ℹ Already downloaded (offline mode)").to_string());
+                        } else {
+                            self.local_action_tx.send(MangaPageActions::AskDownloadAllChapters).ok();
+                        }
                     },
                     KeyCode::Char('l') => {
                         self.local_action_tx.send(MangaPageActions::ToggleAvailableLanguagesList).ok();
@@ -996,12 +1101,12 @@ where
                     KeyCode::Tab => {
                         self.local_action_tx.send(MangaPageActions::GoToReadBookmarkedChapter).ok();
                     },
-                    KeyCode::Char('p') => {
+                    KeyCode::Char('p') if !self.is_offline_mode => {
                         if let Some(tx) = &self.global_event_tx {
                             tx.send(Events::SearchAllProviders(self.manga.title.clone())).ok();
                         }
                     },
-                    KeyCode::Char('P') => {
+                    KeyCode::Char('P') if !self.is_offline_mode => {
                         self.local_action_tx.send(MangaPageActions::ToggleProviderSwitcher).ok();
                     },
                     KeyCode::Esc | KeyCode::Backspace => {
@@ -1182,7 +1287,8 @@ where
             },
             (Some(_), None) => {
                 self.image_state = None;
-                self.local_event_tx.send(MangaPageEvents::SearchCover).ok();
+                let evt = if self.is_offline_mode { MangaPageEvents::SearchOfflineCover } else { MangaPageEvents::SearchCover };
+                self.local_event_tx.send(evt).ok();
             },
             (None, _) => {
                 self.image_state = None;
@@ -1202,68 +1308,14 @@ where
             }
             return;
         }
-        self.state = PageState::SearchingChapterData;
-        let chapter_opt = if let Some(chapter_selected) = self.get_current_selected_chapter_mut() {
-            chapter_selected.set_normal_state();
-            Some(chapter_selected.chapter.clone())
-        } else {
-            None
-        };
-
-        match chapter_opt {
-            Some(chapter_clone) => {
-                let id_chapter = chapter_clone.id.clone();
-                let manga_id = self.manga.id.clone();
-                let manga_title = self.manga.title.clone();
-                let local_tx = self.local_event_tx.clone();
-                let client = Arc::clone(&self.manga_provider);
-                let provider = self.manga.provider;
-
-                tokio::spawn(async move {
-                    let search_chapter_response = match provider {
-                        Some(p) => crate::backend::multi_provider::read_chapter_for_provider(p, &id_chapter, &manga_id).await,
-                        None => client.read_chapter(&id_chapter, &manga_id).await,
-                    };
-
-                    match search_chapter_response {
-                        Ok((chapter, manga_to_read)) => {
-                            local_tx.send(MangaPageEvents::ReadSuccesful(chapter, manga_to_read)).ok();
-                        },
-                        Err(e) => {
-                            if let Some(source) = crate::view::pages::reader::LocalChapterSource::find(&manga_title, &id_chapter) {
-                                let page_count = source.page_count();
-                                if page_count > 0 {
-                                    let num = chapter_clone.chapter_number.parse::<f64>().unwrap_or(0.0);
-                                    let dummy_urls = (0..page_count)
-                                        .filter_map(|i| reqwest::Url::parse(&format!("http://localhost/local/{}", i)).ok())
-                                        .collect();
-                                    let chapter_to_read = ChapterToRead {
-                                        id: id_chapter.clone(),
-                                        title: chapter_clone.title.clone(),
-                                        number: num,
-                                        volume_number: chapter_clone.volume_number.clone(),
-                                        language: chapter_clone.language,
-                                        pages_url: dummy_urls,
-                                        num_page_bookmarked: None,
-                                    };
-                                    local_tx.send(MangaPageEvents::ReadSuccesful(chapter_to_read, Default::default())).ok();
-                                    return;
-                                }
-                            }
-                            write_to_error_log(error_log::ErrorType::Error(
-                                format!("cannot read chapter with id {id_chapter} of manga with id {manga_id}, more details : {e}")
-                                    .into(),
-                            ));
-                            local_tx.send(MangaPageEvents::ReadError(id_chapter)).ok();
-                        },
-                    }
-                });
-            },
-            None => self.state = PageState::DisplayingChapters,
-        }
+        self.open_selected_chapter(false);
     }
 
     fn open_chapter_in_web_viewer(&mut self) {
+        self.open_selected_chapter(true);
+    }
+
+    fn open_selected_chapter(&mut self, web_viewer: bool) {
         self.state = PageState::SearchingChapterData;
         let chapter_opt = if let Some(chapter_selected) = self.get_current_selected_chapter_mut() {
             chapter_selected.set_normal_state();
@@ -1272,61 +1324,122 @@ where
             None
         };
 
-        match chapter_opt {
-            Some(chapter_clone) => {
-                let id_chapter = chapter_clone.id.clone();
-                let manga_id = self.manga.id.clone();
-                let manga_title = self.manga.title.clone();
-                let local_tx = self.local_event_tx.clone();
-                let client = Arc::clone(&self.manga_provider);
-                let provider = self.manga.provider;
+        let Some(chapter_clone) = chapter_opt else {
+            self.state = PageState::DisplayingChapters;
+            return;
+        };
 
-                tokio::spawn(async move {
-                    let search_chapter_response = match provider {
-                        Some(p) => crate::backend::multi_provider::read_chapter_for_provider(p, &id_chapter, &manga_id).await,
-                        None => client.read_chapter(&id_chapter, &manga_id).await,
-                    };
+        let id_chapter = chapter_clone.id.clone();
+        let manga_id = self.manga.id.clone();
+        let manga_title = self.manga.title.clone();
+        let local_tx = self.local_event_tx.clone();
+        let client = Arc::clone(&self.manga_provider);
+        let provider = self.manga.provider;
+        let is_offline_mode = self.is_offline_mode;
+        let offline_catalog = self.offline_catalog.clone();
+        let offline_source = self.offline_sources.get(&id_chapter).cloned();
 
-                    match search_chapter_response {
-                        Ok((chapter, manga_to_read)) => {
-                            local_tx.send(MangaPageEvents::OpenWebViewerSuccesful(chapter, manga_to_read)).ok();
-                        },
-                        Err(e) => {
-                            if let Some(source) = crate::view::pages::reader::LocalChapterSource::find(&manga_title, &id_chapter) {
-                                let page_count = source.page_count();
-                                if page_count > 0 {
-                                    let num = chapter_clone.chapter_number.parse::<f64>().unwrap_or(0.0);
-                                    let dummy_urls = (0..page_count)
-                                        .filter_map(|i| reqwest::Url::parse(&format!("http://localhost/local/{}", i)).ok())
-                                        .collect();
-                                    let chapter_to_read = ChapterToRead {
-                                        id: id_chapter.clone(),
-                                        title: chapter_clone.title.clone(),
-                                        number: num,
-                                        volume_number: chapter_clone.volume_number.clone(),
-                                        language: chapter_clone.language,
-                                        pages_url: dummy_urls,
-                                        num_page_bookmarked: None,
-                                    };
-                                    local_tx
-                                        .send(MangaPageEvents::OpenWebViewerSuccesful(chapter_to_read, Default::default()))
-                                        .ok();
-                                    return;
-                                }
-                            }
-                            write_to_error_log(error_log::ErrorType::Error(
-                                format!(
-                                    "cannot open chapter in web viewer with id {id_chapter} of manga with id {manga_id}, more details : {e}"
-                                )
-                                .into(),
-                            ));
-                            local_tx.send(MangaPageEvents::ReadError(id_chapter)).ok();
-                        },
+        let send_success = move |tx: &UnboundedSender<MangaPageEvents>, ch: ChapterToRead, list: ListOfChapters| {
+            let evt = if web_viewer {
+                MangaPageEvents::OpenWebViewerSuccesful(ch, list)
+            } else {
+                MangaPageEvents::ReadSuccesful(ch, list)
+            };
+            tx.send(evt).ok();
+        };
+
+        tokio::spawn(async move {
+            let resolve_local = |offline_catalog: Option<OfflineManga>,
+                                 offline_source: Option<LocalChapterSource>,
+                                 chapter_clone: Chapter,
+                                 manga_id: String,
+                                 manga_title: String,
+                                 provider: Option<crate::backend::manga_provider::MangaProviders>| async move {
+                tokio::task::spawn_blocking(move || {
+                    let id_chapter = chapter_clone.id.clone();
+                    if let Some(catalog) = offline_catalog {
+                        let list = catalog.build_list_of_chapters();
+                        if let Some(ch) = catalog.chapter_to_read(&id_chapter) {
+                            return Some((ch, list));
+                        }
                     }
-                });
-            },
-            None => self.state = PageState::DisplayingChapters,
-        }
+                    let source = offline_source.or_else(|| LocalChapterSource::find(&manga_title, &id_chapter))?;
+                    let page_count = source.page_count();
+                    if page_count == 0 {
+                        return None;
+                    }
+                    let dummy_urls = (0..page_count)
+                        .filter_map(|i| reqwest::Url::parse(&format!("http://localhost/local/{i}")).ok())
+                        .collect();
+                    let chapter_to_read = ChapterToRead {
+                        id: id_chapter,
+                        title: chapter_clone.title,
+                        number: chapter_clone.chapter_number.parse::<f64>().unwrap_or(0.0),
+                        volume_number: Some(
+                            chapter_clone
+                                .volume_number
+                                .filter(|v| !v.trim().is_empty())
+                                .unwrap_or_else(|| "none".to_string()),
+                        ),
+                        language: chapter_clone.language,
+                        pages_url: dummy_urls,
+                        num_page_bookmarked: None,
+                    };
+                    let list = find_offline_manga(&manga_id, &manga_title, provider)
+                        .map(|m| m.build_list_of_chapters())
+                        .unwrap_or_default();
+                    Some((chapter_to_read, list))
+                })
+                .await
+                .ok()
+                .flatten()
+            };
+
+            if is_offline_mode {
+                let id_for_err = chapter_clone.id.clone();
+                if let Some((ch, list)) =
+                    resolve_local(offline_catalog, offline_source, chapter_clone, manga_id, manga_title, provider).await
+                {
+                    send_success(&local_tx, ch, list);
+                } else {
+                    write_to_error_log(error_log::ErrorType::String(&format!(
+                        "Offline chapter {id_for_err} could not be read from disk"
+                    )));
+                    local_tx.send(MangaPageEvents::ReadError(id_for_err)).ok();
+                }
+                return;
+            }
+
+            let id_for_err = id_chapter.clone();
+            let manga_id_for_err = manga_id.clone();
+            let search_chapter_response = match provider {
+                Some(p) => crate::backend::multi_provider::read_chapter_for_provider(p, &id_chapter, &manga_id).await,
+                None => client.read_chapter(&id_chapter, &manga_id).await,
+            }
+            .map_err(|e| e.to_string());
+
+            match search_chapter_response {
+                Ok((chapter, manga_to_read)) => {
+                    send_success(&local_tx, chapter, manga_to_read);
+                },
+                Err(err_msg) => {
+                    if let Some((ch, list)) =
+                        resolve_local(offline_catalog, offline_source, chapter_clone, manga_id, manga_title, provider).await
+                    {
+                        send_success(&local_tx, ch, list);
+                        return;
+                    }
+                    let action_desc = if web_viewer { "open chapter in web viewer" } else { "read chapter" };
+                    write_to_error_log(error_log::ErrorType::Error(
+                        format!(
+                            "cannot {action_desc} with id {id_for_err} of manga with id {manga_id_for_err}, more details : {err_msg}"
+                        )
+                        .into(),
+                    ));
+                    local_tx.send(MangaPageEvents::ReadError(id_for_err)).ok();
+                },
+            }
+        });
     }
 
     fn get_current_selected_language(&self) -> Languages {
@@ -1354,9 +1467,120 @@ where
         }
     }
 
+    fn filtered_sorted_offline_chapters(&self) -> Vec<OfflineChapter> {
+        let Some(catalog) = &self.offline_catalog else {
+            return Vec::new();
+        };
+        let mut list: Vec<OfflineChapter> = if self.manga.languages.len() > 1 {
+            let lang_filtered: Vec<OfflineChapter> = catalog
+                .chapters
+                .iter()
+                .filter(|c| c.chapter.language == self.chapter_filters.language)
+                .cloned()
+                .collect();
+            if lang_filtered.is_empty() { catalog.chapters.clone() } else { lang_filtered }
+        } else {
+            catalog.chapters.clone()
+        };
+
+        list.sort_by(|a, b| {
+            let na = a.chapter.chapter_number.trim().parse::<f64>().ok().filter(|n| n.is_finite());
+            let nb = b.chapter.chapter_number.trim().parse::<f64>().ok().filter(|n| n.is_finite());
+            let ord = match (na, nb) {
+                (Some(va), Some(vb)) => va.total_cmp(&vb),
+                (Some(_), None) => std::cmp::Ordering::Less,
+                (None, Some(_)) => std::cmp::Ordering::Greater,
+                (None, None) => a.chapter.title.cmp(&b.chapter.title),
+            };
+            let ordered = match self.chapter_filters.order {
+                ChapterOrderBy::Ascending => ord,
+                ChapterOrderBy::Descending => ord.reverse(),
+            };
+            ordered.then_with(|| a.chapter.id.cmp(&b.chapter.id))
+        });
+
+        list
+    }
+
+    fn load_offline_chapters_page(&mut self) {
+        let all_chapters = self.filtered_sorted_offline_chapters();
+        let total = all_chapters.len() as u32;
+        let per_page = self
+            .chapters
+            .as_ref()
+            .map(|c| c.pagination.items_per_page)
+            .unwrap_or_else(|| Pagination::default().items_per_page)
+            .max(1);
+
+        let mut pagination = match &self.chapters {
+            Some(c) => Pagination::new(c.pagination.current_page, total, per_page),
+            None => Pagination::from_total_items(total),
+        };
+        let total_pages = pagination.get_total_pages().max(1);
+        if pagination.current_page > total_pages {
+            pagination.current_page = total_pages;
+        }
+        if pagination.current_page == 0 {
+            pagination.current_page = 1;
+        }
+
+        let start = pagination.index_to_slice_from().min(all_chapters.len());
+        let end = pagination.to_index(all_chapters.len());
+        let slice = &all_chapters[start..end];
+
+        let items: Vec<ChapterItem> = slice
+            .iter()
+            .map(|off_ch| {
+                let mut item = ChapterItem::new(off_ch.chapter.clone());
+                item.is_read = off_ch.is_read;
+                item.is_downloaded = true;
+                item.is_bookmarked = off_ch.is_bookmarked;
+                item.is_selected = self.selected_chapters.contains_key(&off_ch.chapter.id);
+                item
+            })
+            .collect();
+
+        let mut list_state = tui_widget_list::ListState::default();
+        if !items.is_empty() {
+            let select_idx = if self.pending_select_last { items.len() - 1 } else { 0 };
+            list_state.select(Some(select_idx));
+        }
+        self.pending_select_last = false;
+
+        self.chapters = Some(ChaptersData {
+            state: list_state,
+            widget: ChaptersListWidget { chapters: items },
+            pagination,
+        });
+        self.state = PageState::DisplayingChapters;
+        self.local_event_tx.send(MangaPageEvents::CheckChapterStatus).ok();
+    }
+
+    fn apply_offline_fallback(&mut self, offline: OfflineManga) {
+        self.is_offline_mode = true;
+        self.offline_sources = offline.sources_map();
+        if self.manga.languages.is_empty() {
+            self.manga.languages = offline.languages.clone();
+            if let Some(first) = self.manga.languages.first().copied() {
+                self.chapter_filters.language = first;
+            }
+        }
+        self.offline_catalog = Some(offline);
+        self.load_offline_chapters_page();
+        if self.cover_image.is_none() {
+            self.local_event_tx.send(MangaPageEvents::SearchOfflineCover).ok();
+        }
+    }
+
     fn search_chapters(&mut self) {
+        if self.is_offline_mode {
+            self.load_offline_chapters_page();
+            return;
+        }
+
         self.state = PageState::SearchingChapters;
         let manga_id = self.manga.id.clone();
+        let manga_title = self.manga.title.clone();
         let tx = self.local_event_tx.clone();
         let client = Arc::clone(&self.manga_provider);
 
@@ -1369,15 +1593,26 @@ where
             let response = match provider {
                 Some(p) => crate::backend::multi_provider::get_chapters_for_provider(p, &manga_id, filters, pagination).await,
                 None => client.get_chapters(&manga_id, filters, pagination).await,
-            };
+            }
+            .map_err(|e| e.to_string());
 
             match response {
                 Ok(res) => {
                     tx.send(MangaPageEvents::LoadChapters(Some(res))).ok();
                 },
-                Err(e) => {
-                    write_to_error_log(e.into());
-                    tx.send(MangaPageEvents::LoadChapters(None)).ok();
+                Err(err_msg) => {
+                    let offline_fallback =
+                        tokio::task::spawn_blocking(move || find_offline_manga(&manga_id, &manga_title, provider))
+                            .await
+                            .ok()
+                            .flatten();
+
+                    if let Some(offline) = offline_fallback {
+                        tx.send(MangaPageEvents::LoadOfflineFallback(offline)).ok();
+                    } else {
+                        write_to_error_log(err_msg.into());
+                        tx.send(MangaPageEvents::LoadChapters(None)).ok();
+                    }
                 },
             }
         });
@@ -1399,7 +1634,10 @@ where
                         let chapter_found = his.iter().find(|chap| chap.id == item.chapter.id);
                         if let Some(chapt) = chapter_found {
                             item.is_read = chapt.is_read;
-                            item.is_downloaded = chapt.is_downloaded;
+                            item.is_downloaded =
+                                chapt.is_downloaded || self.is_offline_mode || self.offline_sources.contains_key(&item.chapter.id);
+                        } else if self.is_offline_mode || self.offline_sources.contains_key(&item.chapter.id) {
+                            item.is_downloaded = true;
                         }
                         if !item.is_read && !item.chapter.chapter_number.is_empty() {
                             let norm_num = normalize_chapter_number(&item.chapter.chapter_number);
@@ -1567,6 +1805,7 @@ where
         let cover_img_url = self.manga.cover_img_url.clone();
         let provider = self.manga.provider.unwrap_or_else(|| self.manga_provider.name());
         let chapter_language = self.get_current_selected_language();
+        let mut bookmarked_chapter_id: Option<String> = None;
         if let Some(chapter_selected) = self.get_current_selected_chapter_mut() {
             let chapter_to_bookmark: ChapterToBookmark = ChapterToBookmark {
                 chapter_id: &chapter_selected.chapter.id,
@@ -1580,8 +1819,19 @@ where
             };
 
             match database.bookmark(chapter_to_bookmark) {
-                Ok(()) => chapter_selected.is_bookmarked = true,
+                Ok(()) => {
+                    chapter_selected.is_bookmarked = true;
+                    bookmarked_chapter_id = Some(chapter_selected.chapter.id.clone());
+                },
                 Err(e) => write_to_error_log(ErrorType::Error(e)),
+            }
+        }
+        if let (Some(ch_id), Some(catalog)) = (bookmarked_chapter_id, self.offline_catalog.as_mut()) {
+            for ch in catalog.chapters.iter_mut() {
+                ch.is_bookmarked = ch.chapter.id == ch_id;
+                if ch.chapter.id == ch_id {
+                    ch.bookmarked_page = None;
+                }
             }
         }
     }
@@ -1606,21 +1856,63 @@ where
         let client = Arc::clone(&self.manga_provider);
         let provider = self.manga.provider;
 
+        if self.is_offline_mode {
+            let offline_resolved = self.offline_catalog.as_ref().and_then(|catalog| {
+                let mut ch = catalog.chapter_to_read(&bookmarked_chapter.id)?;
+                ch.num_page_bookmarked = bookmarked_chapter.number_page_bookmarked;
+                Some((ch, catalog.build_list_of_chapters()))
+            });
+            match offline_resolved {
+                Some((ch, list)) => {
+                    sender.send(MangaPageEvents::ReadChapterBookmarked(ch, list)).ok();
+                },
+                None => {
+                    sender.send(MangaPageEvents::FetchBookmarkFailed).ok();
+                },
+            }
+            return;
+        }
+
+        let manga_id = self.manga.id.clone();
+        let manga_title = self.manga.title.clone();
+
         self.tasks.spawn(async move {
+            let bookmark_id = bookmarked_chapter.id.clone();
+            let bookmark_page = bookmarked_chapter.number_page_bookmarked;
             let response = match provider {
                 Some(p) => crate::backend::multi_provider::fetch_chapter_bookmarked_for_provider(p, bookmarked_chapter).await,
                 None => client.fetch_chapter_bookmarked(bookmarked_chapter).await,
-            };
+            }
+            .map_err(|e| e.to_string());
 
             match response {
                 Ok(response) => {
                     sender.send(MangaPageEvents::ReadChapterBookmarked(response.0, response.1)).ok();
                 },
-                Err(e) => {
+                Err(err_msg) => {
+                    let offline_fallback = tokio::task::spawn_blocking(move || {
+                        let offline = find_offline_manga(&manga_id, &manga_title, provider)?;
+                        let mut ch = offline.chapter_to_read(&bookmark_id)?;
+                        ch.num_page_bookmarked = bookmark_page;
+                        let list = offline.build_list_of_chapters();
+                        Some((ch, list, offline))
+                    })
+                    .await
+                    .ok()
+                    .flatten();
+
+                    if let Some((ch, list, offline)) = offline_fallback {
+                        sender.send(MangaPageEvents::LoadOfflineFallback(offline)).ok();
+                        sender.send(MangaPageEvents::ReadChapterBookmarked(ch, list)).ok();
+                        return;
+                    }
+
                     #[cfg(not(test))]
                     {
-                        write_to_error_log(ErrorType::Error(e));
+                        write_to_error_log(err_msg.into());
                     }
+                    #[cfg(test)]
+                    let _ = err_msg;
                     sender.send(MangaPageEvents::FetchBookmarkFailed).ok();
                 },
             }
@@ -1894,6 +2186,42 @@ where
             return;
         }
 
+        if self.is_offline_mode {
+            let offline_list = self.filtered_sorted_offline_chapters();
+            let all_chapters: Vec<Chapter> = offline_list.iter().map(|c| c.chapter.clone()).collect();
+            self.is_chapter_search_open = false;
+            self.pending_target_chapter = None;
+            if let Some(global_idx) = find_matching_chapter_index(&all_chapters, &query) {
+                let per_page = self
+                    .chapters
+                    .as_ref()
+                    .map(|c| c.pagination.items_per_page)
+                    .unwrap_or_else(|| Pagination::default().items_per_page)
+                    .max(1) as usize;
+                let target_page = (global_idx / per_page) as u32 + 1;
+                let select_idx = global_idx % per_page;
+                let ch = &all_chapters[global_idx];
+                let label = if ch.chapter_number.is_empty() {
+                    ch.title.clone()
+                } else {
+                    format!("{} {}", tr("Cap.", "Ch."), ch.chapter_number)
+                };
+                if let Some(chapters) = self.chapters.as_mut() {
+                    chapters.pagination.current_page = target_page;
+                }
+                self.load_offline_chapters_page();
+                if let Some(chapters) = self.chapters.as_mut()
+                    && select_idx < chapters.widget.chapters.len()
+                {
+                    chapters.state.select(Some(select_idx));
+                }
+                self.chapter_search_status = Some(format!("✓ {label}"));
+            } else {
+                self.chapter_search_status = Some(format!("⚠ {}: {query}", tr("No encontrado", "Not found")));
+            }
+            return;
+        }
+
         self.is_chapter_search_open = false;
         self.pending_target_chapter = Some(query.clone());
         self.chapter_search_status = Some(tr("⏳ Buscando capítulo...", "⏳ Searching chapter...").to_string());
@@ -2071,7 +2399,8 @@ where
             res = run_toggle();
         }
 
-        match res {
+        let toggled_id = item.chapter.id.clone();
+        let toggled_read = match res {
             Ok(is_now_read) => {
                 item.is_read = is_now_read;
                 if !item.chapter.chapter_number.is_empty() {
@@ -2092,8 +2421,17 @@ where
                 } else {
                     format!("○ {} {ch_label} {}", tr("Cap.", "Ch."), tr("no leído", "unread"))
                 });
+                Some(is_now_read)
             },
-            Err(e) => write_to_error_log(ErrorType::Error(Box::new(e))),
+            Err(e) => {
+                write_to_error_log(ErrorType::Error(Box::new(e)));
+                None
+            },
+        };
+        if let (Some(is_now_read), Some(catalog)) = (toggled_read, self.offline_catalog.as_mut())
+            && let Some(ch) = catalog.chapters.iter_mut().find(|c| c.chapter.id == toggled_id)
+        {
+            ch.is_read = is_now_read;
         }
     }
 
@@ -2200,8 +2538,27 @@ where
         self.download_all_chapters_state.set_download_error();
     }
 
+    fn search_offline_cover(&mut self) {
+        if self.picker.is_none() || self.cover_image.is_some() {
+            return;
+        }
+        let Some(first_source) = self.offline_catalog.as_ref().and_then(|c| c.first_source().cloned()) else {
+            return;
+        };
+        let tx = self.local_event_tx.clone();
+        self.tasks.spawn(async move {
+            if let Ok(Some(img)) = tokio::task::spawn_blocking(move || first_source.load_first_page_image()).await {
+                tx.send(MangaPageEvents::LoadCover(img)).ok();
+            }
+        });
+    }
+
     fn search_cover(&mut self) {
         if self.picker.is_none() {
+            return;
+        }
+        if self.is_offline_mode {
+            self.search_offline_cover();
             return;
         }
         let tx = self.local_event_tx.clone();
@@ -2319,19 +2676,39 @@ where
         }
     }
 
+    fn build_manga_to_read(&self, chapter: &ChapterToRead, list: ListOfChapters) -> MangaToRead {
+        let is_local_dummy = chapter
+            .pages_url
+            .first()
+            .is_some_and(|u| u.host_str() == Some("localhost") && u.path().starts_with("/local/"));
+        let is_offline_mode = self.is_offline_mode || is_local_dummy;
+        let mut offline_sources = self.offline_sources.clone();
+        if !offline_sources.contains_key(&chapter.id) {
+            let expected_pages = if is_offline_mode { 0 } else { chapter.pages_url.len() };
+            if let Some(src) = LocalChapterSource::find_for_chapter(&self.manga.title, &chapter.id, expected_pages) {
+                offline_sources.insert(chapter.id.clone(), src);
+            }
+        }
+        MangaToRead {
+            title: self.manga.title.clone(),
+            manga_id: self.manga.id.clone(),
+            list,
+            provider: self.manga.provider,
+            offline_sources,
+            is_offline_mode,
+        }
+    }
+
     fn read_chapter_bookmarked(&mut self, chapter: ChapterToRead, list_of_chapters: ListOfChapters) {
         self.bookmark_state.phase = BookmarkPhase::default();
         self.mark_chapter_as_read_in_db(&chapter);
 
+        let manga_to_read = self.build_manga_to_read(&chapter, list_of_chapters);
+
         self.global_event_tx
             .as_ref()
             .unwrap()
-            .send(Events::ReadChapter(chapter, MangaToRead {
-                title: self.manga.title.clone(),
-                manga_id: self.manga.id.clone(),
-                list: list_of_chapters,
-                provider: self.manga.provider,
-            }))
+            .send(Events::ReadChapter(chapter, manga_to_read))
             .ok();
     }
 
@@ -2393,6 +2770,8 @@ where
                 MangaPageEvents::SwitchToProviderManga(new_manga) => {
                     self.switch_to_provider_manga(new_manga);
                 },
+                MangaPageEvents::SearchOfflineCover => self.search_offline_cover(),
+                MangaPageEvents::LoadOfflineFallback(offline) => self.apply_offline_fallback(offline),
 
                 MangaPageEvents::ReadSuccesful(chapter_to_read, list) => {
                     self.state = PageState::DisplayingChapters;
@@ -2402,15 +2781,12 @@ where
 
                     self.local_event_tx.send(MangaPageEvents::CheckChapterStatus).ok();
 
+                    let manga_to_read = self.build_manga_to_read(&chapter_to_read, list);
+
                     self.global_event_tx
                         .as_ref()
                         .unwrap()
-                        .send(Events::ReadChapter(chapter_to_read, MangaToRead {
-                            title: self.manga.title.clone(),
-                            manga_id: self.manga.id.clone(),
-                            list,
-                            provider: self.manga.provider,
-                        }))
+                        .send(Events::ReadChapter(chapter_to_read, manga_to_read))
                         .ok();
                 },
                 MangaPageEvents::OpenWebViewerSuccesful(chapter_to_read, list) => {
@@ -2420,19 +2796,18 @@ where
                     self.track_manga(self.manga_tracker.clone(), self.manga.title.clone(), chapter_to_read.number as u32, volume);
                     self.local_event_tx.send(MangaPageEvents::CheckChapterStatus).ok();
 
-                    let local_source = crate::view::pages::reader::LocalChapterSource::find_for_chapter(
-                        &self.manga.title,
-                        &chapter_to_read.id,
-                        chapter_to_read.pages_url.len(),
-                    );
+                    let manga_to_read = self.build_manga_to_read(&chapter_to_read, list);
+                    let local_source = manga_to_read.offline_sources.get(&chapter_to_read.id).cloned();
                     let session = crate::backend::web_viewer::WebViewerSession {
-                        manga_id: self.manga.id.clone(),
-                        manga_title: self.manga.title.clone(),
+                        manga_id: manga_to_read.manga_id,
+                        manga_title: manga_to_read.title,
                         manga_cover_url: Some(self.manga.cover_img_url.clone()),
-                        provider: self.manga.provider.unwrap_or_else(|| self.manga_provider.name()),
+                        provider: manga_to_read.provider.unwrap_or_else(|| self.manga_provider.name()),
                         chapter: chapter_to_read,
-                        list_of_chapters: list,
+                        list_of_chapters: manga_to_read.list,
                         local_source,
+                        offline_sources: manga_to_read.offline_sources,
+                        is_offline_mode: manga_to_read.is_offline_mode,
                     };
 
                     tokio::spawn(async move {
@@ -3327,10 +3702,12 @@ mod test {
 
     #[tokio::test]
     async fn test_provider_switcher_and_chapter_migration() {
-        let mut manga = Manga::default();
-        manga.id = "inmanga_1".to_string();
-        manga.title = "Berserk".to_string();
-        manga.provider = Some(crate::backend::manga_provider::MangaProviders::Inmanga);
+        let manga = Manga {
+            id: "inmanga_1".to_string(),
+            title: "Berserk".to_string(),
+            provider: Some(crate::backend::manga_provider::MangaProviders::Inmanga),
+            ..Default::default()
+        };
 
         let mut manga_page: MangaPage<MockMangaPageProvider, TrackerTest> =
             MangaPage::new(manga, None, MockMangaPageProvider::new().into());
@@ -3369,10 +3746,12 @@ mod test {
         assert_eq!(manga_page.alternative_providers_state.selected(), Some(0));
 
         // Switch to new provider manga
-        let mut new_manga = Manga::default();
-        new_manga.id = "mangaoni_berserk".to_string();
-        new_manga.title = "Berserk".to_string();
-        new_manga.provider = Some(crate::backend::manga_provider::MangaProviders::Mangaoni);
+        let new_manga = Manga {
+            id: "mangaoni_berserk".to_string(),
+            title: "Berserk".to_string(),
+            provider: Some(crate::backend::manga_provider::MangaProviders::Mangaoni),
+            ..Default::default()
+        };
 
         manga_page.switch_to_provider_manga(new_manga);
         assert_eq!(manga_page.manga.id, "mangaoni_berserk");
@@ -3385,11 +3764,13 @@ mod test {
         use ratatui::Terminal;
         use ratatui::backend::TestBackend;
 
-        let mut manga = Manga::default();
-        manga.id = "one_piece".into();
-        manga.title = "One Piece".into();
-        manga.provider = Some(crate::backend::manga_provider::MangaProviders::Mangaoni);
-        manga.description = "A pirate adventure.".into();
+        let manga = Manga {
+            id: "one_piece".into(),
+            title: "One Piece".into(),
+            provider: Some(crate::backend::manga_provider::MangaProviders::Mangaoni),
+            description: "A pirate adventure.".into(),
+            ..Default::default()
+        };
 
         let mut manga_page: MangaPage<MockMangaPageProvider, TrackerTest> =
             MangaPage::new(manga, None, MockMangaPageProvider::new().into());
@@ -3438,9 +3819,11 @@ mod test {
 
     #[tokio::test]
     async fn test_chapter_search_in_page_and_page_jump() {
-        let mut manga = Manga::default();
-        manga.id = "manga_jump".into();
-        manga.title = "Jump Test".into();
+        let manga = Manga {
+            id: "manga_jump".into(),
+            title: "Jump Test".into(),
+            ..Default::default()
+        };
 
         let mut manga_page: MangaPage<MockMangaPageProvider, TrackerTest> =
             MangaPage::new(manga, None, MockMangaPageProvider::new().into());
@@ -3566,10 +3949,12 @@ mod test {
 
     #[tokio::test]
     async fn test_toggle_chapter_read_with_x_key() {
-        let mut manga = Manga::default();
-        manga.id = "manga_toggle_read".into();
-        manga.title = "Toggle Read Test".into();
-        manga.provider = Some(crate::backend::manga_provider::MangaProviders::Mangaoni);
+        let manga = Manga {
+            id: "manga_toggle_read".into(),
+            title: "Toggle Read Test".into(),
+            provider: Some(crate::backend::manga_provider::MangaProviders::Mangaoni),
+            ..Default::default()
+        };
 
         let mut manga_page: MangaPage<MockMangaPageProvider, TrackerTest> =
             MangaPage::new(manga, None, MockMangaPageProvider::new().into());
@@ -3617,9 +4002,11 @@ mod test {
     async fn test_chapter_mouse_click_selects_clicked_row_and_download_modal_overlay_flag() {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
-        let mut manga = Manga::default();
-        manga.id = "manga_mouse".into();
-        manga.title = "Mouse Chapters".into();
+        let manga = Manga {
+            id: "manga_mouse".into(),
+            title: "Mouse Chapters".into(),
+            ..Default::default()
+        };
 
         let mut manga_page: MangaPage<MockMangaPageProvider, TrackerTest> =
             MangaPage::new(manga, None, MockMangaPageProvider::new().into());
@@ -3667,5 +4054,140 @@ mod test {
             modifiers: KeyModifiers::NONE,
         });
         assert!(manga_page.local_action_rx.try_recv().is_err());
+    }
+
+    #[tokio::test]
+    async fn offline_manga_page_lists_sorts_jumps_and_reads_without_network() {
+        use std::io::{Cursor, Write};
+
+        use zip::write::SimpleFileOptions;
+
+        struct CleanupDir(std::path::PathBuf);
+        impl Drop for CleanupDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let temp_dir = std::env::temp_dir().join(format!(
+            "manga_tui_offline_page_test_{}_{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let _cleanup = CleanupDir(temp_dir.clone());
+
+        let mut png_bytes = Vec::new();
+        DynamicImage::new_rgb8(2, 2)
+            .write_to(&mut Cursor::new(&mut png_bytes), image::ImageFormat::Png)
+            .unwrap();
+
+        let mut chapters = Vec::new();
+        for num in 1..=18 {
+            let cbz_path = temp_dir.join(format!("Cap. {num:02}.cbz"));
+            let file = std::fs::File::create(&cbz_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            zip.start_file("01.png", SimpleFileOptions::default()).unwrap();
+            zip.write_all(&png_bytes).unwrap();
+            zip.finish().unwrap();
+
+            chapters.push(OfflineChapter {
+                chapter: Chapter {
+                    id: format!("ch-{num}"),
+                    title: format!("Capitulo {num}"),
+                    chapter_number: num.to_string(),
+                    volume_number: Some("1".to_string()),
+                    language: Languages::Spanish,
+                    ..Default::default()
+                },
+                source: LocalChapterSource::Cbz(cbz_path),
+                format_label: "CBZ",
+                size_bytes: png_bytes.len() as u64,
+                is_read: false,
+                is_bookmarked: false,
+                bookmarked_page: None,
+            });
+        }
+
+        let offline_manga = OfflineManga {
+            manga_id: "offline::Test".to_string(),
+            title: "Test Offline Manga".to_string(),
+            folder_name: "Test".to_string(),
+            provider: Some(crate::backend::manga_provider::MangaProviders::Inmanga),
+            is_favorite: false,
+            chapters,
+            total_size_bytes: 1024,
+            languages: vec![Languages::Spanish],
+        };
+
+        let (global_tx, mut global_rx) = unbounded_channel::<Events>();
+        let mut page: MangaPage<MockMangaPageProvider, TrackerTest> =
+            MangaPage::new_offline(offline_manga, Some(Picker::new((8, 8))), MockMangaPageProvider::new().into())
+                .with_global_sender(global_tx);
+
+        page.tick();
+        assert!(page.is_offline_mode);
+        assert_eq!(page.state, PageState::DisplayingChapters);
+        {
+            let data = page.chapters.as_ref().unwrap();
+            assert_eq!(data.pagination.get_total_pages(), 2);
+            assert_eq!(data.widget.chapters.len(), 16);
+            assert!(data.widget.chapters.iter().all(|c| c.is_downloaded));
+            assert_eq!(data.widget.chapters[0].chapter.chapter_number, "18");
+        }
+
+        // Sorting toggles between Descending ("18" first) and Ascending ("1" first) without network calls
+        page.update(MangaPageActions::ToggleOrder);
+        assert_eq!(page.chapters.as_ref().unwrap().widget.chapters[0].chapter.chapter_number, "1");
+        page.update(MangaPageActions::ToggleOrder);
+        assert_eq!(page.chapters.as_ref().unwrap().widget.chapters[0].chapter.chapter_number, "18");
+        page.update(MangaPageActions::ToggleOrder);
+        assert_eq!(page.chapters.as_ref().unwrap().widget.chapters[0].chapter.chapter_number, "1");
+
+        // Cross-page chapter search jumps directly to page 2, index 0 ("17")
+        page.update(MangaPageActions::StartChapterSearch);
+        page.chapter_search_bar = Input::new("17".to_string());
+        page.update(MangaPageActions::ConfirmChapterSearch);
+        {
+            let data = page.chapters.as_ref().unwrap();
+            assert_eq!(data.pagination.current_page, 2);
+            assert_eq!(data.state.selected, Some(0));
+            assert_eq!(data.widget.chapters[0].chapter.id, "ch-17");
+        }
+
+        // Pressing ReadChapter resolves local CBZ without network and emits ReadChapter with next/prev list
+        page.update(MangaPageActions::ReadChapter);
+        let mut emitted = None;
+        for _ in 0..50 {
+            page.tick();
+            if let Ok(evt) = global_rx.try_recv() {
+                emitted = Some(evt);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        let Some(Events::ReadChapter(chapter_to_read, manga_to_read)) = emitted else {
+            panic!("expected Events::ReadChapter for offline chapter ch-17");
+        };
+        assert_eq!(chapter_to_read.id, "ch-17");
+        assert_eq!(chapter_to_read.pages_url.len(), 1);
+        assert!(manga_to_read.is_offline_mode);
+        assert!(manga_to_read.offline_sources.contains_key("ch-17"));
+        assert!(
+            manga_to_read
+                .list
+                .get_next_chapter(chapter_to_read.volume_number.as_deref(), 17.0)
+                .is_some()
+        );
+        assert!(
+            manga_to_read
+                .list
+                .get_previous_chapter(chapter_to_read.volume_number.as_deref(), 17.0)
+                .is_some()
+        );
     }
 }

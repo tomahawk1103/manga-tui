@@ -585,6 +585,15 @@ impl ListOfChapters {
             None => self.get_previous_chapter_in_previous_volume(volume_number, chapter_number),
         }
     }
+
+    pub fn find_chapter_by_id(&self, chapter_id: &str) -> Option<ChapterReader> {
+        for vol in self.volumes.as_slice() {
+            if let Some(ch) = vol.chapters.as_slice().iter().find(|c| c.id == chapter_id) {
+                return Some(ch.clone());
+            }
+        }
+        None
+    }
 }
 
 impl SortedVolumes {

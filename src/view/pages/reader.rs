@@ -1,10 +1,9 @@
-use std::fs::File;
-use std::path::{Path, PathBuf};
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{KeyCode, KeyEvent, MouseButton, MouseEventKind};
-use image::{DynamicImage, GenericImageView};
+use image::DynamicImage;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Margin, Position, Rect};
@@ -16,14 +15,13 @@ use ratatui_image::protocol::StatefulProtocol;
 use throbber_widgets_tui::{Throbber, ThrobberState};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinSet;
-use zip::ZipArchive;
 
-use crate::backend::AppDirectories;
 use crate::backend::database::{Bookmark, ChapterToBookmark, ChapterToSaveHistory, Database, MangaReadingHistorySave};
 use crate::backend::error_log::{ErrorType, write_to_error_log};
 use crate::backend::manga_provider::{
     ChapterReader, ChapterToRead, ListOfChapters, MangaPanel, MangaProviders, ReaderPageProvider,
 };
+pub use crate::backend::offline::LocalChapterSource;
 use crate::backend::tracker::{MangaTracker, track_manga};
 use crate::backend::tui::Events;
 use crate::common::format_error_message_tracking_reading_history;
@@ -53,169 +51,6 @@ pub enum MangaReaderActions {
     GoToFirstPage,
     GoToLastPage,
     OpenInWebViewer,
-}
-
-#[derive(Clone, Debug)]
-pub enum LocalChapterSource {
-    Cbz(PathBuf),
-    Directory(PathBuf),
-}
-
-impl LocalChapterSource {
-    pub fn find(_manga_title: &str, chapter_id: &str) -> Option<Self> {
-        let base_dir = AppDirectories::MangaDownloads.get_full_path();
-        if !base_dir.exists() {
-            return None;
-        }
-
-        let id_clean = chapter_id.replace(['/', ':', '\\', '?', '*', '"', '<', '>', '|'], "_");
-
-        fn check_path(path: &Path, id: &str, id_clean: &str) -> Option<LocalChapterSource> {
-            let name = path.file_name()?.to_string_lossy();
-            if path.is_file() && name.ends_with(".cbz") {
-                if name.contains(id) || name.contains(id_clean) {
-                    return Some(LocalChapterSource::Cbz(path.to_path_buf()));
-                }
-            } else if path.is_dir() && (name.contains(id) || name.contains(id_clean)) {
-                return Some(LocalChapterSource::Directory(path.to_path_buf()));
-            }
-            None
-        }
-
-        fn search_dir(dir: &Path, id: &str, id_clean: &str, depth: usize) -> Option<LocalChapterSource> {
-            if depth == 0 {
-                return None;
-            }
-            let entries = std::fs::read_dir(dir).ok()?;
-            let mut subdirs = Vec::new();
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if let Some(src) = check_path(&p, id, id_clean) {
-                    return Some(src);
-                }
-                if p.is_dir() {
-                    subdirs.push(p);
-                }
-            }
-            for subdir in subdirs {
-                if let Some(src) = search_dir(&subdir, id, id_clean, depth - 1) {
-                    return Some(src);
-                }
-            }
-            None
-        }
-
-        search_dir(&base_dir, chapter_id, &id_clean, 3)
-    }
-
-    /// Finds a downloaded local CBZ/directory only if it covers the chapter completely when online page count is known.
-    pub fn find_for_chapter(manga_title: &str, chapter_id: &str, expected_remote_pages: usize) -> Option<Self> {
-        let src = Self::find(manga_title, chapter_id)?;
-        if expected_remote_pages > 0 {
-            let local_count = src.page_count();
-            if local_count == 0 || local_count != expected_remote_pages {
-                return None;
-            }
-        }
-        Some(src)
-    }
-
-    pub fn page_count(&self) -> usize {
-        match self {
-            LocalChapterSource::Cbz(path) => {
-                let Ok(file) = File::open(path) else { return 0 };
-                let Ok(mut archive) = ZipArchive::new(file) else { return 0 };
-                let mut count = 0;
-                for i in 0..archive.len() {
-                    if let Ok(file) = archive.by_index(i) {
-                        let name = file.name().to_lowercase();
-                        if name.ends_with(".jpg")
-                            || name.ends_with(".jpeg")
-                            || name.ends_with(".png")
-                            || name.ends_with(".webp")
-                            || name.ends_with(".avif")
-                        {
-                            count += 1;
-                        }
-                    }
-                }
-                count
-            },
-            LocalChapterSource::Directory(dir) => {
-                let Ok(entries) = std::fs::read_dir(dir) else { return 0 };
-                entries
-                    .flatten()
-                    .filter(|e| {
-                        let name = e.file_name().to_string_lossy().to_lowercase();
-                        name.ends_with(".jpg")
-                            || name.ends_with(".jpeg")
-                            || name.ends_with(".png")
-                            || name.ends_with(".webp")
-                            || name.ends_with(".avif")
-                    })
-                    .count()
-            },
-        }
-    }
-
-    pub fn load_page_bytes(&self, index: usize) -> Result<Vec<u8>, Box<dyn std::error::Error + Send + Sync>> {
-        use std::io::Read;
-        match self {
-            LocalChapterSource::Cbz(path) => {
-                let file = File::open(path)?;
-                let mut archive = ZipArchive::new(file)?;
-                let mut image_names = Vec::new();
-                for i in 0..archive.len() {
-                    let entry = archive.by_index(i)?;
-                    let name = entry.name().to_lowercase();
-                    if name.ends_with(".jpg")
-                        || name.ends_with(".jpeg")
-                        || name.ends_with(".png")
-                        || name.ends_with(".webp")
-                        || name.ends_with(".avif")
-                    {
-                        image_names.push(entry.name().to_string());
-                    }
-                }
-                image_names.sort();
-                let entry_name = image_names.get(index).ok_or_else(|| format!("Page index {index} out of bounds"))?;
-                let mut entry_file = archive.by_name(entry_name)?;
-                let mut bytes = Vec::new();
-                entry_file.read_to_end(&mut bytes)?;
-                Ok(bytes)
-            },
-            LocalChapterSource::Directory(dir) => {
-                let entries = std::fs::read_dir(dir)?;
-                let mut image_paths = Vec::new();
-                for entry in entries.flatten() {
-                    let p = entry.path();
-                    let name = p.file_name().unwrap_or_default().to_string_lossy().to_lowercase();
-                    if name.ends_with(".jpg")
-                        || name.ends_with(".jpeg")
-                        || name.ends_with(".png")
-                        || name.ends_with(".webp")
-                        || name.ends_with(".avif")
-                    {
-                        image_paths.push(p);
-                    }
-                }
-                image_paths.sort();
-                let page_path = image_paths.get(index).ok_or_else(|| format!("Page index {index} out of bounds"))?;
-                let bytes = std::fs::read(page_path)?;
-                Ok(bytes)
-            },
-        }
-    }
-
-    pub fn load_page(&self, index: usize) -> Result<MangaPanel, Box<dyn std::error::Error + Send + Sync>> {
-        let bytes = self.load_page_bytes(index)?;
-        let image_decoded = image::load_from_memory(&bytes)?;
-        let dimensions = image_decoded.dimensions();
-        Ok(MangaPanel {
-            image_decoded,
-            dimensions,
-        })
-    }
 }
 
 #[derive(Debug, PartialEq, Eq, Default)]
@@ -342,6 +177,8 @@ where
     pub local_event_tx: UnboundedSender<MangaReaderEvents>,
     pub local_event_rx: UnboundedReceiver<MangaReaderEvents>,
     pub local_source: Option<LocalChapterSource>,
+    pub offline_sources: HashMap<String, LocalChapterSource>,
+    pub is_offline_mode: bool,
     pub needs_terminal_clear: bool,
     margin_clear_generation: u8,
     left_panel_area: Rect,
@@ -646,6 +483,8 @@ where
             api_client,
             provider: None,
             local_source: None,
+            offline_sources: HashMap::new(),
+            is_offline_mode: false,
             needs_terminal_clear: false,
             margin_clear_generation: 0,
             left_panel_area: Rect::default(),
@@ -689,10 +528,33 @@ where
     }
 
     pub fn with_manga_title(mut self, title: String) -> Self {
-        self.local_source =
-            LocalChapterSource::find_for_chapter(&title, &self.current_chapter.id, self.current_chapter.pages_url.len());
         self.manga_title = title;
+        self.local_source = self.resolve_local_source(&self.current_chapter.id, self.current_chapter.pages_url.len());
         self
+    }
+
+    pub fn with_offline_sources(mut self, sources: HashMap<String, LocalChapterSource>) -> Self {
+        self.offline_sources = sources;
+        self
+    }
+
+    pub fn with_offline_mode(mut self, is_offline: bool) -> Self {
+        self.is_offline_mode = is_offline;
+        self
+    }
+
+    fn resolve_local_source(&self, chapter_id: &str, expected_remote_pages: usize) -> Option<LocalChapterSource> {
+        if let Some(src) = self.offline_sources.get(chapter_id) {
+            let local_count = src.page_count();
+            if local_count > 0 && (self.is_offline_mode || expected_remote_pages == 0 || local_count == expected_remote_pages) {
+                return Some(src.clone());
+            }
+        }
+        LocalChapterSource::find_for_chapter(
+            &self.manga_title,
+            chapter_id,
+            if self.is_offline_mode { 0 } else { expected_remote_pages },
+        )
     }
 
     pub fn with_manga_tracker(mut self, manga_tracker: Option<S>) -> Self {
@@ -780,6 +642,8 @@ where
             chapter: self.current_chapter.clone(),
             list_of_chapters: self.list_of_chapters.clone(),
             local_source: self.local_source.clone(),
+            offline_sources: self.offline_sources.clone(),
+            is_offline_mode: self.is_offline_mode,
         };
         self.web_viewer_notice =
             Some((tr("🌐 Abriendo Visor Web HD...", "🌐 Opening Web HD Viewer...").to_string(), Instant::now(), false));
@@ -884,8 +748,7 @@ where
         self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
 
         self.current_chapter = chapter;
-        self.local_source =
-            LocalChapterSource::find_for_chapter(&self.manga_title, &self.current_chapter.id, self.current_chapter.pages_url.len());
+        self.local_source = self.resolve_local_source(&self.current_chapter.id, self.current_chapter.pages_url.len());
         self.state = State::SearchingPages;
 
         self.init_fetching_pages();
@@ -1122,7 +985,7 @@ where
 
         let total = self.pages_list.pages.len().max(self.pages.len());
         let curr = if total == 0 { 0 } else { (self.current_page_index() + 1).min(total) };
-        let pct = if total > 0 { (curr * 100 / total).min(100) } else { 0 };
+        let pct = (curr * 100).checked_div(total).unwrap_or(0).min(100);
 
         let mut right_spans: Vec<Span<'_>> = Vec::new();
         if let Some(page) = self.pages.get(self.current_page_index()) {
@@ -1184,7 +1047,19 @@ where
             let (fg, bg) = provider_pill_colors(provider);
             let pill = Span::styled(format!(" {} ", provider.short_name()), Style::default().fg(fg).bg(bg).bold());
             let pw = pill.width();
-            if used_w + pw + 1 <= avail_left {
+            if used_w + pw < avail_left {
+                left_spans.push(pill);
+                left_spans.push(Span::styled(" ", Style::default().bg(t.bar_bg)));
+                used_w += pw + 1;
+            }
+        }
+
+        if self.local_source.is_some() {
+            let (label, bg) =
+                if self.is_offline_mode { (" ✈ OFFLINE ", t.status_success) } else { (" 💾 LOCAL ", t.accent_secondary) };
+            let pill = Span::styled(label, Style::default().fg(Color::Black).bg(bg).bold());
+            let pw = pill.width();
+            if used_w + pw < avail_left {
                 left_spans.push(pill);
                 left_spans.push(Span::styled(" ", Style::default().bg(t.bar_bg)));
                 used_w += pw + 1;
@@ -1534,12 +1409,9 @@ where
 
     pub fn init_fetching_pages(&mut self) {
         if self.local_source.is_none() {
-            self.local_source = LocalChapterSource::find_for_chapter(
-                &self.manga_title,
-                &self.current_chapter.id,
-                self.current_chapter.pages_url.len(),
-            );
-        } else if !self.current_chapter.pages_url.is_empty()
+            self.local_source = self.resolve_local_source(&self.current_chapter.id, self.current_chapter.pages_url.len());
+        } else if !self.is_offline_mode
+            && !self.current_chapter.pages_url.is_empty()
             && let Some(ref source) = self.local_source
             && source.page_count() != self.current_chapter.pages_url.len()
         {
@@ -1605,18 +1477,81 @@ where
         let provider = self.provider;
         let sender = self.local_event_tx.clone();
         let manga_id = self.manga_id.clone();
+        let manga_title = self.manga_title.clone();
+        let is_offline_mode = self.is_offline_mode;
+        let offline_source = self.offline_sources.get(&chapter_id).cloned();
+        let chapter_meta = self.list_of_chapters.find_chapter_by_id(&chapter_id);
+        let current_lang = self.current_chapter.language;
+
         self.image_tasks.spawn(async move {
+            let resolve_local = || async {
+                let src_opt = match offline_source {
+                    Some(s) => Some(s),
+                    None => {
+                        let t = manga_title.clone();
+                        let cid = chapter_id.clone();
+                        tokio::task::spawn_blocking(move || LocalChapterSource::find(&t, &cid))
+                            .await
+                            .ok()
+                            .flatten()
+                    },
+                };
+                let src = src_opt?;
+                let count = tokio::task::spawn_blocking(move || src.page_count()).await.ok()?;
+                if count == 0 {
+                    return None;
+                }
+                let dummy_urls = (0..count)
+                    .filter_map(|i| reqwest::Url::parse(&format!("http://localhost/local/{i}")).ok())
+                    .collect();
+                let (number, volume) = match chapter_meta.as_ref() {
+                    Some(meta) => {
+                        let n = meta.number.parse::<f64>().unwrap_or(0.0);
+                        let v = if meta.volume.trim().is_empty() { "none".to_string() } else { meta.volume.clone() };
+                        (n, v)
+                    },
+                    None => (0.0, "none".to_string()),
+                };
+                Some(ChapterToRead {
+                    id: chapter_id.clone(),
+                    title: String::new(),
+                    number,
+                    volume_number: Some(volume),
+                    num_page_bookmarked: None,
+                    language: current_lang,
+                    pages_url: dummy_urls,
+                })
+            };
+
+            if is_offline_mode {
+                match resolve_local().await {
+                    Some(chap) => {
+                        sender.send(MangaReaderEvents::LoadChapter(chap)).ok();
+                    },
+                    None => {
+                        write_to_error_log(ErrorType::String(&format!("Offline chapter {chapter_id} not found on disk")));
+                        sender.send(MangaReaderEvents::ErrorSearchingChapter).ok();
+                    },
+                }
+                return;
+            }
+
             let response = match provider {
                 Some(p) => crate::backend::multi_provider::search_chapter_for_provider(p, &chapter_id, &manga_id).await,
                 None => api_client.search_chapter(&chapter_id, &manga_id).await,
-            };
+            }
+            .map_err(|e| e.to_string());
             match response {
                 Ok(res) => {
                     sender.send(MangaReaderEvents::LoadChapter(res)).ok();
                 },
-                Err(e) => {
-                    write_to_error_log(ErrorType::Error(e));
-                    sender.send(MangaReaderEvents::ErrorSearchingChapter).ok();
+                Err(err_msg) => {
+                    if let Some(local_chap) = resolve_local().await {
+                        sender.send(MangaReaderEvents::LoadChapter(local_chap)).ok();
+                    } else {
+                        write_to_error_log(err_msg.into());
+                        sender.send(MangaReaderEvents::ErrorSearchingChapter).ok();
+                    }
                 },
             };
         });
@@ -1649,6 +1584,7 @@ where
 #[cfg(test)]
 mod test {
     use std::error::Error;
+    use std::path::PathBuf;
     use std::time::Duration;
 
     use pretty_assertions::assert_eq;
@@ -2686,5 +2622,96 @@ mod test {
         assert!(!to_fetch.contains(&1), "failed page 1 should be skipped by background prefetch");
         assert!(to_fetch.contains(&0));
         assert!(to_fetch.contains(&2));
+    }
+
+    #[tokio::test]
+    async fn offline_reader_switches_chapters_without_network_and_shows_badge() {
+        struct TempDir(PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let dir = TempDir(std::env::temp_dir().join(format!("reader_offline_nav_{}", uuid::Uuid::new_v4())));
+        let ch1_dir = dir.0.join("ch1");
+        let ch2_dir = dir.0.join("ch2");
+        std::fs::create_dir_all(&ch1_dir).unwrap();
+        std::fs::create_dir_all(&ch2_dir).unwrap();
+        let jpg_bytes = include_bytes!("../../../data_test/images/1.jpg");
+        std::fs::write(ch1_dir.join("001.jpg"), jpg_bytes).unwrap();
+        std::fs::write(ch2_dir.join("001.jpg"), jpg_bytes).unwrap();
+        std::fs::write(ch2_dir.join("002.jpg"), jpg_bytes).unwrap();
+
+        let mut offline_sources = HashMap::new();
+        offline_sources.insert("c1".to_string(), LocalChapterSource::Directory(ch1_dir));
+        offline_sources.insert("c2".to_string(), LocalChapterSource::Directory(ch2_dir));
+
+        let list = ListOfChapters {
+            volumes: SortedVolumes::new(vec![Volumes {
+                volume: "none".to_string(),
+                chapters: SortedChapters::new(vec![
+                    ChapterReader {
+                        id: "c1".to_string(),
+                        number: "1".to_string(),
+                        volume: "none".to_string(),
+                    },
+                    ChapterReader {
+                        id: "c2".to_string(),
+                        number: "2".to_string(),
+                        volume: "none".to_string(),
+                    },
+                ]),
+            }]),
+        };
+
+        let ch1 = ChapterToRead {
+            id: "c1".to_string(),
+            title: "Inicio".to_string(),
+            number: 1.0,
+            volume_number: Some("none".to_string()),
+            pages_url: vec!["http://localhost/local/0".parse().unwrap()],
+            language: Languages::Spanish,
+            num_page_bookmarked: None,
+        };
+
+        let mut reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(ch1, "m1".into(), Picker::new((8, 16)), ReaderPageProvierMock::new().into())
+                .with_list_of_chapters(list)
+                .with_offline_sources(offline_sources)
+                .with_offline_mode(true)
+                .with_manga_title("Offline Reader Test".into());
+        reader.init_fetching_pages();
+        while reader.local_event_rx.try_recv().is_ok() {}
+
+        // Top bar displays OFFLINE badge
+        let mut buf = Buffer::empty(Rect::new(0, 0, 100, 1));
+        reader.render_reader_top_bar(Rect::new(0, 0, 100, 1), &mut buf);
+        let top_row: String = (0..100).map(|x| buf[(x, 0)].symbol()).collect();
+        assert!(top_row.contains("OFFLINE"), "expected OFFLINE pill in reader top bar, got: {top_row}");
+
+        // Pressing 'w' triggers next chapter search, which resolves c2 locally without provider network
+        reader.initiate_search_next_chapter();
+        let evt = timeout(Duration::from_millis(500), reader.local_event_rx.recv()).await.unwrap().unwrap();
+        assert_eq!(evt, MangaReaderEvents::SearchNextChapter("c2".to_string()));
+        reader.search_chapter("c2".to_string());
+
+        let loaded_evt = timeout(Duration::from_millis(500), reader.local_event_rx.recv()).await.unwrap().unwrap();
+        match loaded_evt {
+            MangaReaderEvents::LoadChapter(chap) => {
+                assert_eq!(chap.id, "c2");
+                assert_eq!(chap.number, 2.0);
+                assert_eq!(chap.pages_url.len(), 2);
+                reader.load_chapter(chap);
+            },
+            other => panic!("expected LoadChapter, got {other:?}"),
+        }
+        assert_eq!(reader.pages.len(), 2);
+        while reader.local_event_rx.try_recv().is_ok() {}
+
+        // Pressing 'b' goes back to c1 locally
+        reader.initiate_search_previous_chapter();
+        let prev_evt = timeout(Duration::from_millis(500), reader.local_event_rx.recv()).await.unwrap().unwrap();
+        assert_eq!(prev_evt, MangaReaderEvents::SearchPreviousChapter("c1".to_string()));
     }
 }

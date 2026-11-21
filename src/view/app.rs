@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
@@ -148,6 +148,8 @@ pub struct MangaToRead {
     pub manga_id: String,
     pub list: ListOfChapters,
     pub provider: Option<MangaProviders>,
+    pub offline_sources: HashMap<String, crate::backend::offline::LocalChapterSource>,
+    pub is_offline_mode: bool,
 }
 
 /// The application which owns every `page` or section in manga-tui
@@ -237,6 +239,7 @@ where
             Events::Key(key_event) => self.handle_key_events(key_event),
             Events::Mouse(mouse_event) => self.handle_mouse_events(mouse_event),
             Events::GoToMangaPage(manga) => self.go_to_manga_page(manga),
+            Events::GoToOfflineMangaPage(offline_manga) => self.go_to_offline_manga_page(offline_manga),
             Events::ReadChapter(chapter_response, manga_to_read) => {
                 self.go_to_read_chapter(chapter_response, manga_to_read, self.manga_tracker.clone())
             },
@@ -398,9 +401,9 @@ where
                     self.queue_status_toast = Some((msg, Instant::now()));
                 } else if all_failed {
                     let msg = if crate::i18n::is_es() {
-                        format!("⚠ {active_provider} sin conexión (modo offline)")
+                        format!("⚠ {active_provider} sin conexión · Pulsa <o> → <4> para leer tus Descargas Offline")
                     } else {
-                        format!("⚠ {active_provider} unreachable (offline mode)")
+                        format!("⚠ {active_provider} unreachable · Press <o> → <4> to read Offline Downloads")
                     };
                     self.favorite_status_toast = Some((msg, Instant::now()));
                 }
@@ -1063,30 +1066,36 @@ where
                     ("l", tr("Idioma", "Lang")),
                     ("f", tr("Filtros", "Filters")),
                 ],
-                SelectedPage::Feed => {
-                    if self.feed_page.tabs == crate::view::widgets::feed::FeedTabs::Timeline {
-                        vec![
-                            ("Tab/1-3", tr("Pestaña", "Tab")),
-                            ("j/k", tr("Mover", "Move")),
-                            ("Enter", tr("Leer", "Read")),
-                            ("r", tr("Ficha", "Manga")),
-                            ("d", tr("Descargar", "Download")),
-                            ("f", tr("Favorito", "Favorite")),
-                            ("s", tr("Filtrar", "Filter")),
-                            ("R", tr("Actualizar", "Refresh")),
-                        ]
-                    } else {
-                        vec![
-                            ("Tab/1-3", tr("Pestaña", "Tab")),
-                            ("j/k", tr("Mover", "Move")),
-                            ("r/Enter", tr("Abrir", "Open")),
-                            ("w/b", tr("Pág.", "Page")),
-                            ("s", tr("Filtrar", "Filter")),
-                            ("f", tr("Favorito", "Favorite")),
-                            ("d", tr("Quitar", "Remove")),
-                            ("X", tr("Vaciar", "Clear")),
-                        ]
-                    }
+                SelectedPage::Feed => match self.feed_page.tabs {
+                    crate::view::widgets::feed::FeedTabs::Timeline => vec![
+                        ("Tab/1-4", tr("Pestaña", "Tab")),
+                        ("j/k", tr("Mover", "Move")),
+                        ("Enter", tr("Leer", "Read")),
+                        ("r", tr("Ficha", "Manga")),
+                        ("d", tr("Descargar", "Download")),
+                        ("f", tr("Favorito", "Favorite")),
+                        ("s", tr("Filtrar", "Filter")),
+                        ("R", tr("Actualizar", "Refresh")),
+                    ],
+                    crate::view::widgets::feed::FeedTabs::Downloads => vec![
+                        ("Tab/1-4", tr("Pestaña", "Tab")),
+                        ("j/k", tr("Mover", "Move")),
+                        ("Enter/r", tr("Abrir", "Open")),
+                        ("v", tr("Visor Web", "Web Viewer")),
+                        ("s", tr("Filtrar", "Filter")),
+                        ("f", tr("Favorito", "Favorite")),
+                        ("R", tr("Escanear", "Rescan")),
+                    ],
+                    _ => vec![
+                        ("Tab/1-4", tr("Pestaña", "Tab")),
+                        ("j/k", tr("Mover", "Move")),
+                        ("r/Enter", tr("Abrir", "Open")),
+                        ("w/b", tr("Pág.", "Page")),
+                        ("s", tr("Filtrar", "Filter")),
+                        ("f", tr("Favorito", "Favorite")),
+                        ("d", tr("Quitar", "Remove")),
+                        ("X", tr("Vaciar", "Clear")),
+                    ],
                 },
                 SelectedPage::MangaTab => {
                     if let Some(page) = &self.manga_page {
@@ -1614,7 +1623,7 @@ where
         self.current_tab = SelectedPage::Search;
     }
 
-    fn go_to_manga_page(&mut self, manga: Manga) {
+    fn open_manga_page(&mut self, manga_page: MangaPage<T, S>) {
         if self.current_tab != SelectedPage::MangaTab && self.current_tab != SelectedPage::ReaderTab {
             self.previous_tab = self.current_tab;
         }
@@ -1627,24 +1636,37 @@ where
         self.feed_page.clean_up();
 
         self.current_tab = SelectedPage::MangaTab;
+        self.manga_page = Some(manga_page);
+    }
 
+    fn go_to_manga_page(&mut self, manga: Manga) {
         let config = MangaTuiConfig::get();
-
         let manga_page = MangaPage::new(manga, self.picker, Arc::clone(&self.manga_provider))
             .with_global_sender(self.global_event_tx.clone())
             .auto_bookmark(config.auto_bookmark)
             .with_manga_tracker(self.manga_tracker.clone());
+        self.open_manga_page(manga_page);
+    }
 
-        self.manga_page = Some(manga_page);
+    fn go_to_offline_manga_page(&mut self, offline_manga: crate::backend::offline::OfflineManga) {
+        let config = MangaTuiConfig::get();
+        let manga_page = MangaPage::new_offline(offline_manga, self.picker, Arc::clone(&self.manga_provider))
+            .with_global_sender(self.global_event_tx.clone())
+            .auto_bookmark(config.auto_bookmark)
+            .with_manga_tracker(self.manga_tracker.clone());
+        self.open_manga_page(manga_page);
     }
 
     fn go_to_read_chapter(&mut self, chapter_to_read: ChapterToRead, manga_to_read: MangaToRead, manga_tracker: Option<S>) {
         let Some(picker) = self.picker.as_ref().cloned() else {
-            let local_source = crate::view::pages::reader::LocalChapterSource::find_for_chapter(
-                &manga_to_read.title,
-                &chapter_to_read.id,
-                chapter_to_read.pages_url.len(),
-            );
+            let expected_pages = if manga_to_read.is_offline_mode { 0 } else { chapter_to_read.pages_url.len() };
+            let local_source = manga_to_read.offline_sources.get(&chapter_to_read.id).cloned().or_else(|| {
+                crate::view::pages::reader::LocalChapterSource::find_for_chapter(
+                    &manga_to_read.title,
+                    &chapter_to_read.id,
+                    expected_pages,
+                )
+            });
             let session = crate::backend::web_viewer::WebViewerSession {
                 manga_id: manga_to_read.manga_id,
                 manga_title: manga_to_read.title,
@@ -1653,6 +1675,8 @@ where
                 chapter: chapter_to_read,
                 list_of_chapters: manga_to_read.list,
                 local_source,
+                offline_sources: manga_to_read.offline_sources,
+                is_offline_mode: manga_to_read.is_offline_mode,
             };
             let tx = self.global_event_tx.clone();
             tokio::spawn(async move {
@@ -1677,6 +1701,8 @@ where
         let mut manga_reader = MangaReader::new(chapter_to_read, manga_to_read.manga_id, picker, Arc::clone(&self.manga_provider))
             .with_global_sender(self.global_event_tx.clone())
             .with_list_of_chapters(manga_to_read.list)
+            .with_offline_sources(manga_to_read.offline_sources)
+            .with_offline_mode(manga_to_read.is_offline_mode)
             .with_manga_title(manga_to_read.title)
             .with_manga_tracker(manga_tracker)
             .with_provider(manga_to_read.provider);
@@ -2050,6 +2076,7 @@ mod tests {
                 manga_id: "some_manga_id".to_string(),
                 list: list_of_chapter.clone(),
                 provider: None,
+                ..Default::default()
             },
             Some(manga_tracker),
         );
@@ -2225,6 +2252,7 @@ mod tests {
                 manga_id: "m-1".to_string(),
                 list: ListOfChapters::default(),
                 provider: Some(MangaProviders::Inmanga),
+                ..Default::default()
             },
             None,
         );
@@ -2443,6 +2471,7 @@ mod tests {
                 manga_id: "m1".into(),
                 list: ListOfChapters::default(),
                 provider: None,
+                ..Default::default()
             },
             None,
         );
@@ -2460,6 +2489,7 @@ mod tests {
                 manga_id: "m2".into(),
                 list: ListOfChapters::default(),
                 provider: None,
+                ..Default::default()
             },
             None,
         );

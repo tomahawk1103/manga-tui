@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::{Arc, LazyLock};
 use std::time::Duration;
 
@@ -8,11 +9,11 @@ use tokio::sync::{Mutex, RwLock};
 use crate::backend::database::{ChapterToSaveHistory, Database, MangaReadingHistorySave};
 use crate::backend::error_log::{ErrorType, write_to_error_log};
 use crate::backend::manga_provider::{ChapterReader, ChapterToRead, ListOfChapters, MangaProviders};
+use crate::backend::offline::LocalChapterSource;
 use crate::i18n::is_es;
-use crate::view::pages::reader::LocalChapterSource;
 
 /// Represents the active manga chapter session served by the local web viewer.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct WebViewerSession {
     pub manga_id: String,
     pub manga_title: String,
@@ -21,20 +22,8 @@ pub struct WebViewerSession {
     pub chapter: ChapterToRead,
     pub list_of_chapters: ListOfChapters,
     pub local_source: Option<LocalChapterSource>,
-}
-
-impl Default for WebViewerSession {
-    fn default() -> Self {
-        Self {
-            manga_id: String::new(),
-            manga_title: String::new(),
-            manga_cover_url: None,
-            provider: MangaProviders::default(),
-            chapter: ChapterToRead::default(),
-            list_of_chapters: ListOfChapters::default(),
-            local_source: None,
-        }
-    }
+    pub offline_sources: HashMap<String, LocalChapterSource>,
+    pub is_offline_mode: bool,
 }
 
 struct ServerInstance {
@@ -175,11 +164,10 @@ async fn handle_connection(
 
             if let Some(target) = target_chapter {
                 if let Ok(new_chapter) = resolve_chapter(&current_session, &target).await {
-                    let new_local_source = LocalChapterSource::find_for_chapter(
-                        &current_session.manga_title,
-                        &new_chapter.id,
-                        new_chapter.pages_url.len(),
-                    );
+                    let expected_pages = if current_session.is_offline_mode { 0 } else { new_chapter.pages_url.len() };
+                    let new_local_source = current_session.offline_sources.get(&new_chapter.id).cloned().or_else(|| {
+                        LocalChapterSource::find_for_chapter(&current_session.manga_title, &new_chapter.id, expected_pages)
+                    });
                     save_chapter_read_in_db(&current_session, &new_chapter);
                     let mut write_guard = state.write().await;
                     write_guard.chapter = new_chapter;
@@ -263,32 +251,47 @@ async fn handle_connection(
     Ok(())
 }
 
+async fn resolve_local_chapter(session: &WebViewerSession, target: &ChapterReader) -> Option<ChapterToRead> {
+    let source = session
+        .offline_sources
+        .get(&target.id)
+        .cloned()
+        .or_else(|| LocalChapterSource::find(&session.manga_title, &target.id))?;
+
+    let count = tokio::task::spawn_blocking(move || source.page_count()).await.ok()?;
+    if count == 0 {
+        return None;
+    }
+
+    let dummy_urls = (0..count)
+        .filter_map(|i| reqwest::Url::parse(&format!("http://localhost/local/{i}")).ok())
+        .collect();
+    let volume = if target.volume.trim().is_empty() { "none".to_string() } else { target.volume.clone() };
+
+    Some(ChapterToRead {
+        id: target.id.clone(),
+        title: String::new(),
+        number: target.number.parse::<f64>().unwrap_or(0.0),
+        volume_number: Some(volume),
+        num_page_bookmarked: None,
+        language: session.chapter.language,
+        pages_url: dummy_urls,
+    })
+}
+
 async fn resolve_chapter(session: &WebViewerSession, target: &ChapterReader) -> Result<ChapterToRead, String> {
+    if session.is_offline_mode {
+        return resolve_local_chapter(session, target)
+            .await
+            .ok_or_else(|| format!("Local chapter {} not found on disk", target.id));
+    }
+
     let res = crate::backend::multi_provider::search_chapter_for_provider(session.provider, &target.id, &session.manga_id)
         .await
         .map_err(|e| e.to_string());
     match res {
         Ok(chap) => Ok(chap),
-        Err(err_msg) => {
-            if let Some(source) = LocalChapterSource::find(&session.manga_title, &target.id) {
-                let count = source.page_count();
-                if count > 0 {
-                    let dummy_urls = (0..count)
-                        .filter_map(|i| reqwest::Url::parse(&format!("http://localhost/local/{i}")).ok())
-                        .collect();
-                    return Ok(ChapterToRead {
-                        id: target.id.clone(),
-                        title: String::new(),
-                        number: target.number.parse::<f64>().unwrap_or(0.0),
-                        volume_number: Some(target.volume.clone()),
-                        num_page_bookmarked: None,
-                        language: session.chapter.language,
-                        pages_url: dummy_urls,
-                    });
-                }
-            }
-            Err(err_msg)
-        },
+        Err(err_msg) => resolve_local_chapter(session, target).await.ok_or(err_msg),
     }
 }
 
@@ -393,6 +396,7 @@ pub fn render_viewer_html(
     let es = is_es();
     let manga_title = escape_html(&session.manga_title);
     let provider_badge = escape_html(session.provider.badge_label());
+    let local_badge_html = if session.local_source.is_some() { r#"<span class="badge">💾 Local</span>"# } else { "" };
     let chapter_num = session.chapter.number;
     let chapter_title = if session.chapter.title.trim().is_empty() {
         if es { format!("Capítulo {chapter_num}") } else { format!("Chapter {chapter_num}") }
@@ -713,6 +717,7 @@ pub fn render_viewer_html(
     <header class="hud" id="hud">
         <div class="hud-left">
             <span class="badge">{provider_badge}</span>
+            {local_badge_html}
             <div class="manga-info">
                 <span class="manga-title" title="{manga_title}">{manga_title}</span>
                 <span class="chapter-subtitle" title="{chapter_title}">{chapter_title}</span>
@@ -984,6 +989,7 @@ mod tests {
                 }]),
             },
             local_source: None,
+            ..Default::default()
         };
 
         let prev = session.list_of_chapters.get_previous_chapter(Some("1"), 10.0);
@@ -1016,6 +1022,7 @@ mod tests {
             },
             list_of_chapters: ListOfChapters::default(),
             local_source: None,
+            ..Default::default()
         };
 
         let url = start_or_update_web_viewer(session).await.expect("server should start");
@@ -1027,5 +1034,108 @@ mod tests {
         let body = resp.text().await.unwrap();
         assert!(body.contains("One Piece"));
         assert!(body.contains("Romance Dawn"));
+    }
+
+    #[tokio::test]
+    async fn test_web_viewer_offline_resolve_chapter_and_serve_local_pages() {
+        use std::io::Cursor;
+
+        use bytes::Bytes;
+        use image::{DynamicImage, ImageFormat, RgbImage};
+
+        use crate::backend::manga_downloader::epub_downloader::EpubDownloader;
+        use crate::backend::manga_downloader::{ChapterToDownloadSanitized, MangaDownloader};
+        use crate::backend::manga_provider::ChapterPage;
+        use crate::config::DownloadType;
+
+        struct TempDir(std::path::PathBuf);
+        impl Drop for TempDir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+
+        let temp = TempDir(std::env::temp_dir().join(format!("web_viewer_offline_{}", uuid::Uuid::new_v4())));
+        let img = RgbImage::from_fn(8, 8, |_, _| image::Rgb([10, 120, 220]));
+        let mut png_bytes = Vec::new();
+        DynamicImage::ImageRgb8(img)
+            .write_to(&mut Cursor::new(&mut png_bytes), ImageFormat::Png)
+            .unwrap();
+
+        let epub_ch = ChapterToDownloadSanitized {
+            chapter_id: "ch-2".to_string(),
+            manga_id: "m-1".to_string(),
+            manga_title: "Offline Series".to_string().into(),
+            chapter_title: "Chapter 2".to_string().into(),
+            chapter_number: "2".to_string(),
+            volume_number: None,
+            language: Languages::Spanish,
+            scanlator: "".to_string().into(),
+            download_type: DownloadType::Epub,
+            pages: vec![ChapterPage {
+                bytes: Bytes::from(png_bytes),
+                extension: "png".to_string(),
+            }],
+            provider: Some(MangaProviders::Inmanga),
+        };
+        EpubDownloader::new().save_chapter_in_file_system(&temp.0, epub_ch).unwrap();
+        let epub_source = LocalChapterSource::find_in_dir(&temp.0, "Offline Series", "ch-2").expect("EPUB exists");
+
+        let mut offline_sources = HashMap::new();
+        offline_sources.insert("ch-2".to_string(), epub_source.clone());
+
+        let session = WebViewerSession {
+            manga_id: "m-1".to_string(),
+            manga_title: "Offline Series".to_string(),
+            manga_cover_url: None,
+            provider: MangaProviders::Inmanga,
+            chapter: ChapterToRead {
+                id: "ch-1".to_string(),
+                title: "Chapter 1".to_string(),
+                number: 1.0,
+                volume_number: Some("none".to_string()),
+                num_page_bookmarked: None,
+                language: Languages::Spanish,
+                pages_url: vec!["http://localhost/local/0".parse().unwrap()],
+            },
+            list_of_chapters: ListOfChapters::default(),
+            local_source: Some(epub_source),
+            offline_sources,
+            is_offline_mode: true,
+        };
+
+        let resolved = resolve_chapter(&session, &ChapterReader {
+            id: "ch-2".to_string(),
+            number: "2".to_string(),
+            volume: "none".to_string(),
+        })
+        .await
+        .expect("offline resolve_chapter must succeed without network");
+        assert_eq!(resolved.id, "ch-2");
+        assert_eq!(resolved.pages_url.len(), 1);
+
+        let html = render_viewer_html(&session, None, None);
+        assert!(html.contains("💾 Local"), "local badge should render in HUD");
+
+        // Serve /page/0 via ephemeral local HTTP server without touching global WEB_VIEWER_SERVER
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let shared_state = Arc::new(RwLock::new(session));
+        let srv_state = Arc::clone(&shared_state);
+        tokio::spawn(async move {
+            if let Ok((stream, _)) = listener.accept().await {
+                let _ = handle_connection(stream, srv_state).await;
+            }
+        });
+
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let resp = client
+            .get(format!("http://127.0.0.1:{port}/page/0"))
+            .send()
+            .await
+            .expect("GET /page/0 should succeed");
+        assert_eq!(resp.status(), reqwest::StatusCode::OK);
+        let body_bytes = resp.bytes().await.unwrap();
+        assert!(body_bytes.starts_with(&[0x89, b'P', b'N', b'G']));
     }
 }

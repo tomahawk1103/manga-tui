@@ -10,6 +10,7 @@ use tui_widget_list::PreRender;
 
 use crate::backend::database::MangaHistoryResponse;
 use crate::backend::manga_provider::{Languages, LatestChapter, MangaProviders};
+use crate::backend::offline::{OfflineManga, format_size_bytes};
 use crate::global::CURRENT_LIST_ITEM_STYLE;
 use crate::i18n::tr;
 use crate::theme::theme;
@@ -22,6 +23,7 @@ pub enum FeedTabs {
     Timeline,
     ContinueReading,
     Library,
+    Downloads,
 }
 
 impl Display for FeedTabs {
@@ -30,6 +32,7 @@ impl Display for FeedTabs {
             Self::Timeline => write!(f, "{}", tr("Novedades", "Updates")),
             Self::ContinueReading => write!(f, "{}", tr("Continuar leyendo", "Continue Reading")),
             Self::Library => write!(f, "{}", tr("Biblioteca", "Library")),
+            Self::Downloads => write!(f, "{}", tr("Descargas", "Downloads")),
         }
     }
 }
@@ -40,7 +43,8 @@ impl FeedTabs {
         match self {
             Self::Timeline => Self::ContinueReading,
             Self::ContinueReading => Self::Library,
-            Self::Library => Self::Timeline,
+            Self::Library => Self::Downloads,
+            Self::Downloads => Self::Timeline,
         }
     }
 }
@@ -607,6 +611,306 @@ impl StatefulWidget for HistoryWidget {
 
         let list = tui_widget_list::List::new(self.mangas);
         StatefulWidget::render(list, inner, buf, state);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OfflineChapterPreview {
+    pub chapter_number: String,
+    pub chapter_title: String,
+    pub format_label: &'static str,
+    pub is_read: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OfflineMangaItem {
+    pub manga_id: String,
+    pub title: String,
+    pub provider: Option<MangaProviders>,
+    pub is_favorite: bool,
+    pub chapter_count: usize,
+    pub read_count: usize,
+    pub total_size_bytes: u64,
+    pub formats: Vec<&'static str>,
+    pub preview_chapters: Vec<OfflineChapterPreview>,
+    pub style: Style,
+}
+
+impl From<&OfflineManga> for OfflineMangaItem {
+    fn from(manga: &OfflineManga) -> Self {
+        let preview_chapters = manga
+            .chapters
+            .iter()
+            .take(4)
+            .map(|c| OfflineChapterPreview {
+                chapter_number: c.chapter.chapter_number.clone(),
+                chapter_title: c.chapter.title.clone(),
+                format_label: c.format_label,
+                is_read: c.is_read,
+            })
+            .collect();
+
+        Self {
+            manga_id: manga.manga_id.clone(),
+            title: manga.title.clone(),
+            provider: manga.provider,
+            is_favorite: manga.is_favorite,
+            chapter_count: manga.chapters.len(),
+            read_count: manga.read_count(),
+            total_size_bytes: manga.total_size_bytes,
+            formats: manga.format_labels(),
+            preview_chapters,
+            style: Style::default(),
+        }
+    }
+}
+
+impl PreRender for OfflineMangaItem {
+    fn pre_render(&mut self, context: &tui_widget_list::PreRenderContext) -> u16 {
+        if context.is_selected {
+            self.style = *CURRENT_LIST_ITEM_STYLE;
+        }
+        7
+    }
+}
+
+impl Widget for OfflineMangaItem {
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        let t = theme();
+        let is_selected = self.style == *CURRENT_LIST_ITEM_STYLE;
+
+        let provider_span = match self.provider {
+            Some(p) => Span::styled(format!(" [{p}] "), provider_badge_style(p).bold()),
+            None => Span::styled(" [LOCAL] ", Style::default().fg(t.accent_secondary).bold()),
+        };
+
+        let card_title = Line::from(vec![
+            if is_selected {
+                Span::styled(" ▸ ", Style::default().fg(Color::Black).bg(t.accent_primary).bold())
+            } else {
+                Span::raw(" ")
+            },
+            provider_span,
+            Span::styled(
+                format!("{} ", self.title),
+                if is_selected { Style::default().fg(t.accent_primary).bold() } else { Style::default().fg(t.text_primary).bold() },
+            ),
+        ]);
+
+        let outer_block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(if is_selected { Style::default().fg(t.accent_primary).bold() } else { Style::default().fg(t.border) })
+            .title(card_title);
+
+        let inner_card = outer_block.inner(area);
+        outer_block.render(area, buf);
+
+        if inner_card.width == 0 || inner_card.height == 0 {
+            return;
+        }
+
+        let [info_area, chapters_area] =
+            Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(inner_card);
+
+        let mut info_lines = Vec::new();
+        let mut badges = Vec::new();
+        if self.is_favorite {
+            badges.push(Span::styled(
+                format!(" ★ {} ", tr("FAVORITO", "FAVORITE")),
+                Style::default().fg(Color::Black).bg(t.status_warning).bold(),
+            ));
+            badges.push(Span::raw(" "));
+        }
+        let formats_label = self.formats.join("/");
+        badges.push(Span::styled(
+            format!(
+                " 💾 {} {} · {} · {} ",
+                self.chapter_count,
+                tr("caps", "chaps"),
+                formats_label,
+                format_size_bytes(self.total_size_bytes)
+            ),
+            Style::default().fg(Color::Black).bg(t.accent_secondary).bold(),
+        ));
+        info_lines.push(Line::from(badges));
+
+        info_lines.push(Line::from(vec![
+            Span::styled(tr("✓ Leídos: ", "✓ Read: "), Style::default().fg(t.status_success).bold()),
+            Span::styled(format!("{}/{}", self.read_count, self.chapter_count), Style::default().fg(t.text_primary)),
+        ]));
+
+        let mut hint_spans = vec![
+            t.key_chip("Enter / r"),
+            Span::styled(tr(" Abrir  ", " Open  "), Style::default().fg(t.text_muted)),
+            t.key_chip("v"),
+            Span::styled(tr(" Visor Web", " Web HD"), Style::default().fg(t.text_muted)),
+        ];
+        if self.provider.is_some() {
+            hint_spans.push(Span::raw("  "));
+            hint_spans.push(t.key_chip("f"));
+            hint_spans.push(Span::styled(tr(" Fav.", " Fav."), Style::default().fg(t.text_muted)));
+        }
+        info_lines.push(Line::from(hint_spans));
+
+        Paragraph::new(info_lines)
+            .block(Block::default().borders(Borders::RIGHT).border_style(Style::default().fg(t.border_muted)))
+            .wrap(Wrap { trim: true })
+            .render(
+                info_area.inner(Margin {
+                    horizontal: 1,
+                    vertical: 0,
+                }),
+                buf,
+            );
+
+        let preview_block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(t.border_muted))
+            .title(Span::styled(
+                tr(" 📄 Capítulos en disco ", " 📄 Chapters on disk "),
+                Style::default().fg(t.accent_secondary).bold(),
+            ));
+
+        let list_items: Vec<ListItem<'_>> = self
+            .preview_chapters
+            .into_iter()
+            .map(|ch| {
+                let status = if ch.is_read {
+                    Span::styled("✓ ", Style::default().fg(t.status_success).bold())
+                } else {
+                    Span::styled("○ ", Style::default().fg(t.accent_highlight))
+                };
+                let label = if ch.chapter_title.trim().is_empty() {
+                    format!("{} {} ", tr("Cap.", "Ch."), ch.chapter_number)
+                } else {
+                    format!("{} {} — {} ", tr("Cap.", "Ch."), ch.chapter_number, ch.chapter_title)
+                };
+                ListItem::new(Line::from(vec![
+                    status,
+                    Span::styled(format!("[{}] ", ch.format_label), Style::default().fg(t.accent_primary).bold()),
+                    Span::styled(label, Style::default().fg(t.text_primary)),
+                ]))
+            })
+            .collect();
+
+        Widget::render(List::new(list_items).block(preview_block), chapters_area, buf);
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct OfflineDownloadsWidget {
+    pub items: Vec<OfflineMangaItem>,
+    pub raw_mangas: Vec<OfflineManga>,
+    pub state: tui_widget_list::ListState,
+    pub is_loading: bool,
+}
+
+impl OfflineDownloadsWidget {
+    pub fn from_offline_mangas(mangas: Vec<OfflineManga>) -> Self {
+        let items: Vec<OfflineMangaItem> = mangas.iter().map(OfflineMangaItem::from).collect();
+        let mut state = tui_widget_list::ListState::default();
+        if !items.is_empty() {
+            state.select(Some(0));
+        }
+        Self {
+            items,
+            raw_mangas: mangas,
+            state,
+            is_loading: false,
+        }
+    }
+
+    #[inline]
+    pub fn select_next(&mut self) {
+        self.state.next();
+    }
+
+    #[inline]
+    pub fn select_previous(&mut self) {
+        self.state.previous();
+    }
+
+    #[inline]
+    pub fn get_current_selected(&self) -> Option<&OfflineManga> {
+        self.state.selected.and_then(|index| self.raw_mangas.get(index))
+    }
+}
+
+impl StatefulWidget for OfflineDownloadsWidget {
+    type State = tui_widget_list::ListState;
+
+    fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
+        let t = theme();
+        let total_mangas = self.raw_mangas.len();
+        let total_chapters: usize = self.raw_mangas.iter().map(|m| m.chapters.len()).sum();
+        let total_size: u64 = self.raw_mangas.iter().map(|m| m.total_size_bytes).sum();
+
+        let top_left = Line::from(vec![
+            Span::styled(
+                tr(" 💾 Descargas Offline ", " 💾 Offline Downloads "),
+                Style::default().fg(t.accent_primary).bg(t.title_chip_primary_bg).bold(),
+            ),
+            Span::styled(
+                format!(" ({total_mangas} mangas · {total_chapters} {} · {}) ", tr("caps", "chaps"), format_size_bytes(total_size)),
+                Style::default().fg(t.accent_highlight).bold(),
+            ),
+        ]);
+
+        let bottom_instructions = Line::from(vec![
+            Span::raw(" "),
+            t.key_chip("j / k"),
+            Span::styled(tr(" Mover  ", " Move  "), Style::default().fg(t.text_muted)),
+            t.action_chip_primary("Enter / r"),
+            Span::styled(tr(" Abrir ficha  ", " Open manga  "), Style::default().fg(t.text_primary).bold()),
+            t.key_chip("v"),
+            Span::styled(tr(" Visor Web  ", " Web HD  "), Style::default().fg(t.text_muted)),
+            t.key_chip("s"),
+            Span::styled(tr(" Filtrar  ", " Filter  "), Style::default().fg(t.text_muted)),
+            t.key_chip("R"),
+            Span::styled(tr(" Re-escanear  ", " Rescan  "), Style::default().fg(t.text_muted)),
+            t.key_chip("f"),
+            Span::styled(tr(" Favorito ", " Favorite "), Style::default().fg(t.text_muted)),
+        ]);
+
+        let block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(t.border))
+            .title(top_left)
+            .title_bottom(bottom_instructions);
+
+        let inner = block.inner(area).inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
+        block.render(area, buf);
+
+        if inner.width == 0 || inner.height == 0 {
+            return;
+        }
+
+        if self.items.is_empty() {
+            if self.is_loading {
+                Paragraph::new(tr(
+                    " ⏳ Escaneando carpeta de descargas... Por favor, espera.",
+                    " ⏳ Scanning downloads directory... Please wait.",
+                ))
+                .style(Style::default().fg(t.accent_highlight).bold())
+                .alignment(Alignment::Center)
+                .render(inner, buf);
+            } else {
+                Paragraph::new(tr(
+                    "No hay capítulos descargados en tu carpeta de descargas.\nConsejo: Descarga cualquier capítulo con <d> o <a> y léelo aquí 100% sin conexión (CBZ, RAW, EPUB, PDF).",
+                    "No downloaded chapters found in your downloads directory.\nTip: Download any chapter with <d> or <a> and read it here 100% offline (CBZ, RAW, EPUB, PDF).",
+                ))
+                .style(Style::default().fg(t.text_muted))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true })
+                .render(inner, buf);
+            }
+        } else {
+            let list = tui_widget_list::List::new(self.items);
+            StatefulWidget::render(list, inner, buf, state);
+        }
     }
 }
 
