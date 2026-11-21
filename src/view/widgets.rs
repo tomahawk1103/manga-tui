@@ -18,8 +18,10 @@ pub mod manga;
 pub mod reader;
 pub mod search;
 pub mod settings;
+pub mod updater;
 
 pub use settings::{SettingsModal, SettingsModalState, SettingsOutcome};
+pub use updater::{AppUpdateModal, AppUpdateModalState, AppUpdateStage};
 
 pub trait Component {
     type Actions;

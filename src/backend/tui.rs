@@ -63,6 +63,14 @@ pub enum Events {
         all_failed: bool,
     },
     ImageProtocolChanged(crate::config::ImageProtocol),
+    AppUpdateAvailable(crate::backend::updater::AvailableUpdate),
+    AppUpdateCheckStatus {
+        message: String,
+        is_error: bool,
+    },
+    AppUpdateDownloadProgress(crate::backend::updater::UpdateProgress),
+    AppUpdateReadyToInstall(crate::backend::updater::PreparedUpdate),
+    AppUpdateFailed(String),
 }
 
 static MEASURED_FONT_SIZE: std::sync::OnceLock<(u16, u16)> = std::sync::OnceLock::new();
@@ -395,9 +403,10 @@ pub async fn run_app<T: MangaProvider>(
     manga_tracker: Option<impl MangaTracker>,
     filter_state: T::FiltersHandler,
     filter_widget: T::Widget,
-) -> Result<(), Box<dyn Error>> {
+) -> Result<Option<crate::backend::updater::PreparedUpdate>, Box<dyn Error>> {
     let mut app = App::new(api_client, manga_tracker, get_picker(), filter_state, filter_widget);
     app.spawn_startup_provider_check();
+    app.spawn_startup_update_check();
     app.check_for_new_downloaded_chapters();
 
     let tick_rate = std::time::Duration::from_millis(250);
@@ -429,7 +438,7 @@ pub async fn run_app<T: MangaProvider>(
 
     main_event_handle.abort();
 
-    Ok(())
+    Ok(app.pending_update_install.take())
 }
 
 pub fn handle_events(tick_rate: Duration, event_tx: UnboundedSender<Events>) -> JoinHandle<()> {

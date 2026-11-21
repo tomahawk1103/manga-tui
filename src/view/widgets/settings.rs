@@ -457,6 +457,7 @@ pub enum SettingsOutcome {
     UiLanguageChanged(UiLanguage),
     ThemeChanged(ThemeVariant),
     ImageProtocolChanged(ImageProtocol),
+    CheckForUpdates,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -665,13 +666,10 @@ impl SettingsModalState {
                 SettingsOutcome::Noop
             },
             KeyCode::Char('u') | KeyCode::Char('U') => {
-                let url = crate::backend::release_notifier::GITHUB_RELEASES_PAGE_URL;
-                #[cfg(not(test))]
-                let _ = open::that(url);
                 self.status_is_error = false;
                 self.status_message =
-                    Some(format!("🌐 {}: {url}", tr("Abriendo releases en navegador", "Opening releases in browser")));
-                SettingsOutcome::Noop
+                    Some(tr("🔍 Buscando actualizaciones en GitHub...", "🔍 Checking GitHub for updates...").to_string());
+                SettingsOutcome::CheckForUpdates
             },
             KeyCode::Char('c') | KeyCode::Char('C') | KeyCode::F(5) | KeyCode::Char('q') | KeyCode::Esc => SettingsOutcome::Close,
             _ => SettingsOutcome::Noop,
@@ -892,7 +890,7 @@ impl<'a> Widget for SettingsModal<'a> {
                     t.key_chip("o"),
                     Span::styled(tr(" Carpeta  ", " Folder  "), Style::default().fg(t.text_muted)),
                     t.key_chip("u"),
-                    Span::styled(tr(" Releases  ", " Releases  "), Style::default().fg(t.text_muted)),
+                    Span::styled(tr(" Actualizar  ", " Update  "), Style::default().fg(t.text_muted)),
                     t.key_chip("c / F5 / Esc"),
                     Span::styled(tr(" Cerrar ", " Close "), Style::default().fg(t.text_muted)),
                 ])
@@ -1121,13 +1119,8 @@ client_id = "123"
         assert_eq!(state.handle_key_event(KeyCode::Char('o').into()), SettingsOutcome::Noop);
         assert!(state.status_message.as_deref().is_some_and(|m| m.contains("mangaDownloads")));
 
-        assert_eq!(state.handle_key_event(KeyCode::Char('u').into()), SettingsOutcome::Noop);
-        assert!(
-            state
-                .status_message
-                .as_deref()
-                .is_some_and(|m| m.contains("tomahawk1103/manga-tui/releases/latest"))
-        );
+        assert_eq!(state.handle_key_event(KeyCode::Char('u').into()), SettingsOutcome::CheckForUpdates);
+        assert!(state.status_message.as_deref().is_some_and(|m| m.contains("GitHub")));
     }
 
     #[test]

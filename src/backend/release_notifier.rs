@@ -63,7 +63,7 @@ impl ReleaseNotifier {
     }
 
     /// Parses a version like `v1.2.3` into `(1, 2, 3)`
-    fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
+    pub(crate) fn parse_version(version: &str) -> Option<(u64, u64, u64)> {
         let mut parts = version
             .trim()
             .trim_start_matches(['v', 'V'])

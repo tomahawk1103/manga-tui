@@ -7,6 +7,7 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  MANGA_TUI_BUILD_CHANNEL: stable
 
 jobs:
   build:
@@ -107,10 +108,10 @@ jobs:
           merge-multiple: true
       - name: Checksum
         run: sha256sum releases/* > ./releases/checksum.txt
-      - name: Create Draft Release
+      - name: Create Release
         uses: softprops/action-gh-release@v2.4.2
         with:
-          draft: true
+          draft: false
           generate_release_notes: true
           make_latest: true
           files: |

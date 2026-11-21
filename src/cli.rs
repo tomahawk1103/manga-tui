@@ -47,6 +47,16 @@ pub enum Commands {
         #[command(subcommand)]
         command: AnilistCommand,
     },
+
+    /// Check for, download, and install application updates
+    Update {
+        /// Only check if an update is available without installing
+        #[arg(long)]
+        check: bool,
+        /// Skip confirmation prompt and install automatically
+        #[arg(short = 'y', long)]
+        yes: bool,
+    },
 }
 
 #[derive(Parser, Clone)]
@@ -313,6 +323,14 @@ impl CliArgs {
                         }
                     },
                 },
+
+                Commands::Update { check, yes } => {
+                    if let Err(err) = run_cli_update(*check, *yes).await {
+                        eprintln!("Error: {err}");
+                        exit(1);
+                    }
+                    exit(0)
+                },
             },
             None => {
                 crate::view::widgets::settings::set_active_chapter_language(preferred_lang_to_set);
@@ -325,6 +343,107 @@ impl CliArgs {
 
 pub trait AnilistTokenChecker {
     fn verify_token(&self, token: String) -> impl Future<Output = Result<bool, Box<dyn Error>>> + Send;
+}
+
+async fn run_cli_update(check_only: bool, assume_yes: bool) -> Result<(), String> {
+    use std::io::Write;
+
+    use crate::backend::updater::{
+        BuildIdentity, UpdateClient, UpdateProgressStage, apply_prepared_update_and_relaunch, detect_current_install_kind,
+    };
+    use crate::i18n::tr;
+    use crate::view::widgets::updater::format_byte_size;
+
+    let current = BuildIdentity::current();
+    let install_kind = detect_current_install_kind();
+    let current_label = if current.commit_short != "unknown" {
+        format!("v{} ({})", current.version, current.commit_short)
+    } else {
+        format!("v{}", current.version)
+    };
+
+    println!("Manga TUI {current_label} [{}]", install_kind.label());
+    println!("{}", tr("Buscando actualizaciones en GitHub...", "Checking GitHub for updates..."));
+
+    let client = UpdateClient::default_github();
+    let Some(update) = client.check_for_update(&current, install_kind).await? else {
+        println!("{}", tr("✓ Ya estás en la última versión disponible.", "✓ Already running the latest available version."));
+        return Ok(());
+    };
+
+    println!(
+        "{}: {} [{}]",
+        tr("⬆ Nueva actualización disponible", "⬆ New update available"),
+        update.display_version,
+        update.channel.label()
+    );
+    if let Some(asset) = &update.download_asset {
+        let size_label = if asset.size > 0 { format!(" ({})", format_byte_size(asset.size)) } else { String::new() };
+        println!("{}: {}{}", tr("Paquete", "Package"), asset.name, size_label);
+    }
+    if !update.release_notes.trim().is_empty() {
+        println!("\n{}", update.release_notes);
+    }
+
+    if check_only {
+        return Ok(());
+    }
+
+    if !assume_yes {
+        print!(
+            "\n{}",
+            tr("¿Descargar, verificar SHA-256 e instalar ahora? [S/n]: ", "Download, verify SHA-256, and install now? [Y/n]: ")
+        );
+        let _ = std::io::stdout().flush();
+        let mut answer = String::new();
+        std::io::stdin()
+            .read_line(&mut answer)
+            .map_err(|e| format!("Failed reading confirmation: {e}"))?;
+        let trimmed = answer.trim().to_ascii_lowercase();
+        if trimmed == "n" || trimmed == "no" {
+            println!("{}", tr("Actualización cancelada.", "Update cancelled."));
+            return Ok(());
+        }
+    }
+
+    let target_exe = std::env::current_exe().map_err(|e| format!("Could not resolve current executable: {e}"))?;
+    let mut last_percent: Option<u64> = None;
+
+    let prepared = client
+        .download_and_verify(&update, target_exe, |progress| match progress.stage {
+            UpdateProgressStage::Downloading => {
+                if let Some(total) = progress.total_bytes.filter(|&t| t > 0) {
+                    let pct = ((progress.downloaded_bytes as f64 / total as f64) * 100.0).round() as u64;
+                    if last_percent.is_none_or(|prev| pct >= prev + 10 || pct == 100) {
+                        last_percent = Some(pct);
+                        println!(
+                            "  {} {pct}% ({} / {})",
+                            tr("Descargando", "Downloading"),
+                            format_byte_size(progress.downloaded_bytes),
+                            format_byte_size(total)
+                        );
+                    }
+                }
+            },
+            UpdateProgressStage::Verifying => {
+                println!("{}", tr("🔐 Verificando integridad SHA-256...", "🔐 Verifying SHA-256 integrity..."));
+            },
+            UpdateProgressStage::Preparing => {
+                println!("{}", tr("⚙ Aplicando actualización...", "⚙ Applying update..."));
+            },
+        })
+        .await?;
+
+    println!("✓ SHA-256: {}", prepared.verified_sha256);
+    apply_prepared_update_and_relaunch(&prepared)?;
+    println!(
+        "{}",
+        tr(
+            "✓ Actualización iniciada en segundo plano. Manga TUI se reiniciará automáticamente.",
+            "✓ Update launched in background. Manga TUI will restart automatically."
+        )
+    );
+    Ok(())
 }
 
 #[cfg(test)]

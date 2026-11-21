@@ -37,8 +37,8 @@ use crate::view::pages::search::SearchScope;
 use crate::view::pages::*;
 use crate::view::tasks::manga::{AutoDownloadItem, download_new_chapters, download_new_favorite_chapters};
 use crate::view::widgets::{
-    DownloadQueueModal, ErrorModal, HelpModal, NewChapterItem, NewChaptersModal, NewChaptersModalState, SettingsModal,
-    SettingsModalState, SettingsOutcome,
+    AppUpdateModal, AppUpdateModalState, AppUpdateStage, DownloadQueueModal, ErrorModal, HelpModal, NewChapterItem,
+    NewChaptersModal, NewChaptersModalState, SettingsModal, SettingsModalState, SettingsOutcome,
 };
 
 const NEW_CHAPTER_CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -186,6 +186,9 @@ where
     pub is_help_modal_open: bool,
     pub is_settings_modal_open: bool,
     pub settings_state: SettingsModalState,
+    pub app_update_state: Option<AppUpdateModalState>,
+    pub pending_update_install: Option<crate::backend::updater::PreparedUpdate>,
+    app_update_task: Option<tokio::task::JoinHandle<()>>,
     last_new_chapter_check: Instant,
     // The picker is what decides how big a image needs to be rendered depending on the user's
     // terminal font size and the graphics it supports
@@ -223,6 +226,8 @@ where
 
         if let Some(message) = self.error_message.as_ref().cloned() {
             self.render_modal_error_message(area, frame.buffer_mut(), &message);
+        } else if let Some(update_state) = self.app_update_state.as_ref() {
+            AppUpdateModal::new(update_state).render(area, frame.buffer_mut());
         } else if let Some(state) = self.new_chapters_state.as_ref() {
             NewChaptersModal::new(state).render(area, frame.buffer_mut());
         } else if self.is_queue_modal_open {
@@ -380,6 +385,46 @@ where
             Events::ImageProtocolChanged(proto) => {
                 self.apply_image_protocol(proto);
             },
+            Events::AppUpdateAvailable(update) => {
+                self.is_settings_modal_open = false;
+                self.app_update_state = Some(AppUpdateModalState::available(update));
+            },
+            Events::AppUpdateCheckStatus { message, is_error } => {
+                if self.is_settings_modal_open {
+                    self.settings_state.status_message = Some(message);
+                    self.settings_state.status_is_error = is_error;
+                } else {
+                    self.queue_status_toast = Some((message, Instant::now()));
+                }
+            },
+            Events::AppUpdateDownloadProgress(progress) => {
+                if let Some(state) = &mut self.app_update_state {
+                    state.stage = match progress.stage {
+                        crate::backend::updater::UpdateProgressStage::Downloading => AppUpdateStage::Downloading {
+                            downloaded_bytes: progress.downloaded_bytes,
+                            total_bytes: progress.total_bytes,
+                        },
+                        crate::backend::updater::UpdateProgressStage::Verifying => AppUpdateStage::Verifying,
+                        crate::backend::updater::UpdateProgressStage::Preparing => AppUpdateStage::Applying,
+                    };
+                }
+            },
+            Events::AppUpdateReadyToInstall(prepared) => {
+                self.app_update_task = None;
+                if let Some(state) = &mut self.app_update_state {
+                    state.stage = AppUpdateStage::Applying;
+                }
+                self.pending_update_install = Some(prepared);
+                self.quit();
+            },
+            Events::AppUpdateFailed(err) => {
+                self.app_update_task = None;
+                if let Some(state) = &mut self.app_update_state {
+                    state.stage = AppUpdateStage::Error(err);
+                } else {
+                    self.display_error_message(err);
+                }
+            },
             Events::ProviderCheckFinished {
                 active_provider,
                 switched_from,
@@ -494,6 +539,9 @@ where
             is_help_modal_open: false,
             is_settings_modal_open: false,
             settings_state: SettingsModalState::new(),
+            app_update_state: None,
+            pending_update_install: None,
+            app_update_task: None,
             last_new_chapter_check: Instant::now(),
             manga_provider: Arc::clone(&provider),
             active_provider: which_provider,
@@ -595,6 +643,114 @@ where
                 });
             });
         }
+    }
+
+    pub fn spawn_startup_update_check(&self) {
+        if !MangaTuiConfig::get().check_new_updates {
+            return;
+        }
+        let event_tx = self.global_event_tx.clone();
+        tokio::spawn(async move {
+            let current = crate::backend::updater::BuildIdentity::current();
+            let install_kind = crate::backend::updater::detect_current_install_kind();
+            let client = crate::backend::updater::UpdateClient::default_github();
+            match client.check_for_update(&current, install_kind).await {
+                Ok(Some(update)) => {
+                    let _ = event_tx.send(Events::AppUpdateAvailable(update));
+                },
+                Ok(None) => {},
+                Err(err) => {
+                    write_to_error_log(format!("Startup update check failed: {err}").into());
+                },
+            }
+        });
+    }
+
+    pub fn spawn_manual_update_check(&mut self) {
+        let event_tx = self.global_event_tx.clone();
+        tokio::spawn(async move {
+            let current = crate::backend::updater::BuildIdentity::current();
+            let install_kind = crate::backend::updater::detect_current_install_kind();
+            let client = crate::backend::updater::UpdateClient::default_github();
+            match client.check_for_update(&current, install_kind).await {
+                Ok(Some(update)) => {
+                    let _ = event_tx.send(Events::AppUpdateAvailable(update));
+                },
+                Ok(None) => {
+                    let current_label = if current.commit_short != "unknown" {
+                        format!("v{} ({})", current.version, current.commit_short)
+                    } else {
+                        format!("v{}", current.version)
+                    };
+                    let msg = if crate::i18n::is_es() {
+                        format!("✓ Ya estás en la última versión ({current_label})")
+                    } else {
+                        format!("✓ Already on the latest version ({current_label})")
+                    };
+                    let _ = event_tx.send(Events::AppUpdateCheckStatus {
+                        message: msg,
+                        is_error: false,
+                    });
+                },
+                Err(err) => {
+                    let _ = event_tx.send(Events::AppUpdateCheckStatus {
+                        message: format!("⚠ {err}"),
+                        is_error: true,
+                    });
+                },
+            }
+        });
+    }
+
+    fn start_app_update_download(&mut self) {
+        let Some(state) = &mut self.app_update_state else {
+            return;
+        };
+        if let Some(handle) = self.app_update_task.take() {
+            handle.abort();
+        }
+
+        let Some(asset) = state.available.download_asset.as_ref() else {
+            let url = state.available.html_url.clone();
+            #[cfg(not(test))]
+            let _ = open::that(&url);
+            state.stage = AppUpdateStage::Error(format!(
+                "{}: {url}",
+                tr(
+                    "No hay paquete directo compatible; abriendo release en navegador",
+                    "No compatible direct package found; opening release in browser",
+                )
+            ));
+            return;
+        };
+
+        let update = state.available.clone();
+        state.stage = AppUpdateStage::Downloading {
+            downloaded_bytes: 0,
+            total_bytes: (asset.size > 0).then_some(asset.size),
+        };
+
+        let event_tx = self.global_event_tx.clone();
+        let target_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("manga-tui.exe"));
+
+        let handle = tokio::spawn(async move {
+            let client = crate::backend::updater::UpdateClient::default_github();
+            let tx_progress = event_tx.clone();
+            match client
+                .download_and_verify(&update, target_exe, move |progress| {
+                    let _ = tx_progress.send(Events::AppUpdateDownloadProgress(progress));
+                })
+                .await
+            {
+                Ok(prepared) => {
+                    let _ = event_tx.send(Events::AppUpdateReadyToInstall(prepared));
+                },
+                Err(err) => {
+                    let _ = event_tx.send(Events::AppUpdateFailed(err));
+                },
+            }
+        });
+        self.app_update_task = Some(handle);
     }
 
     pub fn check_for_new_downloaded_chapters(&self) {
@@ -1025,6 +1181,8 @@ where
             (tr(" ⚙  AJUSTES ", " ⚙  SETTINGS "), t.accent_primary)
         } else if self.is_queue_modal_open {
             (tr(" ⬇ COLA ", " ⬇ QUEUE "), t.accent_primary)
+        } else if self.app_update_state.is_some() {
+            (tr(" ⬆ ACTUALIZACIÓN ", " ⬆ UPDATE "), t.accent_highlight)
         } else if is_typing {
             (tr(" ⌨  ESCRIBIENDO ", " ⌨  TYPING "), t.accent_highlight)
         } else if self.search_page.is_filter_open() {
@@ -1208,6 +1366,10 @@ where
 
     fn close_modal(&mut self) {
         self.error_message = None;
+        if let Some(handle) = self.app_update_task.take() {
+            handle.abort();
+        }
+        self.app_update_state = None;
         self.new_chapters_state = None;
         self.is_queue_modal_open = false;
         self.is_help_modal_open = false;
@@ -1240,6 +1402,7 @@ where
 
     fn is_displaying_modal(&self) -> bool {
         self.error_message.is_some()
+            || self.app_update_state.is_some()
             || self.new_chapters_state.is_some()
             || self.is_queue_modal_open
             || self.is_help_modal_open
@@ -1325,6 +1488,13 @@ where
             return;
         }
 
+        if self.error_message.is_some() {
+            if matches!(key_event.code, KeyCode::Char('q') | KeyCode::Esc) {
+                self.error_message = None;
+            }
+            return;
+        }
+
         if self.is_help_modal_open {
             if matches!(
                 key_event.code,
@@ -1367,6 +1537,9 @@ where
                 SettingsOutcome::ImageProtocolChanged(proto) => {
                     self.apply_image_protocol(proto);
                 },
+                SettingsOutcome::CheckForUpdates => {
+                    self.spawn_manual_update_check();
+                },
                 _ => {},
             }
             return;
@@ -1384,6 +1557,53 @@ where
                     self.is_queue_modal_open = false;
                 },
                 _ => {},
+            }
+            return;
+        }
+
+        if let Some(state) = &self.app_update_state {
+            match &state.stage {
+                AppUpdateStage::Available => match key_event.code {
+                    KeyCode::Enter | KeyCode::Char('y') | KeyCode::Char('Y') => {
+                        self.start_app_update_download();
+                    },
+                    KeyCode::Char('b') | KeyCode::Char('B') => {
+                        let url = state.available.html_url.clone();
+                        #[cfg(not(test))]
+                        let _ = open::that(url);
+                        #[cfg(test)]
+                        let _ = url;
+                    },
+                    KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+                        self.app_update_state = None;
+                    },
+                    _ => {},
+                },
+                AppUpdateStage::Downloading { .. } => {
+                    if matches!(key_event.code, KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc) {
+                        if let Some(handle) = self.app_update_task.take() {
+                            handle.abort();
+                        }
+                        self.app_update_state = None;
+                    }
+                },
+                AppUpdateStage::Verifying | AppUpdateStage::Applying => {},
+                AppUpdateStage::Error(_) => match key_event.code {
+                    KeyCode::Char('r') | KeyCode::Char('R') | KeyCode::Enter => {
+                        self.start_app_update_download();
+                    },
+                    KeyCode::Char('b') | KeyCode::Char('B') => {
+                        let url = state.available.html_url.clone();
+                        #[cfg(not(test))]
+                        let _ = open::that(url);
+                        #[cfg(test)]
+                        let _ = url;
+                    },
+                    KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc => {
+                        self.app_update_state = None;
+                    },
+                    _ => {},
+                },
             }
             return;
         }
@@ -2518,5 +2738,71 @@ mod tests {
         assert_eq!(app.current_tab, SelectedPage::Feed);
         let action = app.feed_page.local_action_rx.try_recv().unwrap();
         assert_eq!(action, crate::view::pages::feed::FeedActions::RefreshTimeline);
+    }
+
+    #[tokio::test]
+    async fn app_update_events_manage_modal_lifecycle_and_ready_quit() {
+        use crate::backend::updater::{
+            AvailableUpdate, InstallKind, PreparedUpdate, ReleaseAsset, UpdateChannel, UpdateProgress, UpdateProgressStage,
+        };
+
+        let mut app: App<MockMangaPageProvider, TrackerTest> =
+            App::new(MockMangaPageProvider::new(), None, None, MockFiltersHandler::new(MockFilterState {}), MockWidgetFilter {});
+        app.listen_to_event().await; // GoToHome
+
+        app.is_settings_modal_open = true;
+
+        let update = AvailableUpdate {
+            tag_name: "v0.2.1".into(),
+            display_version: "v0.2.1".into(),
+            channel: UpdateChannel::Stable,
+            commit_short: None,
+            published_at: Some("2026-11-21T12:00:00Z".into()),
+            release_notes: "Fixes".into(),
+            html_url: "https://github.com/tomahawk1103/manga-tui/releases/tag/v0.2.1".into(),
+            install_kind: InstallKind::WindowsInstaller,
+            download_asset: Some(ReleaseAsset {
+                name: "setup.exe".into(),
+                download_url: "https://example.invalid/setup.exe".into(),
+                size: 1000,
+            }),
+            sha256_asset: None,
+            checksum_txt_asset: None,
+        };
+
+        // Opening update modal closes settings modal
+        app.process_global_event(Events::AppUpdateAvailable(update.clone()));
+        assert!(!app.is_settings_modal_open);
+        assert!(app.app_update_state.is_some());
+
+        // Dismissing with 'q' closes update modal cleanly
+        app.process_global_event(Events::Key(KeyCode::Char('q').into()));
+        assert!(app.app_update_state.is_none());
+
+        // Progress and ready events update stage, store PreparedUpdate, and request quit
+        app.process_global_event(Events::AppUpdateAvailable(update.clone()));
+        app.process_global_event(Events::AppUpdateDownloadProgress(UpdateProgress {
+            stage: UpdateProgressStage::Downloading,
+            downloaded_bytes: 500,
+            total_bytes: Some(1000),
+        }));
+        assert!(matches!(
+            app.app_update_state.as_ref().map(|s| &s.stage),
+            Some(AppUpdateStage::Downloading {
+                downloaded_bytes: 500,
+                total_bytes: Some(1000)
+            })
+        ));
+
+        let prepared = PreparedUpdate {
+            available: update,
+            downloaded_file: std::path::PathBuf::from("setup.exe"),
+            verified_sha256: "abc".into(),
+            target_exe: std::path::PathBuf::from("manga-tui.exe"),
+        };
+        app.process_global_event(Events::AppUpdateReadyToInstall(prepared.clone()));
+        assert_eq!(app.pending_update_install, Some(prepared));
+        app.update_based_on_action();
+        assert!(app.state == AppState::Done);
     }
 }

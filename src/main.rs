@@ -31,7 +31,6 @@ use backend::manga_provider::weebcentral::filter_state::{WeebcentralFilterState,
 use backend::manga_provider::weebcentral::filter_widget::WeebcentralFilterWidget;
 use backend::manga_provider::weebcentral::{WEEBCENTRAL_BASE_URL, WeebcentralProvider};
 use backend::manga_provider::{ChapterFilters, GetChapterPages, MangaPageProvider, MangaProviders, Pagination, SearchPageProvider};
-use backend::release_notifier::{GITHUB_URL, ReleaseNotifier};
 use backend::secrets::keyring::KeyringStorage;
 use backend::tracker::anilist::{Anilist, BASE_ANILIST_API_URL};
 use clap::Parser;
@@ -95,7 +94,7 @@ mod tests {
         assert!(!should_relaunch_in_windows_terminal(true, false, true, &exe));
 
         // Non-interactive CLI arguments should run directly without opening a new tab
-        for flag in ["-h", "--help", "-V", "--version", "lang", "anilist"] {
+        for flag in ["-h", "--help", "-V", "--version", "lang", "anilist", "update"] {
             let args = vec!["manga-tui.exe".to_string(), flag.to_string()];
             assert!(!should_relaunch_in_windows_terminal(true, false, false, &args), "expected no relaunch for CLI arg {flag}");
         }
@@ -188,7 +187,7 @@ fn should_relaunch_in_windows_terminal(
         return false;
     }
 
-    const NON_INTERACTIVE_TOKENS: [&str; 6] = ["-h", "--help", "-V", "--version", "lang", "anilist"];
+    const NON_INTERACTIVE_TOKENS: [&str; 7] = ["-h", "--help", "-V", "--version", "lang", "anilist", "update"];
     !args.iter().skip(1).any(|arg| NON_INTERACTIVE_TOKENS.iter().any(|token| arg == token))
 }
 
@@ -317,6 +316,8 @@ fn main() {
 }
 
 async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
+    crate::backend::updater::cleanup_stale_old_binary();
+
     let logger = Logger;
 
     pretty_env_logger::formatted_builder()
@@ -352,23 +353,6 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     cli_args.proccess_args().await?;
 
     let config = MangaTuiConfig::get();
-
-    if config.check_new_updates
-        && let Ok(github_url) = GITHUB_URL.parse()
-    {
-        tokio::spawn(async move {
-            struct SilentLogger;
-            impl ILogger for SilentLogger {
-                fn inform(&self, _message: impl AsRef<str>) {}
-
-                fn warn(&self, _warning: impl AsRef<str>) {}
-
-                fn error(&self, _error: Box<dyn std::error::Error>) {}
-            }
-            let notifier = ReleaseNotifier::new(github_url);
-            let _ = notifier.check_new_releases(&SilentLogger).await;
-        });
-    }
 
     let anilist_storage = KeyringStorage::new();
 
@@ -419,7 +403,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
 
     let provider = if let Some(pro) = manga_provider_cli { pro } else { config.default_manga_provider };
 
-    match provider {
+    let pending_update = match provider {
         MangaProviders::Mangadex => {
             let mangadex_client =
                 MangadexClient::new(API_URL_BASE.parse().unwrap(), COVER_IMG_URL_BASE.parse().unwrap(), cache_provider)
@@ -433,7 +417,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 MangadexFilterProvider::from(get_cached_filters()),
                 MangadexFilterWidget::new(),
             )
-            .await?;
+            .await?
         },
         MangaProviders::Weebcentral => {
             let (terminal, _guard) = TerminalGuard::init()?;
@@ -444,7 +428,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 WeebcentralFiltersProvider::new(WeebcentralFilterState::default()),
                 WeebcentralFilterWidget::new(),
             )
-            .await?;
+            .await?
         },
         MangaProviders::Mangapill => {
             let (terminal, _guard) = TerminalGuard::init()?;
@@ -455,7 +439,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 MangaPillFiltersProvider::new(backend::manga_provider::mangapill::filter_state::MangaPillFilterState::default()),
                 MangaPillFilterWidget::new(),
             )
-            .await?;
+            .await?
         },
         MangaProviders::Inmanga => {
             let (terminal, _guard) = TerminalGuard::init()?;
@@ -466,7 +450,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 InmangaFiltersProvider::new(InmangaFilterState::default()),
                 InmangaFilterWidget::new(),
             )
-            .await?;
+            .await?
         },
         MangaProviders::Mangaoni => {
             let (terminal, _guard) = TerminalGuard::init()?;
@@ -477,7 +461,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 MangaoniFiltersProvider::new(MangaoniFilterState::default()),
                 MangaoniFilterWidget::new(),
             )
-            .await?;
+            .await?
         },
         MangaProviders::Leercapitulo => {
             let (terminal, _guard) = TerminalGuard::init()?;
@@ -488,7 +472,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 LeercapituloFiltersProvider::new(LeercapituloFilterState::default()),
                 LeercapituloFilterWidget::new(),
             )
-            .await?;
+            .await?
         },
         MangaProviders::Comizy => {
             let (terminal, _guard) = TerminalGuard::init()?;
@@ -499,8 +483,13 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
                 ComizyFiltersProvider::new(ComizyFilterState::default()),
                 ComizyFilterWidget::new(),
             )
-            .await?;
+            .await?
         },
+    };
+
+    if let Some(prepared) = pending_update {
+        println!("{} {}...", tr("Aplicando actualización", "Applying update"), prepared.available.display_version);
+        crate::backend::updater::apply_prepared_update_and_relaunch(&prepared)?;
     }
 
     Ok(())
