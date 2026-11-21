@@ -1,245 +1,196 @@
-<!DOCTYPE html>
+﻿<!doctype html>
 <html lang="es">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Manga TUI — Lector y Gestor de Manga en Terminal</title>
-  <meta name="description" content="Manga TUI: lector y descargador de manga en terminal con Visor Web HD, lectura 100% offline y sincronización opcional con Google Drive." />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8f7f1">
+  <title>Manga TUI · Lector de manga en terminal</title>
+  <meta name="description" content="Busca, descarga y lee manga en tu terminal o en el Visor Web HD. Para Windows, Linux y macOS, con lectura sin conexión y sincronización opcional.">
   <style>
     :root {
-      --bg: #0f1117;
-      --surface: #171a24;
-      --surface-alt: #1e2230;
-      --border: #2a3042;
-      --text: #e6e9f2;
-      --muted: #a1a9c0;
-      --accent: #7aa2f7;
-      --accent-soft: rgba(122, 162, 247, 0.14);
-      --green: #9ece6a;
+      --paper: #f8f7f1;
+      --ink: #191918;
+      --red: #cb3028;
+      --muted: #55554f;
+      --line: #c8c7bc;
+      --display: "Arial Black", "Archivo Black", Arial, sans-serif;
+      --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
     }
-    * { box-sizing: border-box; }
-    body {
-      margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.65;
+    * { box-sizing: border-box }
+    body { margin: 0; color: var(--ink); background: var(--paper); font: 1rem/1.55 "Segoe UI", Arial, sans-serif }
+    a { color: inherit; text-underline-offset: .25em }
+    a:hover { color: var(--red) }
+    :focus-visible { outline: 3px solid #0077b6; outline-offset: 4px }
+    .wrap { width: min(1200px, 90%); margin-inline: auto }
+    .skip { position: absolute; z-index: 5; background: white; padding: .6em 1em; transform: translateY(-150%) }
+    .skip:focus { transform: none }
+    header { border-bottom: 1px solid var(--ink) }
+    .bar, nav, .brand, .actions, .reader-bar, .reader-foot, .pager, .platforms, .foot { display: flex; align-items: center }
+    .bar, .foot { justify-content: space-between; gap: 1rem; padding-block: 1.1rem }
+    .brand { gap: .65rem; font: 900 1.35rem/1 var(--display); letter-spacing: -.06em; text-decoration: none }
+    .mark { display: grid; place-items: center; width: 2.15rem; height: 2.15rem; background: var(--red); color: white; font: bold 1.15rem var(--mono); letter-spacing: -.14em; padding-right: .15em }
+    nav { gap: clamp(.9rem, 3vw, 2.6rem); font-weight: 600 }
+    nav a { text-decoration: none }
+    .repo { border: 1px solid var(--ink); padding: .4em .95em }
+    .hero { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: clamp(2rem, 5vw, 5rem); padding-block: clamp(3rem, 6vw, 6rem) }
+    .eyebrow, .meta, .reader-bar, .reader-foot, .platforms, .ribbon, .tag { font-family: var(--mono) }
+    .eyebrow { display: flex; align-items: center; gap: .7rem; color: var(--red); font-size: .84rem; font-weight: 700; letter-spacing: .065em; text-transform: uppercase }
+    .eyebrow::before { content: ""; width: 2rem; height: 3px; background: currentColor }
+    h1, h2, h3, p, figure { margin: 0 }
+    h1, h2, h3 { font-family: var(--display); letter-spacing: -.065em; line-height: 1.04 }
+    h1 { margin: 1.2rem 0; font-size: clamp(4rem, 6.5vw, 6.5rem); font-weight: 900 }
+    h1 em { display: block; color: var(--red); font-style: normal }
+    .intro { max-width: 42ch; font-size: clamp(1.06rem, 1.45vw, 1.25rem); color: var(--muted) }
+    .actions { flex-wrap: wrap; gap: .9rem 1.4rem; margin-top: 1.85rem }
+    .button { display: inline-flex; align-items: center; gap: .65rem; padding: .8rem 1.25rem; border: 2px solid var(--ink); background: var(--red); box-shadow: 3px 3px var(--ink); color: #fff; font-weight: 700; text-decoration: none }
+    .button:hover { background: #a1201b; color: white }
+    .secondary { font-weight: 650 }
+    .platforms { gap: .65rem; flex-wrap: wrap; color: var(--muted); font-size: .82rem; margin-top: 1.35rem }
+    .platforms span + span::before { content: "/"; margin-right: .65rem; color: #88877b }
+    .stage { position: relative; min-width: 0; padding: 1.3rem .95rem 1.3rem 1rem; isolation: isolate }
+    .stage::before { content: ""; position: absolute; inset: 0 0 0 8%; border: 1px solid var(--ink); transform: rotate(2deg); background: radial-gradient(var(--red) 1px, transparent 1.4px) 0 0/6px 6px; z-index: -1 }
+    figure { border: 2px solid var(--ink); background: var(--paper); box-shadow: 6px 6px var(--ink) }
+    .reader-bar, .reader-foot { justify-content: space-between; gap: 1rem; padding: .55rem .95rem; font-size: .82rem }
+    .reader-bar { background: var(--ink); color: white }
+    .dots { display: flex; gap: 5px }
+    .dots i { width: 7px; height: 7px; border: 1px solid #e4e3db; border-radius: 50% }
+    .dots i:first-child { background: #ec554a; border-color: #ec554a }
+    .panel { display: block; overflow: hidden; border-bottom: 2px solid var(--ink); background: white }
+    .panel img { width: 100%; aspect-ratio: 1.45; object-fit: cover; object-position: center 64%; display: block }
+    .reader-foot { min-height: 3.2rem; font-weight: bold }
+    .pager { gap: .4rem }
+    [hidden] { display: none !important }
+    .pager button { width: 2.5rem; height: 2.25rem; border: 1px solid var(--ink); background: transparent; color: var(--ink); cursor: pointer; font-size: 1.2rem }
+    .pager button:hover:enabled { color: white; background: var(--ink) }
+    .pager button:disabled { opacity: .32; cursor: default }
+    .ribbon { border-block: 1px solid var(--ink); color: var(--paper); background: var(--ink) }
+    .ribbon .wrap { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding-block: .95rem; font-size: .9rem }
+    .ribbon b { color: #ff8a76; font-weight: 500 }
+    .features { padding-block: clamp(3rem, 5.5vw, 5rem) }
+    h2 { font-size: clamp(2.25rem, 4vw, 3.8rem); margin-bottom: 1.75rem }
+    .grid { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 2px solid var(--ink) }
+    .grid article { padding: 1.65rem clamp(1rem, 2.4vw, 2.5rem) 1.85rem }
+    .grid article:first-child { padding-left: 0 }
+    .grid article + article { border-left: 1px solid var(--line) }
+    .glyph { display: block; font: bold 1.55rem/1 var(--mono); color: var(--red); margin-bottom: 1rem }
+    h3 { font-size: 1.55rem; margin-bottom: .7rem; letter-spacing: -.045em }
+    article p, .privacy p { color: var(--muted); max-width: 65ch }
+    .privacy { display: grid; grid-template-columns: 1fr 1.4fr; gap: 2rem; align-items: start; border-left: .4rem solid var(--red); padding: clamp(1.25rem, 3vw, 2.8rem); background: #ecebe3; margin-bottom: 4rem }
+    .privacy h2 { font-size: clamp(2rem, 3vw, 3rem); margin: 0 }
+    .privacy a { display: inline-block; margin-top: .8rem; font-weight: 700 }
+    footer { border-top: 1px solid var(--ink) }
+    .foot { flex-wrap: wrap; padding-block: 1.5rem; font-size: .9rem }
+    .foot p { color: var(--muted) }
+    .foot-links { display: flex; flex-wrap: wrap; gap: 1rem }
+    @media (max-width: 780px) {
+      .hero { grid-template-columns: 1fr; gap: 1.8rem }
+      .intro { max-width: 50ch }
+      .stage { width: min(100%, 560px); justify-self: center }
+      .grid, .privacy { grid-template-columns: 1fr }
+      .grid article, .grid article:first-child { padding: 1.35rem 0 }
+      .grid article + article { border-left: 0; border-top: 1px solid var(--line) }
+      .privacy { gap: 1rem }
+      .ribbon .wrap { flex-wrap: wrap; justify-content: flex-start; gap: .5rem 1.5rem }
     }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .container {
-      max-width: 920px;
-      margin: 0 auto;
-      padding: 0 20px;
-    }
-    header {
-      border-bottom: 1px solid var(--border);
-      background: rgba(23, 26, 36, 0.9);
-      position: sticky;
-      top: 0;
-      backdrop-filter: blur(8px);
-      z-index: 10;
-    }
-    .nav {
-      display: flex;
-      flex-wrap: wrap;
-      align-items: center;
-      justify-content: space-between;
-      gap: 12px;
-      padding: 14px 0;
-    }
-    .brand {
-      font-weight: 700;
-      font-size: 1.1rem;
-      color: var(--text);
-      letter-spacing: 0.02em;
-    }
-    .brand span { color: var(--accent); }
-    .nav-links {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 18px;
-      font-size: 0.95rem;
-    }
-    .hero {
-      padding: 52px 0 36px;
-      border-bottom: 1px solid var(--border);
-    }
-    .badge {
-      display: inline-block;
-      background: var(--accent-soft);
-      color: var(--accent);
-      border: 1px solid rgba(122, 162, 247, 0.35);
-      border-radius: 999px;
-      padding: 4px 12px;
-      font-size: 0.85rem;
-      font-weight: 600;
-      margin-bottom: 14px;
-    }
-    h1 {
-      margin: 0 0 12px;
-      font-size: clamp(1.9rem, 4vw, 2.7rem);
-      line-height: 1.2;
-    }
-    .subtitle {
-      margin: 0 0 10px;
-      font-size: 1.12rem;
-      color: var(--muted);
-      max-width: 720px;
-    }
-    .subtitle-en {
-      margin: 0 0 26px;
-      font-size: 0.96rem;
-      color: var(--muted);
-      opacity: 0.88;
-      max-width: 720px;
-    }
-    .cta-row {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-    .btn {
-      display: inline-block;
-      padding: 10px 18px;
-      border-radius: 8px;
-      font-weight: 600;
-      font-size: 0.95rem;
-      border: 1px solid var(--border);
-      background: var(--surface);
-      color: var(--text);
-    }
-    .btn-primary {
-      background: var(--accent);
-      color: #0b0e14;
-      border-color: var(--accent);
-    }
-    .btn:hover { text-decoration: none; opacity: 0.92; }
-    section { padding: 36px 0; }
-    h2 {
-      margin: 0 0 18px;
-      font-size: 1.45rem;
-    }
-    .grid {
-      display: grid;
-      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-      gap: 16px;
-    }
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 18px 20px;
-    }
-    .card h3 {
-      margin: 0 0 8px;
-      font-size: 1.05rem;
-      color: var(--text);
-    }
-    .card p {
-      margin: 0;
-      font-size: 0.94rem;
-      color: var(--muted);
-    }
-    .notice {
-      background: var(--surface-alt);
-      border: 1px solid var(--border);
-      border-left: 4px solid var(--green);
-      border-radius: 10px;
-      padding: 18px 20px;
-    }
-    .notice p { margin: 0 0 8px; color: var(--muted); font-size: 0.95rem; }
-    .notice p:last-child { margin-bottom: 0; }
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 26px 0 40px;
-      color: var(--muted);
-      font-size: 0.9rem;
-    }
-    .footer-inner {
-      display: flex;
-      flex-wrap: wrap;
-      justify-content: space-between;
-      gap: 14px;
-    }
-    .footer-links {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 16px;
+    @media (max-width: 520px) {
+      .bar { flex-wrap: wrap; padding-block: .85rem }
+      nav { font-size: .92rem }
+      .repo { border: 0; padding: 0 }
+      .hero { padding-block: 2.25rem }
+      h1 { font-size: clamp(3.2rem, 13vw, 4.2rem) }
+      .stage { padding: .6rem .5rem .6rem 0 }
     }
   </style>
 </head>
 <body>
+  <a class="skip" href="#contenido">Saltar al contenido</a>
   <header>
-    <div class="container nav">
-      <a class="brand" href="./index.html"><span>Manga</span> TUI</a>
-      <nav class="nav-links" aria-label="Navegación principal">
-        <a href="./index.html">Inicio</a>
-        <a href="./privacy.html">Política de Privacidad / Privacy Policy</a>
-        <a href="https://github.com/tomahawk1103/manga-tui">GitHub</a>
-        <a href="https://github.com/tomahawk1103/manga-tui/releases">Descargas</a>
-        <a href="mailto:raum973@gmail.com">Soporte</a>
+    <div class="wrap bar">
+      <a class="brand" href="./index.html"><span class="mark" aria-hidden="true">&gt;_</span>Manga TUI</a>
+      <nav aria-label="Navegación principal">
+        <a href="#funciones">Funciones</a>
+        <a href="./privacy.html">Privacidad</a>
+        <a class="repo" href="https://github.com/tomahawk1103/manga-tui">GitHub</a>
       </nav>
     </div>
   </header>
-
-  <main class="container">
-    <section class="hero">
-      <div class="badge">Open Source · Licencia MIT · v0.3.0</div>
-      <h1>Manga TUI</h1>
-      <p class="subtitle">
-        Lector y gestor de manga en terminal para Windows, Linux y macOS. Busca en múltiples proveedores, lee directamente en terminal o en el Visor Web HD, guarda capítulos offline y sincroniza tu progreso opcionalmente con Google Drive o tu carpeta de nube local.
-      </p>
-      <p class="subtitle-en">
-        Terminal-based manga reader &amp; library manager with HD Web Viewer, full offline reading (CBZ, EPUB, PDF, RAW), and optional 1-click Google Drive or local cloud-folder sync.
-      </p>
-      <div class="cta-row">
-        <a class="btn btn-primary" href="https://github.com/tomahawk1103/manga-tui/releases">Descargar última versión</a>
-        <a class="btn" href="https://github.com/tomahawk1103/manga-tui">Ver código fuente en GitHub</a>
-        <a class="btn" href="./privacy.html">Política de Privacidad</a>
+  <main id="contenido">
+    <section class="hero wrap" aria-labelledby="portada">
+      <div>
+        <p class="eyebrow">Lector de manga · v0.3.1</p>
+        <h1 id="portada">Tu manga,<em>en terminal.</em></h1>
+        <p class="intro">Encuentra tu próxima serie, guarda sus capítulos y sigue leyendo sin conexión. En tu terminal o a toda página en el navegador.</p>
+        <div class="actions">
+          <a class="button" href="https://github.com/tomahawk1103/manga-tui/releases">Descargar Manga TUI</a>
+          <a class="secondary" href="#muestra">Ver muestra</a>
+        </div>
+        <p class="platforms"><span>Windows</span><span>Linux</span><span>macOS</span></p>
+      </div>
+      <div class="stage" id="muestra">
+        <figure aria-label="Lector de muestra">
+          <div class="reader-bar"><span>&gt;_ manga-tui / lector</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
+          <a class="panel" id="full-page" href="images/pagina-2.jpg" aria-label="Abrir página completa">
+            <img id="art" src="images/pagina-2.jpg" alt="Una joven sonríe con las manos levantadas en una viñeta en blanco y negro.">
+          </a>
+          <figcaption class="reader-foot">
+            <span id="page-label" aria-live="polite" aria-atomic="true">Página 2 de 3</span>
+            <span class="pager" hidden>
+              <button id="prev" type="button" aria-label="Página anterior">‹</button>
+              <button id="next" type="button" aria-label="Página siguiente">›</button>
+            </span>
+          </figcaption>
+        </figure>
       </div>
     </section>
-
-    <section>
-      <h2>Características principales</h2>
+    <div class="ribbon">
+      <div class="wrap"><b>Formatos de descarga</b><span>CBZ</span><span>EPUB</span><span>PDF</span><span>Imágenes RAW</span></div>
+    </div>
+    <section id="funciones" class="wrap features">
+      <h2>Del catálogo a la viñeta.</h2>
       <div class="grid">
-        <article class="card">
-          <h3>Múltiples proveedores</h3>
-          <p>Búsqueda unificada y seguimiento de capítulos nuevos entre múltiples fuentes compatibles en español e inglés.</p>
-        </article>
-        <article class="card">
-          <h3>Visor Web HD y Terminal</h3>
-          <p>Renderizado nativo en terminal (Sixel / Kitty / iTerm2) y Visor Web HD local automático para leer con zoom desde el navegador.</p>
-        </article>
-        <article class="card">
-          <h3>Lectura 100% Offline</h3>
-          <p>Descarga capítulos en CBZ, EPUB, PDF o imágenes RAW y continúa leyendo desde la pestaña de Descargas sin conexión a internet.</p>
-        </article>
-        <article class="card">
-          <h3>Sincronización en la nube</h3>
-          <p>Vinculación opcional en 1 clic con Google Drive o carpetas locales (Google Drive Desktop, iCloud Drive, OneDrive) mediante snapshots locales sin servidores intermedios.</p>
-        </article>
+        <article><span class="glyph" aria-hidden="true">[?]</span><h3>Encuentra tu serie</h3><p>Busca entre proveedores en español e inglés y sigue los capítulos nuevos de tus series.</p></article>
+        <article><span class="glyph" aria-hidden="true">&gt;_</span><h3>Elige cómo leer</h3><p>Lee en terminal con Sixel, Kitty o iTerm2. Abre el Visor Web HD local para acercarte a los detalles con zoom.</p></article>
+        <article><span class="glyph" aria-hidden="true">[↓]</span><h3>Llévatelo sin conexión</h3><p>Descarga los capítulos antes de salir. Los encontrarás en la pestaña Descargas incluso cuando estés sin internet.</p></article>
       </div>
     </section>
-
-    <section>
-      <div class="notice">
-        <p><strong>Privacidad y control total de tus datos:</strong> Manga TUI funciona 100% en tu equipo. Si activas la sincronización con Google Drive, la aplicación utiliza únicamente el permiso mínimo <code>drive.file</code> para crear y sincronizar su propia carpeta <code>MangaTUI</code> directamente entre tu dispositivo y tu cuenta.</p>
-        <p>Puedes consultar todos los detalles en nuestra <a href="./privacy.html">Política de Privacidad / Privacy Policy</a>.</p>
+    <section class="wrap privacy" aria-labelledby="privacidad">
+      <h2 id="privacidad">Tu progreso,<br>en tus manos.</h2>
+      <div><p>Tu biblioteca se guarda en tu equipo. Si quieres continuar en otro dispositivo, puedes sincronizar el progreso con una carpeta local de nube o con Google Drive. La integración usa el permiso <code>drive.file</code> para gestionar su propia carpeta <code>MangaTUI</code>.</p>
+        <a href="./privacy.html">Política de privacidad / Privacy Policy</a>
       </div>
     </section>
   </main>
+  <footer><div class="wrap foot">
+    <p><strong>Manga TUI</strong> · Licencia MIT · tomahawk1103 &amp; drodri22</p>
+    <div class="foot-links"><a href="https://github.com/tomahawk1103/manga-tui/issues">Soporte técnico</a><a href="mailto:raum973@gmail.com">Contacto</a></div>
+  </div></footer>
+  <script>
+    const descriptions = [
+      'Una casa y varios personajes en una secuencia de viñetas.',
+      'Una joven sonríe con las manos levantadas en una viñeta en blanco y negro.',
+      'Un joven con gafas conversa en una secuencia de primeros planos.'
+    ];
+    const art = document.querySelector('#art');
+    const fullPage = document.querySelector('#full-page');
+    const label = document.querySelector('#page-label');
+    const previous = document.querySelector('#prev');
+    const next = document.querySelector('#next');
+    let page = 2;
 
-  <footer>
-    <div class="container footer-inner">
-      <div>Manga TUI · Proyecto de código abierto bajo licencia MIT (tomahawk1103 &amp; drodri22).</div>
-      <div class="footer-links">
-        <a href="./privacy.html">Política de Privacidad</a>
-        <a href="https://github.com/tomahawk1103/manga-tui">Repositorio GitHub</a>
-        <a href="https://github.com/tomahawk1103/manga-tui/issues">Soporte técnico</a>
-        <a href="mailto:raum973@gmail.com">raum973@gmail.com</a>
-      </div>
-    </div>
-  </footer>
+    function showPage(number) {
+      page = number;
+      const path = 'images/pagina-' + page + '.jpg';
+      art.src = path;
+      art.alt = descriptions[page - 1];
+      fullPage.href = path;
+      label.textContent = 'Página ' + page + ' de ' + descriptions.length;
+      previous.disabled = page === 1;
+      next.disabled = page === descriptions.length;
+    }
+
+    previous.addEventListener('click', () => showPage(page - 1));
+    next.addEventListener('click', () => showPage(page + 1));
+    document.querySelector('.pager').hidden = false;
+  </script>
 </body>
 </html>
