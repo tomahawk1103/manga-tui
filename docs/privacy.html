@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Política de Privacidad / Privacy Policy — Manga TUI</title>
+  <meta name="description" content="Política de Privacidad de Manga TUI respecto al uso opcional de Google Drive API (drive.file) y almacenamiento local." />
+  <style>
+    :root {
+      --bg: #0f1117;
+      --surface: #171a24;
+      --border: #2a3042;
+      --text: #e6e9f2;
+      --muted: #a1a9c0;
+      --accent: #7aa2f7;
+      --green: #9ece6a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.65;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container {
+      max-width: 860px;
+      margin: 0 auto;
+      padding: 0 20px;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+      background: rgba(23, 26, 36, 0.9);
+    }
+    .nav {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 0;
+    }
+    .brand { font-weight: 700; font-size: 1.1rem; color: var(--text); }
+    .brand span { color: var(--accent); }
+    .nav-links { display: flex; flex-wrap: wrap; gap: 18px; font-size: 0.95rem; }
+    main { padding: 34px 0 44px; }
+    h1 { margin: 0 0 6px; font-size: clamp(1.7rem, 3.5vw, 2.2rem); }
+    .meta { color: var(--muted); font-size: 0.92rem; margin-bottom: 24px; }
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 22px 24px;
+      margin-bottom: 20px;
+    }
+    h2 { margin: 0 0 12px; font-size: 1.25rem; color: var(--text); }
+    h3 { margin: 18px 0 8px; font-size: 1.05rem; color: var(--accent); }
+    p, li { color: var(--muted); font-size: 0.96rem; }
+    ul { padding-left: 20px; margin: 8px 0 12px; }
+    li { margin-bottom: 6px; }
+    code {
+      background: rgba(255, 255, 255, 0.06);
+      padding: 2px 6px;
+      border-radius: 5px;
+      color: var(--text);
+      font-size: 0.9em;
+    }
+    .highlight {
+      border-left: 4px solid var(--green);
+      padding-left: 14px;
+      margin: 14px 0;
+    }
+    footer {
+      border-top: 1px solid var(--border);
+      padding: 24px 0 38px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+    .footer-inner {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      gap: 14px;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="container nav">
+      <a class="brand" href="./index.html"><span>Manga</span> TUI</a>
+      <nav class="nav-links" aria-label="Navegación">
+        <a href="./index.html">Inicio</a>
+        <a href="https://github.com/tomahawk1103/manga-tui">GitHub</a>
+        <a href="mailto:raum973@gmail.com">Soporte</a>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container">
+    <h1>Política de Privacidad / Privacy Policy</h1>
+    <p class="meta">Aplicación: <strong>Manga TUI</strong> (<code>tomahawk1103/manga-tui</code>) · Licencia MIT · Última actualización: 2026-11-21</p>
+
+    <section class="card" lang="es">
+      <h2>1. Resumen en Español</h2>
+      <p>
+        <strong>Manga TUI</strong> es una aplicación de escritorio de código abierto (licencia MIT) que se ejecuta íntegramente en tu propio dispositivo. No disponemos de servidores propios, no recopilamos analíticas ni telemetría, no mostramos publicidad y no vendemos ni compartimos información con terceros.
+      </p>
+
+      <h3>Uso opcional de Google Drive API (OAuth 2.0 + PKCE)</h3>
+      <p>
+        La vinculación con Google Drive es completamente <strong>opcional</strong> y solo se activa si decides iniciar sesión desde el panel Cloud de la aplicación. Cuando autorizas tu cuenta, Manga TUI solicita exclusivamente el permiso mínimo:
+      </p>
+      <ul>
+        <li><code>https://www.googleapis.com/auth/drive.file</code> — Acceso limitado únicamente a la carpeta <code>MangaTUI</code> y a los archivos creados por la propia aplicación.</li>
+      </ul>
+      <p>
+        Con este permiso, Manga TUI <strong>no puede ver, listar, leer, modificar ni eliminar</strong> ningún otro archivo, fotografía o documento de tu Google Drive personal.
+      </p>
+
+      <h3>Qué datos se sincronizan y dónde se almacenan</h3>
+      <ul>
+        <li><code>MangaTUI/library_sync.json</code> en tu propio Google Drive: instantánea JSON con tu historial de lectura, marcadores, biblioteca/favoritos y configuración de progreso para sincronizar entre tus dispositivos.</li>
+        <li><strong>Archivos de capítulos descargados (opcional)</strong>: archivos <code>.cbz</code>, <code>.epub</code> o <code>.pdf</code> guardados dentro de <code>MangaTUI/</code> si eliges sincronizar descargas.</li>
+        <li><strong>Tokens OAuth en tu equipo</strong>: el <em>access token</em> y el <em>refresh token</em> devueltos por Google se almacenan únicamente de forma local en tu dispositivo (carpeta de datos de Manga TUI / almacén de credenciales) para mantener la sesión iniciada sin pedirte permisos cada vez.</li>
+      </ul>
+      <p>
+        La comunicación se realiza directamente desde tu ordenador hacia los servidores oficiales de Google (<code>accounts.google.com</code>, <code>oauth2.googleapis.com</code> y <code>www.googleapis.com</code>) mediante HTTPS y PKCE. Ningún desarrollador ni servidor intermedio recibe tus credenciales ni tus datos.
+      </p>
+
+      <div class="highlight">
+        <p><strong>Política de Uso Limitado de Datos de Usuario de Google API:</strong> El uso y la transferencia por parte de Manga TUI de la información recibida de las APIs de Google se ajustan íntegramente a la <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, incluidos los requisitos de Uso Limitado (<em>Limited Use</em>).</p>
+      </div>
+
+      <h3>Cómo revocar el acceso y eliminar tus datos</h3>
+      <ul>
+        <li>Desde la aplicación: abre el panel Cloud y desconecta tu cuenta para eliminar los tokens locales.</li>
+        <li>Desde Google: revoca el acceso de <em>Manga TUI</em> en cualquier momento desde <a href="https://myaccount.google.com/permissions">myaccount.google.com/permissions</a>.</li>
+        <li>Borrado total: elimina la carpeta <code>MangaTUI</code> directamente en tu Google Drive y tu carpeta de datos local.</li>
+      </ul>
+
+      <h3>Contacto y Soporte</h3>
+      <p>
+        Si tienes dudas sobre privacidad o necesitas soporte técnico, escríbenos a <a href="mailto:raum973@gmail.com">raum973@gmail.com</a> o abre una incidencia en <a href="https://github.com/tomahawk1103/manga-tui/issues">github.com/tomahawk1103/manga-tui/issues</a>.
+      </p>
+    </section>
+
+    <section class="card" lang="en">
+      <h2>2. English Summary &amp; Google API Limited Use Disclosure</h2>
+      <p>
+        <strong>Manga TUI</strong> is an open-source desktop application (MIT License) that runs locally on the user's device. There are no developer-operated backend servers, no telemetry or analytics, no advertisements, and no third-party data sharing.
+      </p>
+
+      <h3>Google Drive Scope &amp; Purpose</h3>
+      <ul>
+        <li><strong>Requested scope:</strong> <code>https://www.googleapis.com/auth/drive.file</code> only.</li>
+        <li><strong>Purpose:</strong> Enables optional user-initiated backup and synchronization of reading progress, bookmarks, favorites (<code>MangaTUI/library_sync.json</code>), and optional downloaded chapter archives (<code>.cbz</code>, <code>.epub</code>, <code>.pdf</code>) inside the app-created <code>MangaTUI</code> folder on the user's own Google Drive.</li>
+        <li><strong>Scope isolation:</strong> Manga TUI cannot access, view, list, modify, or delete any other files in your Google Drive.</li>
+        <li><strong>Local token handling:</strong> OAuth 2.0 + PKCE tokens are stored strictly locally on your device and transmitted exclusively over HTTPS directly between your device and Google's official endpoints.</li>
+      </ul>
+
+      <div class="highlight">
+        <p><strong>Google API Services User Data Policy (Limited Use):</strong> Manga TUI's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
+      </div>
+
+      <h3>Revocation &amp; Deletion</h3>
+      <p>
+        You can disconnect Google Drive inside Manga TUI, revoke app permissions anytime at <a href="https://myaccount.google.com/permissions">https://myaccount.google.com/permissions</a>, and delete the <code>MangaTUI</code> folder directly from your Google Drive.
+      </p>
+
+      <h3>Support Contact</h3>
+      <p>
+        Email: <a href="mailto:raum973@gmail.com">raum973@gmail.com</a> · GitHub Issues: <a href="https://github.com/tomahawk1103/manga-tui/issues">https://github.com/tomahawk1103/manga-tui/issues</a>
+      </p>
+    </section>
+
+    <p><a href="./index.html">← Volver a la página principal / Back to Home</a></p>
+  </main>
+
+  <footer>
+    <div class="container footer-inner">
+      <div>Manga TUI · <a href="https://github.com/tomahawk1103/manga-tui">github.com/tomahawk1103/manga-tui</a></div>
+      <div><a href="./index.html">Inicio</a> · <a href="mailto:raum973@gmail.com">raum973@gmail.com</a></div>
+    </div>
+  </footer>
+</body>
+</html>
