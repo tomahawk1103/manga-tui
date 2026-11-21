@@ -55,6 +55,9 @@ jobs:
 
       - name: Build and package portable Windows ZIP
         shell: pwsh
+        env:
+          MANGA_TUI_GDRIVE_CLIENT_ID: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_ID }}
+          MANGA_TUI_GDRIVE_CLIENT_SECRET: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_SECRET }}
         run: ./scripts/package-windows.ps1 -Version nightly -Target x86_64-pc-windows-msvc -OutputDir dist
 
       - name: Ensure Inno Setup 6 is available

@@ -350,12 +350,43 @@ pub enum CloudBackendKind {
 impl CloudBackendKind {
     pub fn label(self) -> &'static str {
         match self {
-            Self::GoogleDriveApi => "Google Drive API (OAuth 2.0)",
-            Self::LocalCloudFolder => {
-                tr("Unidad en la nube local (Google Drive / iCloud Drive)", "Local Cloud Drive (Google Drive / iCloud Drive)")
-            },
+            Self::GoogleDriveApi => "Google Drive",
+            Self::LocalCloudFolder => tr("Carpeta sincronizada (iCloud / Drive)", "Synced Folder (iCloud / Drive)"),
         }
     }
+}
+
+/// Returns the Google OAuth Client ID embedded at compile time (via `.env` or CI secrets), if configured.
+pub fn embedded_google_client_id() -> Option<&'static str> {
+    option_env!("MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_ID")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// Returns the Google OAuth Client Secret embedded at compile time (via `.env` or CI secrets), if configured.
+pub fn embedded_google_client_secret() -> Option<&'static str> {
+    option_env!("MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// Returns `true` when this binary was built with 1-click Google Drive OAuth credentials bundled.
+pub fn has_embedded_google_oauth_config() -> bool {
+    embedded_google_client_id().is_some()
+}
+
+fn resolve_secret_with_precedence(
+    runtime_env: Option<&str>,
+    saved: Option<&str>,
+    keyring: Option<&str>,
+    embedded: Option<&str>,
+) -> Option<String> {
+    [runtime_env, saved, keyring, embedded]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -473,18 +504,18 @@ impl CloudConnectionState {
         match self.backend {
             Some(CloudBackendKind::GoogleDriveApi) => {
                 if let Some(email) = &self.account_email {
-                    format!("Google Drive API · {email}")
+                    format!("Google Drive · {email}")
                 } else if let Some(name) = &self.account_display_name {
-                    format!("Google Drive API · {name}")
+                    format!("Google Drive · {name}")
                 } else {
-                    "Google Drive API (OAuth 2.0)".to_string()
+                    "Google Drive".to_string()
                 }
             },
             Some(CloudBackendKind::LocalCloudFolder) => {
                 let provider = self
                     .local_folder_provider_label
                     .as_deref()
-                    .unwrap_or(tr("Carpeta en la nube", "Cloud Folder"));
+                    .unwrap_or(tr("Carpeta sincronizada", "Synced Folder"));
                 let path_str = self.local_folder_path.as_ref().map(|p| p.display().to_string()).unwrap_or_default();
                 format!("{provider} · {path_str}")
             },
@@ -522,41 +553,19 @@ impl CloudConnectionState {
     }
 
     pub fn get_client_id(&self) -> Option<String> {
-        if let Ok(env_id) = std::env::var("MANGA_TUI_GDRIVE_CLIENT_ID")
-            && !env_id.trim().is_empty()
-        {
-            return Some(env_id.trim().to_string());
-        }
-        if let Some(id) = self.client_id.as_ref().filter(|s| !s.trim().is_empty()) {
-            return Some(id.clone());
-        }
-        if cfg!(test) {
-            return None;
-        }
-        KeyringStorage::new()
-            .get_secret(SECRET_GDRIVE_CLIENT_ID)
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
+        let runtime_env = std::env::var("MANGA_TUI_GDRIVE_CLIENT_ID").ok();
+        let keyring = if cfg!(test) { None } else { KeyringStorage::new().get_secret(SECRET_GDRIVE_CLIENT_ID).ok().flatten() };
+        let embedded = if cfg!(test) { None } else { embedded_google_client_id() };
+
+        resolve_secret_with_precedence(runtime_env.as_deref(), self.client_id.as_deref(), keyring.as_deref(), embedded)
     }
 
     pub fn get_client_secret(&self) -> Option<String> {
-        if let Ok(env_sec) = std::env::var("MANGA_TUI_GDRIVE_CLIENT_SECRET")
-            && !env_sec.trim().is_empty()
-        {
-            return Some(env_sec.trim().to_string());
-        }
-        if let Some(sec) = self.fallback_client_secret.as_ref().filter(|s| !s.trim().is_empty()) {
-            return Some(sec.clone());
-        }
-        if cfg!(test) {
-            return None;
-        }
-        KeyringStorage::new()
-            .get_secret(SECRET_GDRIVE_CLIENT_SECRET)
-            .ok()
-            .flatten()
-            .filter(|s| !s.trim().is_empty())
+        let runtime_env = std::env::var("MANGA_TUI_GDRIVE_CLIENT_SECRET").ok();
+        let keyring = if cfg!(test) { None } else { KeyringStorage::new().get_secret(SECRET_GDRIVE_CLIENT_SECRET).ok().flatten() };
+        let embedded = if cfg!(test) { None } else { embedded_google_client_secret() };
+
+        resolve_secret_with_precedence(runtime_env.as_deref(), self.fallback_client_secret.as_deref(), keyring.as_deref(), embedded)
     }
 
     pub fn get_access_token(&self) -> Option<String> {
@@ -2110,5 +2119,23 @@ mod tests {
         assert!(local_dl.join("Sakamoto Days").join("ch_remote_1.epub").is_file());
 
         let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn resolve_secret_with_precedence_respects_order_and_ignores_blank_values() {
+        assert_eq!(
+            resolve_secret_with_precedence(Some("  env_id  "), Some("saved"), Some("keyring"), Some("embedded")),
+            Some("env_id".to_string())
+        );
+        assert_eq!(
+            resolve_secret_with_precedence(Some("   "), Some(" saved_id "), Some("keyring"), Some("embedded")),
+            Some("saved_id".to_string())
+        );
+        assert_eq!(
+            resolve_secret_with_precedence(None, Some(""), Some(" keyring_id "), Some("embedded")),
+            Some("keyring_id".to_string())
+        );
+        assert_eq!(resolve_secret_with_precedence(None, None, Some("  "), Some(" embedded_id ")), Some("embedded_id".to_string()));
+        assert_eq!(resolve_secret_with_precedence(None, Some(""), None, Some("  ")), None);
     }
 }

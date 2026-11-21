@@ -52,58 +52,58 @@ impl CloudActionRow {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::SyncLibrary => tr("🔄 Sincronizar progreso y biblioteca ahora", "🔄 Sync reading progress & library now"),
-            Self::FullSync => tr(
-                "☁  Sincronización completa (Biblioteca + Capítulos .cbz/.epub/.pdf)",
-                "☁  Full sync (Library + Downloaded chapters .cbz/.epub/.pdf)",
-            ),
-            Self::PushDownloads => {
-                tr("⬆  Subir capítulos descargados locales a la nube", "⬆  Upload local downloaded chapters to cloud")
+            Self::SyncLibrary => tr("🔄 Sincronizar progreso y biblioteca", "🔄 Sync reading progress & library"),
+            Self::FullSync => {
+                tr("☁  Sincronizar todo (Progreso + Capítulos descargados)", "☁  Sync everything (Progress + Downloaded chapters)")
             },
-            Self::PullDownloads => {
-                tr("⬇  Bajar capítulos de la nube a este dispositivo", "⬇  Download cloud chapters to this device")
+            Self::PushDownloads => tr("⬆  Subir mis capítulos descargados a la nube", "⬆  Upload downloaded chapters to cloud"),
+            Self::PullDownloads => tr("⬇  Descargar capítulos guardados en la nube", "⬇  Download chapters saved in the cloud"),
+            Self::LinkGoogleDriveApi => tr("🌐 Iniciar sesión con Google Drive", "🌐 Sign in with Google Drive"),
+            Self::LinkLocalCloudFolder => {
+                tr("📁 Conectar carpeta de iCloud Drive / Google Drive del PC", "📁 Connect iCloud Drive / Google Drive PC folder")
             },
-            Self::LinkGoogleDriveApi => tr(
-                "🔐 Vincular Google Drive API (OAuth 2.0 en navegador · Android/iOS Ready)",
-                "🔐 Link Google Drive API (Browser OAuth 2.0 · Android/iOS Ready)",
-            ),
-            Self::LinkLocalCloudFolder => tr(
-                "📁 Autodetectar carpeta de Google Drive Desktop / iCloud Drive",
-                "📁 Auto-detect Google Drive Desktop / iCloud Drive folder",
-            ),
-            Self::Disconnect => tr("🚪 Desvincular cuenta en la nube", "🚪 Unlink cloud account"),
+            Self::Disconnect => tr("🚪 Cerrar sesión en la nube", "🚪 Sign out from cloud"),
         }
     }
 
-    pub fn description(self) -> &'static str {
+    pub fn description_for(self, has_google_ready: bool) -> &'static str {
         match self {
             Self::SyncLibrary => tr(
-                "Fusiona historial, páginas marcadas (bookmarks), favoritos y Plan to Read vía library_sync.json",
-                "Merges reading history, page bookmarks, favorites, and Plan to Read via library_sync.json",
+                "Mantiene al día tu historial, la página exacta donde te quedaste, favoritos y Plan to Read",
+                "Keeps your reading history, exact bookmarked page, favorites, and Plan to Read up to date",
             ),
             Self::FullSync => tr(
-                "Sincroniza tu progreso y además sube/descarga capítulos entre mangaDownloads y MangaTUI/downloads",
-                "Syncs your progress and uploads/downloads chapter archives between mangaDownloads and MangaTUI/downloads",
+                "Sincroniza tu progreso y además copia tus capítulos (.cbz, .epub, .pdf) entre este PC y la nube",
+                "Syncs your progress and copies your chapters (.cbz, .epub, .pdf) between this PC and the cloud",
             ),
             Self::PushDownloads => tr(
-                "Sube a la carpeta MangaTUI/downloads los archivos .cbz, .epub y .pdf que aún no estén en la nube",
-                "Uploads local .cbz, .epub, and .pdf files not yet present in MangaTUI/downloads",
+                "Sube a tu nube los capítulos descargados en este PC para poder leerlos en otros dispositivos",
+                "Uploads downloaded chapters from this PC to your cloud so you can read them on other devices",
             ),
             Self::PullDownloads => tr(
-                "Descarga a mangaDownloads los capítulos .cbz, .epub y .pdf de la nube para leerlos 100% offline",
-                "Downloads .cbz, .epub, and .pdf chapters from the cloud into mangaDownloads for offline reading",
+                "Descarga a este PC los capítulos que ya tengas guardados en la nube para leer sin conexión",
+                "Downloads chapters already saved in the cloud to this PC for offline reading",
             ),
-            Self::LinkGoogleDriveApi => tr(
-                "Abre el login oficial de Google en tu navegador (PKCE). Pulsa <e> para configurar tu Client ID",
-                "Opens official Google login in your browser (PKCE). Press <e> to configure your Client ID",
-            ),
+            Self::LinkGoogleDriveApi => {
+                if has_google_ready {
+                    tr(
+                        "Abre Google en tu navegador para vincular tu cuenta en 1 clic",
+                        "Opens Google in your browser to link your account in 1 click",
+                    )
+                } else {
+                    tr(
+                        "Inicia sesión en Google Drive desde el navegador (en compilación manual pide Client ID; o usa <f> para iCloud/Drive local)",
+                        "Sign in to Google Drive in your browser (manual builds ask for a Client ID; or use <f> for local iCloud/Drive)",
+                    )
+                }
+            },
             Self::LinkLocalCloudFolder => tr(
-                "Detecta iCloud Drive, Google Drive Desktop o OneDrive en tu PC (o pulsa <e> para escribir una ruta)",
-                "Detects iCloud Drive, Google Drive Desktop, or OneDrive on your PC (or press <e> to type a path)",
+                "Detecta en 1 clic tu carpeta de iCloud Drive, Google Drive o OneDrive (o pulsa <e> para elegir otra carpeta)",
+                "Detects your iCloud Drive, Google Drive, or OneDrive folder in 1 click (or press <e> to choose a folder)",
             ),
             Self::Disconnect => tr(
-                "Borra los tokens OAuth guardados y desvincula la nube actual sin borrar tus mangas locales",
-                "Clears stored OAuth tokens and unlinks the current cloud without deleting local mangas",
+                "Cierra la sesión en la nube en este dispositivo sin borrar tus mangas ni tu historial local",
+                "Signs out of the cloud on this device without deleting your local mangas or reading history",
             ),
         }
     }
@@ -157,8 +157,9 @@ impl CloudModalState {
     pub fn new() -> Self {
         let connection = CloudConnectionState::load();
         let detected_folders = detect_installed_cloud_folders();
+        let selected_index = if connection.is_connected() { 0 } else { 4 };
         Self {
-            selected_index: 0,
+            selected_index,
             connection,
             detected_folders,
             detected_cursor: 0,
@@ -173,6 +174,7 @@ impl CloudModalState {
     pub fn refresh_from_disk(&mut self) {
         self.connection = CloudConnectionState::load();
         self.detected_folders = detect_installed_cloud_folders();
+        self.selected_index = if self.connection.is_connected() { 0 } else { 4 };
     }
 
     pub fn selected_row(&self) -> CloudActionRow {
@@ -296,8 +298,8 @@ impl CloudModalState {
                 if !self.connection.is_connected() {
                     self.set_status(
                         tr(
-                            "⚠ Primero vincula Google Drive API <g> o una carpeta en la nube <f>.",
-                            "⚠ Please link Google Drive API <g> or a cloud folder <f> first.",
+                            "⚠ Primero inicia sesión con Google <g> o conecta una carpeta <f>.",
+                            "⚠ Please sign in with Google <g> or connect a folder <f> first.",
                         ),
                         true,
                     );
@@ -309,8 +311,8 @@ impl CloudModalState {
                 if !self.connection.is_connected() {
                     self.set_status(
                         tr(
-                            "⚠ Primero vincula Google Drive API <g> o una carpeta en la nube <f>.",
-                            "⚠ Please link Google Drive API <g> or a cloud folder <f> first.",
+                            "⚠ Primero inicia sesión con Google <g> o conecta una carpeta <f>.",
+                            "⚠ Please sign in with Google <g> or connect a folder <f> first.",
                         ),
                         true,
                     );
@@ -322,8 +324,8 @@ impl CloudModalState {
                 if !self.connection.is_connected() {
                     self.set_status(
                         tr(
-                            "⚠ Primero vincula Google Drive API <g> o una carpeta en la nube <f>.",
-                            "⚠ Please link Google Drive API <g> or a cloud folder <f> first.",
+                            "⚠ Primero inicia sesión con Google <g> o conecta una carpeta <f>.",
+                            "⚠ Please sign in with Google <g> or connect a folder <f> first.",
                         ),
                         true,
                     );
@@ -335,8 +337,8 @@ impl CloudModalState {
                 if !self.connection.is_connected() {
                     self.set_status(
                         tr(
-                            "⚠ Primero vincula Google Drive API <g> o una carpeta en la nube <f>.",
-                            "⚠ Please link Google Drive API <g> or a cloud folder <f> first.",
+                            "⚠ Primero inicia sesión con Google <g> o conecta una carpeta <f>.",
+                            "⚠ Please sign in with Google <g> or connect a folder <f> first.",
                         ),
                         true,
                     );
@@ -407,8 +409,8 @@ impl CloudModalState {
                         if cid.is_empty() {
                             self.set_status(
                                 tr(
-                                    "⚠ Introduce tu Google OAuth Client ID (termina en .apps.googleusercontent.com)",
-                                    "⚠ Please enter your Google OAuth Client ID (ends with .apps.googleusercontent.com)",
+                                    "⚠ Introduce un Client ID válido (termina en .apps.googleusercontent.com)",
+                                    "⚠ Enter a valid Client ID (ends with .apps.googleusercontent.com)",
                                 ),
                                 true,
                             );
@@ -553,20 +555,20 @@ impl Widget for CloudModal<'_> {
         let modal_area = centered_rect(area, 84, 86);
         Clear.render(modal_area, buf);
 
+        let has_google_ready = self.state.connection.get_client_id().is_some();
+
         let bottom_bar = Line::from(vec![
             Span::raw(" "),
             t.key_chip("j/k · ↑/↓"),
             Span::styled(tr(" Mover  ", " Move  "), Style::default().fg(t.text_muted)),
             t.highlight_key_chip("Enter"),
-            Span::styled(tr(" Ejecutar  ", " Run  "), Style::default().fg(t.text_muted)),
-            t.key_chip("s"),
-            Span::styled(tr(" Sync  ", " Sync  "), Style::default().fg(t.text_muted)),
+            Span::styled(tr(" Elegir  ", " Select  "), Style::default().fg(t.text_muted)),
             t.key_chip("g"),
-            Span::styled(" Google API  ", Style::default().fg(t.text_muted)),
+            Span::styled(" Google  ", Style::default().fg(t.text_muted)),
             t.key_chip("f"),
-            Span::styled(" Drive/iCloud  ", Style::default().fg(t.text_muted)),
-            t.key_chip("e"),
-            Span::styled(tr(" Configurar  ", " Configure  "), Style::default().fg(t.text_muted)),
+            Span::styled(" iCloud/Drive  ", Style::default().fg(t.text_muted)),
+            t.key_chip("s"),
+            Span::styled(" Sync  ", Style::default().fg(t.text_muted)),
             t.key_chip("Esc/q"),
             Span::styled(tr(" Cerrar ", " Close "), Style::default().fg(t.text_muted)),
         ])
@@ -578,13 +580,10 @@ impl Widget for CloudModal<'_> {
             .style(Style::default().bg(t.bar_bg))
             .title(Line::from(vec![
                 Span::styled(
-                    tr(" ☁  Nube y Sincronización · Google Drive & iCloud ", " ☁  Cloud Sync · Google Drive & iCloud "),
+                    tr(" ☁  Sincronización en la Nube · Google Drive & iCloud ", " ☁  Cloud Sync · Google Drive & iCloud "),
                     Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(
-                    tr(" [Compatible Desktop / Android / iOS] ", " [Desktop / Android / iOS Ready] "),
-                    Style::default().fg(t.accent_secondary),
-                ),
+                Span::styled(tr(" [Multi-dispositivo] ", " [Multi-device] "), Style::default().fg(t.accent_secondary)),
             ]))
             .title_bottom(bottom_bar);
 
@@ -629,13 +628,31 @@ impl Widget for CloudModal<'_> {
                     Style::default().fg(t.text_secondary),
                 ),
             ]),
-            None => Line::from(vec![
-                Span::styled(format!("  {}: ", tr("Estructura en la nube", "Cloud structure")), Style::default().fg(t.text_muted)),
-                Span::styled(
-                    "MangaTUI/library_sync.json  +  MangaTUI/manga-tui-history.db  +  MangaTUI/downloads/",
-                    Style::default().fg(t.text_secondary),
-                ),
-            ]),
+            None => {
+                if is_connected {
+                    Line::from(vec![
+                        Span::styled(format!("  {}: ", tr("Listo para usar", "Ready")), Style::default().fg(t.text_muted)),
+                        Span::styled(
+                            tr(
+                                "Pulsa <s> para sincronizar tu progreso o <d> para incluir descargas",
+                                "Press <s> to sync your progress or <d> to include downloads",
+                            ),
+                            Style::default().fg(t.text_secondary),
+                        ),
+                    ])
+                } else {
+                    Line::from(vec![
+                        Span::styled(format!("  {}: ", tr("Primer paso", "First step")), Style::default().fg(t.text_muted)),
+                        Span::styled(
+                            tr(
+                                "Pulsa <g> (o Enter) para iniciar sesión con Google, o <f> para iCloud/Drive del PC",
+                                "Press <g> (or Enter) to sign in with Google, or <f> for PC iCloud/Drive",
+                            ),
+                            Style::default().fg(t.text_secondary),
+                        ),
+                    ])
+                }
+            },
         };
 
         let status_block = Block::bordered()
@@ -736,26 +753,28 @@ impl Widget for CloudModal<'_> {
             vec![
                 Line::from(vec![Span::styled(format!("  {msg}"), Style::default().fg(color).add_modifier(Modifier::BOLD))]),
                 Line::from(vec![Span::styled(
-                    format!("  {}", self.state.selected_row().description()),
+                    format!("  {}", self.state.selected_row().description_for(has_google_ready)),
                     Style::default().fg(t.text_muted),
                 )]),
             ]
         } else {
+            let tip_line = if has_google_ready {
+                tr(
+                    "  Tus mangas y progreso locales nunca se borran; al sincronizar se combinan ambos dispositivos.",
+                    "  Your local mangas and progress are never deleted; syncing merges both devices safely.",
+                )
+            } else {
+                tr(
+                    "  ¿Prefieres 1 clic sin claves? Pulsa <f> para usar tu carpeta de iCloud Drive o Google Drive del PC.",
+                    "  Prefer 1-click with no keys? Press <f> to use your PC's iCloud Drive or Google Drive folder.",
+                )
+            };
             vec![
                 Line::from(vec![Span::styled(
-                    format!("  💡 {}", self.state.selected_row().description()),
+                    format!("  💡 {}", self.state.selected_row().description_for(has_google_ready)),
                     Style::default().fg(t.text_secondary),
                 )]),
-                Line::from(vec![Span::styled(
-                    format!(
-                        "  {}",
-                        tr(
-                            "CLI equivalente: `manga-tui cloud login`, `manga-tui cloud sync --downloads`, `manga-tui cloud status`",
-                            "Equivalent CLI: `manga-tui cloud login`, `manga-tui cloud sync --downloads`, `manga-tui cloud status`"
-                        )
-                    ),
-                    Style::default().fg(t.text_muted),
-                )]),
+                Line::from(vec![Span::styled(tip_line, Style::default().fg(t.text_muted))]),
             ]
         };
 
@@ -769,17 +788,14 @@ impl Widget for CloudModal<'_> {
                 client_secret,
                 editing_secret,
             } => {
-                let popup_area = centered_rect(modal_area, 78, 52);
+                let popup_area = centered_rect(modal_area, 82, 58);
                 Clear.render(popup_area, buf);
                 let block = Block::bordered()
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(t.accent_highlight))
                     .style(Style::default().bg(t.bar_bg))
                     .title(Line::from(vec![Span::styled(
-                        tr(
-                            " 🔐 Configurar Google Drive OAuth 2.0 (Desktop / Mobile API) ",
-                            " 🔐 Configure Google Drive OAuth 2.0 (Desktop / Mobile API) ",
-                        ),
+                        tr(" ⚙ Configuración avanzada: Google Drive manual ", " ⚙ Advanced setup: Manual Google Drive "),
                         Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD),
                     )]))
                     .title_bottom(
@@ -820,10 +836,17 @@ impl Widget for CloudModal<'_> {
                 let lines = vec![
                     Line::from(Span::styled(
                         tr(
-                            "Crea un 'OAuth 2.0 Client ID' (tipo Desktop App) en Google Cloud Console con Google Drive API:",
-                            "Create an 'OAuth 2.0 Client ID' (Desktop App) in Google Cloud Console with Google Drive API:",
+                            "Build sin credenciales de Google integradas (solo para compilar a mano).",
+                            "This build has no bundled Google credentials (only for manual builds).",
                         ),
                         Style::default().fg(t.text_muted),
+                    )),
+                    Line::from(Span::styled(
+                        tr(
+                            "Consejo: pulsa <Esc> y luego <f> para iCloud o Google Drive en 1 clic.",
+                            "Tip: press <Esc> then <f> for 1-click iCloud or Google Drive folder sync.",
+                        ),
+                        Style::default().fg(t.accent_secondary),
                     )),
                     Line::default(),
                     Line::from(vec![
@@ -932,6 +955,35 @@ mod tests {
             client_id: "12345.apps.googleusercontent.com".to_string(),
             client_secret: Some("my_secret".to_string()),
         });
+
+        let mut buf = Buffer::empty(Rect::new(0, 0, 120, 36));
+        CloudModal::new(&state).render(buf.area, &mut buf);
+    }
+
+    #[test]
+    fn cloud_modal_starts_one_click_google_login_when_client_id_is_configured() {
+        let mut state = CloudModalState {
+            selected_index: 4,
+            connection: CloudConnectionState {
+                client_id: Some("bundled-client.apps.googleusercontent.com".to_string()),
+                ..Default::default()
+            },
+            detected_folders: Vec::new(),
+            detected_cursor: 0,
+            input_popup: CloudInputPopup::None,
+            is_busy: false,
+            progress: None,
+            status_message: None,
+            status_is_error: false,
+        };
+
+        assert_eq!(state.selected_row(), CloudActionRow::LinkGoogleDriveApi);
+        let outcome = state.handle_key_event(KeyEvent::new(KeyCode::Char('g'), KeyModifiers::NONE));
+        assert_eq!(outcome, CloudModalOutcome::StartOAuthLogin {
+            client_id: "bundled-client.apps.googleusercontent.com".to_string(),
+            client_secret: None,
+        });
+        assert!(matches!(state.input_popup, CloudInputPopup::None));
 
         let mut buf = Buffer::empty(Rect::new(0, 0, 120, 36));
         CloudModal::new(&state).render(buf.area, &mut buf);

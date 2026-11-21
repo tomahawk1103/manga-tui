@@ -23,3 +23,5 @@ result
 test_results/
 dist/
 *.code-workspace
+.env
+.env.local

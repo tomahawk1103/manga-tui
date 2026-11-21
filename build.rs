@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::path::Path;
 use std::process::Command;
 
@@ -57,6 +58,61 @@ fn emit_build_metadata() {
     println!("cargo:rustc-env=MANGA_TUI_BUILD_CHANNEL={channel}");
 }
 
+fn load_dotenv_file(path: &Path) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Ok(contents) = std::fs::read_to_string(path) else {
+        return map;
+    };
+
+    for raw_line in contents.lines() {
+        let trimmed = raw_line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let Some((raw_key, raw_val)) = trimmed.split_once('=') else {
+            continue;
+        };
+        let key = raw_key.trim().strip_prefix("export ").unwrap_or(raw_key.trim()).trim();
+        if key.is_empty() {
+            continue;
+        }
+        let mut val = raw_val.trim();
+        if val.len() >= 2 && ((val.starts_with('"') && val.ends_with('"')) || (val.starts_with('\'') && val.ends_with('\''))) {
+            val = &val[1..val.len() - 1];
+        }
+        let val = val.trim();
+        if !val.is_empty() {
+            map.insert(key.to_string(), val.to_string());
+        }
+    }
+
+    map
+}
+
+fn emit_cloud_oauth_config() {
+    println!("cargo:rerun-if-env-changed=MANGA_TUI_GDRIVE_CLIENT_ID");
+    println!("cargo:rerun-if-env-changed=MANGA_TUI_GDRIVE_CLIENT_SECRET");
+    println!("cargo:rerun-if-changed=.env");
+    println!("cargo:rerun-if-changed=.env.local");
+
+    let env_base = load_dotenv_file(Path::new(".env"));
+    let env_local = load_dotenv_file(Path::new(".env.local"));
+
+    let resolve = |key: &str| -> Option<String> {
+        non_empty_env(key)
+            .or_else(|| env_local.get(key).cloned())
+            .or_else(|| env_base.get(key).cloned())
+            .filter(|v| !v.trim().is_empty())
+    };
+
+    if let Some(client_id) = resolve("MANGA_TUI_GDRIVE_CLIENT_ID") {
+        println!("cargo:rustc-env=MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_ID={client_id}");
+    }
+    if let Some(client_secret) = resolve("MANGA_TUI_GDRIVE_CLIENT_SECRET") {
+        println!("cargo:rustc-env=MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET={client_secret}");
+    }
+}
+
 #[cfg(windows)]
 fn embed_windows_resources() {
     println!("cargo:rerun-if-changed=assets/icon.ico");
@@ -79,6 +135,7 @@ fn embed_windows_resources() {
 
 fn main() {
     emit_build_metadata();
+    emit_cloud_oauth_config();
     #[cfg(windows)]
     embed_windows_resources();
 }
