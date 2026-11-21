@@ -80,6 +80,24 @@ function Assert-UserDataPreserved($Snapshot, [string]$Phase) {
     }
 }
 
+function Invoke-InstalledCliVersion([string]$ExePath, [string]$ProbeDir) {
+    $prevDataDir = $env:MANGA_TUI_DATA_DIR
+    try {
+        $env:MANGA_TUI_DATA_DIR = $ProbeDir
+        $out = & $ExePath --version
+        if ($LASTEXITCODE -ne 0) {
+            throw "Installed manga-tui.exe --version failed with exit code $LASTEXITCODE"
+        }
+        return $out
+    } finally {
+        if ($null -eq $prevDataDir) {
+            Remove-Item Env:MANGA_TUI_DATA_DIR -ErrorAction SilentlyContinue
+        } else {
+            $env:MANGA_TUI_DATA_DIR = $prevDataDir
+        }
+    }
+}
+
 try {
     New-Item -ItemType Directory -Path $TempRoot -Force | Out-Null
 
@@ -149,10 +167,7 @@ try {
         throw "No embedded icon resources found in installed executable: $InstalledExe"
     }
 
-    $versionOutput = & $InstalledExe --version
-    if ($LASTEXITCODE -ne 0) {
-        throw "Installed manga-tui.exe --version failed with exit code $LASTEXITCODE"
-    }
+    $versionOutput = Invoke-InstalledCliVersion -ExePath $InstalledExe -ProbeDir (Join-Path $TempRoot "cli-probe-fresh")
     Write-Host "  Verified executable output: $versionOutput"
 
     Assert-UserDataPreserved -Snapshot $IsolatedSnapshot -Phase "AfterFreshInstall"
@@ -177,10 +192,7 @@ try {
     if (-not (Test-Path -Path $InstalledExe -PathType Leaf)) {
         throw "Installed executable missing after upgrade at: $InstalledExe"
     }
-    $null = & $InstalledExe --version
-    if ($LASTEXITCODE -ne 0) {
-        throw "Upgraded manga-tui.exe --version failed with exit code $LASTEXITCODE"
-    }
+    $null = Invoke-InstalledCliVersion -ExePath $InstalledExe -ProbeDir (Join-Path $TempRoot "cli-probe-upgrade")
 
     Write-Host "[4/5] Verifying user data survived upgrade..."
     Assert-UserDataPreserved -Snapshot $IsolatedSnapshot -Phase "AfterUpgrade"
