@@ -327,7 +327,7 @@ pub fn merge_library_snapshots(local: &LibrarySyncSnapshot, remote: &LibrarySync
             .or_insert_with(|| s.clone());
     }
     let mut search_history: Vec<SyncSearchRecord> = search_map.into_values().collect();
-    search_history.sort_by(|a, b| b.searched_at.cmp(&a.searched_at));
+    search_history.sort_by_key(|a| std::cmp::Reverse(a.searched_at));
 
     LibrarySyncSnapshot {
         schema_version: LIBRARY_SYNC_SCHEMA_VERSION,

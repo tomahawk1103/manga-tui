@@ -1425,9 +1425,9 @@ mod tests {
     #[test]
     fn windows_helper_scripts_escape_paths_quote_dir_and_clear_wt_env() {
         let install_dir = PathBuf::from(r"D:\Álvaro's Apps\Manga TUI");
-        let target_exe = install_dir.join("manga-tui.exe");
+        let target_exe = PathBuf::from(r"D:\Álvaro's Apps\Manga TUI\manga-tui.exe");
         let setup_path = PathBuf::from(r"C:\Temp\manga-tui-setup.exe");
-        let old_exe = install_dir.join("manga-tui.exe.old");
+        let old_exe = PathBuf::from(r"D:\Álvaro's Apps\Manga TUI\manga-tui.exe.old");
 
         let installer_ps1 = build_windows_installer_ps1(4242, &setup_path, &install_dir, &target_exe);
         assert!(installer_ps1.contains("$oldPid = 4242"));

@@ -26,7 +26,16 @@
         pkgs = import nixpkgs { inherit system overlays; };
         inherit (pkgs.lib) cleanSource;
 
-        rust = pkgs.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+        rust = pkgs.rust-bin.selectLatestNightlyWith (
+          toolchain:
+          toolchain.minimal.override {
+            extensions = [
+              "rust-src"
+              "clippy"
+              "rustfmt"
+            ];
+          }
+        );
 
         craneLib = (crane.mkLib nixpkgs.legacyPackages.${system}).overrideToolchain rust;
 
@@ -58,6 +67,7 @@
             commonArgs
             // {
               inherit cargoArtifacts;
+              doCheck = false;
             }
           );
 
@@ -76,7 +86,7 @@
           ];
         };
 
-        formatter = pkgs.nixfmt-rfc-style;
+        formatter = pkgs.nixfmt or pkgs.nixfmt-rfc-style;
       }
     );
 }

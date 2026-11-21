@@ -90,5 +90,12 @@ jobs:
       #   with:
       #     use-flakehub: false
 
+      - name: Update Nix flake inputs
+        env:
+          NIX_CONFIG: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
+        run: nix flake update
+
       - name: Build default package
+        env:
+          NIX_CONFIG: "access-tokens = github.com=${{ secrets.GITHUB_TOKEN }}"
         run: nix build --print-build-logs --verbose
