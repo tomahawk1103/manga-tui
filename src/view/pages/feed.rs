@@ -55,7 +55,7 @@ use ratatui::buffer::Buffer;
 use ratatui::layout::{Alignment, Constraint, Layout, Margin, Position, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span, ToSpan};
-use ratatui::widgets::{Block, BorderType, Paragraph, StatefulWidget, Tabs, Widget, Wrap};
+use ratatui::widgets::{Block, BorderType, Paragraph, StatefulWidget, Widget, Wrap};
 use throbber_widgets_tui::{Throbber, ThrobberState};
 use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tokio::task::JoinSet;
@@ -74,7 +74,9 @@ use crate::utils::render_search_bar;
 use crate::view::app::MangaToRead;
 use crate::view::widgets::Component;
 use crate::view::widgets::feed::{
-    AskConfirmationDeleteAllModal, FeedTabs, HistoryWidget, MangasRead, OfflineDownloadsWidget, TimelineChapterItem, TimelineWidget,
+    AskConfirmationDeleteAllModal, FeedBottomAction, FeedTabs, HISTORY_ITEM_HEIGHT, HistoryWidget, MangasRead, OFFLINE_ITEM_HEIGHT,
+    OfflineDownloadsWidget, OfflineMangaItem, TIMELINE_ITEM_HEIGHT, TimelineChapterItem, TimelineWidget,
+    build_bottom_instructions_with_hitboxes,
 };
 
 /// Represents the current state of the feed page UI.
@@ -201,8 +203,15 @@ where
     /// Manga provider for fetching data
     manga_provider: Option<Arc<T>>,
     tabs_area: Rect,
+    tab_hit_boxes: Vec<(Rect, FeedTabs)>,
     search_bar_area: Rect,
+    refresh_chip_rect: Option<Rect>,
     content_area: Rect,
+    list_inner_area: Rect,
+    pagination_prev_rect: Option<Rect>,
+    pagination_next_rect: Option<Rect>,
+    bottom_action_hit_boxes: Vec<(Rect, FeedBottomAction)>,
+    delete_modal_rects: Option<(Rect, Rect, Rect)>,
 }
 
 impl<T> Feed<T>
@@ -231,8 +240,15 @@ where
             is_typing: false,
             manga_provider: None,
             tabs_area: Rect::default(),
+            tab_hit_boxes: Vec::new(),
             search_bar_area: Rect::default(),
+            refresh_chip_rect: None,
             content_area: Rect::default(),
+            list_inner_area: Rect::default(),
+            pagination_prev_rect: None,
+            pagination_next_rect: None,
+            bottom_action_hit_boxes: Vec::new(),
+            delete_modal_rects: None,
         }
     }
 
@@ -260,7 +276,7 @@ where
         self
     }
 
-    fn render_empty_history_card(&self, area: Rect, buf: &mut Buffer) {
+    fn render_empty_history_card(&mut self, area: Rect, buf: &mut Buffer) {
         let t = theme();
         let tab_title = if self.tabs == FeedTabs::Library {
             tr(" 📚 Biblioteca ", " 📚 Library ")
@@ -278,6 +294,23 @@ where
                 "You have no reading history yet.\nTip: Start reading any manga to track your progress here.",
             )
         };
+        let (bottom_line, hit_boxes) = build_bottom_instructions_with_hitboxes(area, vec![
+            (
+                t.key_chip("Tab / 1-4"),
+                Span::styled(tr(" Cambiar pestaña  ", " Switch tab  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::CycleTab),
+            ),
+            (
+                t.key_chip("i"),
+                Span::styled(tr(" Ir a Buscar ", " Go to Search "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::GoToSearch),
+            ),
+        ]);
+        self.list_inner_area = Rect::default();
+        self.pagination_prev_rect = None;
+        self.pagination_next_rect = None;
+        self.bottom_action_hit_boxes = hit_boxes;
+
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(t.border))
@@ -285,13 +318,7 @@ where
                 tab_title,
                 Style::default().fg(t.accent_primary).bg(t.title_chip_primary_bg).bold(),
             )]))
-            .title_bottom(Line::from(vec![
-                Span::raw(" "),
-                t.key_chip("Tab / 1-3"),
-                Span::styled(tr(" Cambiar pestaña  ", " Switch tab  "), Style::default().fg(t.text_muted)),
-                t.key_chip("i"),
-                Span::styled(tr(" Ir a Buscar ", " Go to Search "), Style::default().fg(t.text_muted)),
-            ]));
+            .title_bottom(bottom_line);
         let inner = block.inner(area).inner(Margin {
             horizontal: 2,
             vertical: 2,
@@ -307,6 +334,11 @@ where
     fn render_history(&mut self, area: Rect, buf: &mut Buffer) {
         let t = theme();
         if self.state == FeedState::ErrorSearchingHistory {
+            self.list_inner_area = Rect::default();
+            self.pagination_prev_rect = None;
+            self.pagination_next_rect = None;
+            self.bottom_action_hit_boxes.clear();
+
             let block = Block::bordered()
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(t.status_error))
@@ -329,22 +361,32 @@ where
             return;
         }
         let active_tab = self.tabs;
-        match self.history.as_mut() {
-            Some(history) => {
-                if self.state == FeedState::HistoryNotFound {
-                    self.render_empty_history_card(area, buf);
-                } else {
-                    history.active_tab = active_tab;
-                    StatefulWidget::render(history.clone(), area, buf, &mut history.state);
-                }
-            },
-            None => {
+        let is_not_found = self.state == FeedState::HistoryNotFound;
+        if let Some(history) = self.history.as_mut() {
+            if is_not_found {
                 self.render_empty_history_card(area, buf);
-            },
+            } else {
+                history.active_tab = active_tab;
+                let widget_snapshot = history.clone();
+                let (prev_rect, next_rect) =
+                    HistoryWidget::pagination_hit_boxes(area, widget_snapshot.page, widget_snapshot.total_results);
+                StatefulWidget::render(widget_snapshot, area, buf, &mut history.state);
+                self.list_inner_area = HistoryWidget::list_inner_area(area);
+                self.pagination_prev_rect = prev_rect;
+                self.pagination_next_rect = next_rect;
+                self.bottom_action_hit_boxes = HistoryWidget::bottom_action_hit_boxes(area);
+            }
+        } else {
+            self.render_empty_history_card(area, buf);
         }
     }
 
     fn render_timeline(&mut self, area: Rect, buf: &mut Buffer) {
+        self.list_inner_area = TimelineWidget::list_inner_area(area);
+        self.pagination_prev_rect = None;
+        self.pagination_next_rect = None;
+        self.bottom_action_hit_boxes = TimelineWidget::bottom_action_hit_boxes(area);
+
         if let Some(timeline) = self.timeline.as_mut() {
             StatefulWidget::render(timeline.clone(), area, buf, &mut timeline.state);
         } else {
@@ -358,6 +400,11 @@ where
     }
 
     fn render_offline_downloads(&mut self, area: Rect, buf: &mut Buffer) {
+        self.list_inner_area = OfflineDownloadsWidget::list_inner_area(area);
+        self.pagination_prev_rect = None;
+        self.pagination_next_rect = None;
+        self.bottom_action_hit_boxes = OfflineDownloadsWidget::bottom_action_hit_boxes(area);
+
         if let Some(offline) = self.offline_downloads.as_mut() {
             StatefulWidget::render(offline.clone(), area, buf, &mut offline.state);
         } else {
@@ -374,13 +421,7 @@ where
         let [tabs_area, search_bar_area] = Layout::horizontal([Constraint::Percentage(62), Constraint::Percentage(38)]).areas(area);
         self.tabs_area = tabs_area;
         self.search_bar_area = search_bar_area;
-
-        let selected_tab = match self.tabs {
-            FeedTabs::Timeline => 0,
-            FeedTabs::ContinueReading => 1,
-            FeedTabs::Library => 2,
-            FeedTabs::Downloads => 3,
-        };
+        self.tab_hit_boxes.clear();
 
         let tabs_title = Line::from(vec![
             Span::styled(tr(" 📚 Seguimiento ", " 📚 Feed "), Style::default().fg(t.accent_primary).bold()),
@@ -416,17 +457,46 @@ where
                 [inner_tabs, Rect::default()]
             };
 
-            Tabs::new(vec![
-                tr(" ⚡ Novedades ", " ⚡ Updates "),
-                tr(" 📖 Continuar ", " 📖 Continue "),
-                tr(" 📚 Biblioteca ", " 📚 Library "),
-                tr(" 💾 Descargas ", " 💾 Downloads "),
-            ])
-            .select(selected_tab)
-            .style(Style::default().fg(t.text_muted))
-            .highlight_style(Style::default().fg(Color::Black).bg(t.accent_primary).bold())
-            .divider(Span::styled("│", Style::default().fg(t.border_muted)))
-            .render(tab_row, frame.buffer_mut());
+            let full_defs = [
+                (FeedTabs::Timeline, tr(" ⚡ Novedades ", " ⚡ Updates ")),
+                (FeedTabs::ContinueReading, tr(" 📖 Continuar ", " 📖 Continue ")),
+                (FeedTabs::Library, tr(" 📚 Biblioteca ", " 📚 Library ")),
+                (FeedTabs::Downloads, tr(" 💾 Descargas ", " 💾 Downloads ")),
+            ];
+            let compact_defs = [
+                (FeedTabs::Timeline, tr(" 1:Noved. ", " 1:Upd. ")),
+                (FeedTabs::ContinueReading, tr(" 2:Cont. ", " 2:Cont. ")),
+                (FeedTabs::Library, tr(" 3:Bibl. ", " 3:Lib. ")),
+                (FeedTabs::Downloads, tr(" 4:Desc. ", " 4:Down. ")),
+            ];
+            let full_total_w: usize = full_defs.iter().map(|(_, lbl)| Span::raw(*lbl).width()).sum::<usize>() + 3;
+            let tab_defs = if full_total_w <= tab_row.width as usize { full_defs } else { compact_defs };
+
+            let mut cursor_x = tab_row.x;
+            let max_x = tab_row.right();
+            let mut spans: Vec<Span<'_>> = Vec::with_capacity(7);
+            for (idx, (tab, label)) in tab_defs.into_iter().enumerate() {
+                if idx > 0 {
+                    spans.push(Span::styled("│", Style::default().fg(t.border_muted)));
+                    cursor_x = cursor_x.saturating_add(1);
+                }
+                let is_active = self.tabs == tab;
+                let style = if is_active {
+                    Style::default().fg(Color::Black).bg(t.accent_primary).bold()
+                } else {
+                    Style::default().fg(t.text_muted)
+                };
+                let span = Span::styled(label, style);
+                let span_w = span.width() as u16;
+                let avail = max_x.saturating_sub(cursor_x);
+                let hit_w = span_w.min(avail);
+                if hit_w > 0 {
+                    self.tab_hit_boxes.push((Rect::new(cursor_x, tab_row.y, hit_w, 1), tab));
+                }
+                cursor_x = cursor_x.saturating_add(span_w);
+                spans.push(span);
+            }
+            Paragraph::new(Line::from(spans)).render(tab_row, frame.buffer_mut());
 
             if status_row.height > 0 {
                 self.render_searching_status(status_row, frame.buffer_mut());
@@ -434,6 +504,7 @@ where
         }
 
         let input_help = if self.is_typing {
+            self.refresh_chip_rect = None;
             Line::from(vec![
                 Span::styled(tr(" ⌨ Filtrando ", " ⌨ Filtering "), Style::default().fg(Color::Black).bg(t.accent_highlight).bold()),
                 Span::raw(" "),
@@ -443,13 +514,20 @@ where
                 Span::styled(tr("Salir ", "Stop "), Style::default().fg(t.text_muted)),
             ])
         } else {
-            Line::from(vec![
-                Span::styled(tr(" 🔍 Filtrar ", " 🔍 Filter "), Style::default().fg(t.accent_primary).bold()),
-                Span::styled("<s> ", Style::default().fg(t.accent_highlight).bold()),
-                Span::styled(tr("Escribir ", "Type "), Style::default().fg(t.text_muted)),
-                Span::styled("<R> ", Style::default().fg(t.accent_highlight).bold()),
-                Span::styled(tr("Actualizar ", "Refresh "), Style::default().fg(t.text_muted)),
-            ])
+            let filter_span = Span::styled(tr(" 🔍 Filtrar ", " 🔍 Filter "), Style::default().fg(t.accent_primary).bold());
+            let s_chip = Span::styled("<s> ", Style::default().fg(t.accent_highlight).bold());
+            let type_span = Span::styled(tr("Escribir ", "Type "), Style::default().fg(t.text_muted));
+            let r_chip = Span::styled("<R> ", Style::default().fg(t.accent_highlight).bold());
+            let refresh_span = Span::styled(tr("Actualizar ", "Refresh "), Style::default().fg(t.text_muted));
+
+            let prefix_w = (filter_span.width() + s_chip.width() + type_span.width()) as u16;
+            let refresh_w = (r_chip.width() + refresh_span.width()).saturating_sub(1) as u16;
+            let rx = search_bar_area.x.saturating_add(1).saturating_add(prefix_w);
+            let max_sx = search_bar_area.right().saturating_sub(1);
+            self.refresh_chip_rect = (search_bar_area.width > 2 && rx < max_sx && refresh_w > 0)
+                .then(|| Rect::new(rx, search_bar_area.y, refresh_w.min(max_sx.saturating_sub(rx)), 1));
+
+            Line::from(vec![filter_span, s_chip, type_span, r_chip, refresh_span])
         };
 
         render_search_bar(self.is_typing, input_help, &self.search_bar, frame, search_bar_area);
@@ -504,7 +582,10 @@ where
     fn render_ask_modal_confirmation_delete_all_mangas(&mut self, area: Rect, buf: &mut Buffer) {
         if self.state == FeedState::AskingDeleteAllConfirmation {
             let provider = self.manga_provider.as_ref().map(|p| p.name()).unwrap_or_default();
+            self.delete_modal_rects = Some(AskConfirmationDeleteAllModal::hit_boxes(area));
             AskConfirmationDeleteAllModal::new(self.tabs, provider).render(area, buf);
+        } else {
+            self.delete_modal_rects = None;
         }
     }
 
@@ -1272,20 +1353,165 @@ where
         }
     }
 
+    fn effective_list_inner_area(&self) -> Rect {
+        if self.list_inner_area.width > 0 && self.list_inner_area.height > 0 {
+            return self.list_inner_area;
+        }
+        match self.tabs {
+            FeedTabs::Timeline => TimelineWidget::list_inner_area(self.content_area),
+            FeedTabs::Downloads => OfflineDownloadsWidget::list_inner_area(self.content_area),
+            _ => HistoryWidget::list_inner_area(self.content_area),
+        }
+    }
+
+    fn compute_clicked_card_target(
+        inner: Rect,
+        pos: Position,
+        scroll_offset: usize,
+        scroll_truncation: u16,
+        card_h: u16,
+        len: usize,
+    ) -> Option<(usize, usize)> {
+        if !inner.contains(pos) || card_h == 0 || len == 0 {
+            return None;
+        }
+        let trunc = if inner.height < card_h { 0 } else { scroll_truncation as usize };
+        let effective_y = (pos.y - inner.y) as usize + trunc;
+        let h = card_h as usize;
+        let target = scroll_offset + effective_y / h;
+        let local_y = effective_y % h;
+        (target < len).then_some((target, local_y))
+    }
+
+    fn select_card_at_pos(&mut self, pos: Position) -> Option<(usize, usize)> {
+        let inner = self.effective_list_inner_area();
+        match self.tabs {
+            FeedTabs::Timeline => {
+                let timeline = self.timeline.as_mut()?;
+                let hit = Self::compute_clicked_card_target(
+                    inner,
+                    pos,
+                    timeline.state.scroll_offset_index(),
+                    timeline.state.scroll_truncation(),
+                    TIMELINE_ITEM_HEIGHT,
+                    timeline.items.len(),
+                )?;
+                timeline.state.select(Some(hit.0));
+                Some(hit)
+            },
+            FeedTabs::Downloads => {
+                let offline = self.offline_downloads.as_mut()?;
+                let hit = Self::compute_clicked_card_target(
+                    inner,
+                    pos,
+                    offline.state.scroll_offset_index(),
+                    offline.state.scroll_truncation(),
+                    OFFLINE_ITEM_HEIGHT,
+                    offline.items.len(),
+                )?;
+                offline.state.select(Some(hit.0));
+                Some(hit)
+            },
+            FeedTabs::ContinueReading | FeedTabs::Library => {
+                let history = self.history.as_mut()?;
+                let hit = Self::compute_clicked_card_target(
+                    inner,
+                    pos,
+                    history.state.scroll_offset_index(),
+                    history.state.scroll_truncation(),
+                    HISTORY_ITEM_HEIGHT,
+                    history.mangas.len(),
+                )?;
+                history.state.select(Some(hit.0));
+                Some(hit)
+            },
+        }
+    }
+
+    fn dispatch_bottom_action(&mut self, action: FeedBottomAction) {
+        match action {
+            FeedBottomAction::OpenManga => {
+                self.local_action_tx.send(FeedActions::GoToMangaPage).ok();
+            },
+            FeedBottomAction::ReadTimelineChapter => {
+                if self.loading_state.is_none() {
+                    self.read_timeline_chapter();
+                }
+            },
+            FeedBottomAction::OpenOfflineWebViewer => {
+                self.local_action_tx.send(FeedActions::OpenOfflineWebViewer).ok();
+            },
+            FeedBottomAction::ToggleFavorite => {
+                self.local_action_tx.send(FeedActions::ToggleFavorite).ok();
+            },
+            FeedBottomAction::DownloadTimelineChapter => {
+                self.download_timeline_chapter();
+            },
+            FeedBottomAction::RemoveSelected => {
+                self.remove_currently_selected_manga();
+            },
+            FeedBottomAction::AskDeleteAll => {
+                if !matches!(self.tabs, FeedTabs::Timeline | FeedTabs::Downloads) {
+                    self.state = FeedState::AskingDeleteAllConfirmation;
+                }
+            },
+            FeedBottomAction::ToggleSearch => {
+                self.local_action_tx.send(FeedActions::ToggleSearchBar).ok();
+            },
+            FeedBottomAction::Refresh => {
+                self.local_action_tx.send(FeedActions::RefreshTimeline).ok();
+            },
+            FeedBottomAction::NextPage => {
+                self.local_action_tx.send(FeedActions::NextPage).ok();
+            },
+            FeedBottomAction::PreviousPage => {
+                self.local_action_tx.send(FeedActions::PreviousPage).ok();
+            },
+            FeedBottomAction::CycleTab => {
+                self.local_action_tx.send(FeedActions::SwitchTab).ok();
+            },
+            FeedBottomAction::GoToSearch => {
+                if let Some(tx) = &self.global_event_tx {
+                    tx.send(Events::GoSearchPage).ok();
+                }
+            },
+        }
+    }
+
     fn handle_mouse_event(&mut self, mouse_event: MouseEvent) {
         if self.state == FeedState::AskingDeleteAllConfirmation {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                let pos = Position::new(mouse_event.column, mouse_event.row);
+                if let Some((modal_rect, confirm_rect, cancel_rect)) = self.delete_modal_rects {
+                    if confirm_rect.contains(pos) {
+                        self.remove_all_mangas();
+                    } else if cancel_rect.contains(pos) || !modal_rect.contains(pos) {
+                        self.state = FeedState::DisplayingHistory;
+                    }
+                }
+            }
             return;
         }
+
         let pos = Position::new(mouse_event.column, mouse_event.row);
         match mouse_event.kind {
-            MouseEventKind::ScrollUp => {
+            MouseEventKind::ScrollUp if !self.is_typing => {
                 self.local_action_tx.send(FeedActions::ScrollHistoryUp).ok();
             },
-            MouseEventKind::ScrollDown => {
+            MouseEventKind::ScrollDown if !self.is_typing => {
                 self.local_action_tx.send(FeedActions::ScrollHistoryDown).ok();
             },
+            MouseEventKind::Down(MouseButton::Right) if !self.is_typing => {
+                self.select_card_at_pos(pos);
+            },
             MouseEventKind::Down(MouseButton::Left) => {
-                if self.tabs_area.contains(pos) {
+                if !self.tab_hit_boxes.is_empty() {
+                    if let Some(&(_, tab)) = self.tab_hit_boxes.iter().find(|&&(rect, _)| rect.contains(pos)) {
+                        self.is_typing = false;
+                        self.local_action_tx.send(FeedActions::SetTab(tab)).ok();
+                        return;
+                    }
+                } else if self.tabs_area.contains(pos) {
                     self.is_typing = false;
                     let idx =
                         ((pos.x.saturating_sub(self.tabs_area.x) as usize) * 4 / (self.tabs_area.width.max(1) as usize)).min(3);
@@ -1296,39 +1522,81 @@ where
                         _ => FeedTabs::Downloads,
                     };
                     self.local_action_tx.send(FeedActions::SetTab(tab)).ok();
-                } else if self.search_bar_area.contains(pos) {
+                    return;
+                }
+
+                if !self.is_typing && self.refresh_chip_rect.is_some_and(|r| r.contains(pos)) {
+                    self.local_action_tx.send(FeedActions::RefreshTimeline).ok();
+                    return;
+                }
+
+                if self.search_bar_area.contains(pos) {
                     if !self.is_typing {
                         self.local_action_tx.send(FeedActions::ToggleSearchBar).ok();
                     }
-                } else if self.content_area.contains(pos) {
-                    if self.is_typing {
-                        self.is_typing = false;
+                    return;
+                }
+
+                if self.is_typing {
+                    self.is_typing = false;
+                    return;
+                }
+
+                if matches!(self.tabs, FeedTabs::ContinueReading | FeedTabs::Library) {
+                    if self.pagination_prev_rect.is_some_and(|r| r.contains(pos)) {
+                        self.local_action_tx.send(FeedActions::PreviousPage).ok();
+                        return;
                     }
-                    if pos.y > self.content_area.y && pos.y < self.content_area.bottom().saturating_sub(1) {
-                        let rel_y = (pos.y - self.content_area.y - 1) as usize;
-                        if self.tabs == FeedTabs::Timeline {
-                            if let Some(timeline) = self.timeline.as_mut() {
-                                let target = timeline.state.scroll_offset_index() + rel_y / 4;
-                                if target < timeline.items.len() {
-                                    timeline.state.select(Some(target));
-                                    self.read_timeline_chapter();
+                    if self.pagination_next_rect.is_some_and(|r| r.contains(pos)) {
+                        self.local_action_tx.send(FeedActions::NextPage).ok();
+                        return;
+                    }
+                }
+
+                if let Some(&(_, action)) = self.bottom_action_hit_boxes.iter().find(|&&(rect, _)| rect.contains(pos)) {
+                    self.dispatch_bottom_action(action);
+                    return;
+                }
+
+                if let Some((_target, local_y)) = self.select_card_at_pos(pos) {
+                    match self.tabs {
+                        FeedTabs::Timeline => {
+                            if self.loading_state.is_none() {
+                                self.read_timeline_chapter();
+                            }
+                        },
+                        FeedTabs::Downloads => {
+                            let inner = self.effective_list_inner_area();
+                            let has_provider = self
+                                .offline_downloads
+                                .as_ref()
+                                .and_then(|w| w.get_current_selected())
+                                .is_some_and(|m| m.provider.is_some());
+                            if local_y == OfflineMangaItem::action_row_local_y() {
+                                let ranges = OfflineMangaItem::inline_action_x_ranges(inner.x, inner.width, has_provider);
+                                if ranges.web_viewer.is_some_and(|(s, e)| pos.x >= s && pos.x < e) {
+                                    self.local_action_tx.send(FeedActions::OpenOfflineWebViewer).ok();
+                                    return;
+                                }
+                                if ranges.favorite.is_some_and(|(s, e)| pos.x >= s && pos.x < e) {
+                                    self.local_action_tx.send(FeedActions::ToggleFavorite).ok();
+                                    return;
                                 }
                             }
-                        } else if self.tabs == FeedTabs::Downloads {
-                            if let Some(offline) = self.offline_downloads.as_mut() {
-                                let target = offline.state.scroll_offset_index() + rel_y / 7;
-                                if target < offline.items.len() {
-                                    offline.state.select(Some(target));
-                                    self.local_action_tx.send(FeedActions::GoToMangaPage).ok();
+                            self.local_action_tx.send(FeedActions::GoToMangaPage).ok();
+                        },
+                        FeedTabs::ContinueReading | FeedTabs::Library => {
+                            if local_y == MangasRead::action_row_local_y() {
+                                let inner = self.effective_list_inner_area();
+                                if MangasRead::inline_favorite_x_range(inner.x, inner.width)
+                                    .is_some_and(|(s, e)| pos.x >= s && pos.x < e)
+                                {
+                                    self.local_action_tx.send(FeedActions::ToggleFavorite).ok();
+                                    return;
                                 }
                             }
-                        } else if let Some(history) = self.history.as_mut() {
-                            let target = history.state.scroll_offset_index() + rel_y / 8;
-                            if target < history.mangas.len() {
-                                history.state.select(Some(target));
-                                self.local_action_tx.send(FeedActions::GoToMangaPage).ok();
-                            }
-                        }
+                            self.local_action_tx.send(FeedActions::GoToMangaPage).ok();
+                        },
                     }
                 }
             },
@@ -1416,6 +1684,11 @@ where
         self.offline_downloads = None;
         self.loading_state = None;
         self.is_typing = false;
+        self.list_inner_area = Rect::default();
+        self.pagination_prev_rect = None;
+        self.pagination_next_rect = None;
+        self.bottom_action_hit_boxes.clear();
+        self.delete_modal_rects = None;
     }
 
     fn handle_events(&mut self, events: crate::backend::tui::Events) {
@@ -2023,5 +2296,283 @@ mod tests {
             Events::GoToOfflineMangaPage(m) => assert_eq!(m.title, "Berserk"),
             other => panic!("expected GoToOfflineMangaPage, got {other:?}"),
         }
+    }
+
+    fn find_text_in_buffer(buf: &Buffer, needle: &str) -> Option<(u16, u16)> {
+        find_all_text_in_buffer(buf, needle).into_iter().next()
+    }
+
+    fn find_all_text_in_buffer(buf: &Buffer, needle: &str) -> Vec<(u16, u16)> {
+        let mut hits = Vec::new();
+        for y in buf.area.top()..buf.area.bottom() {
+            let mut cols: Vec<(u16, String)> = Vec::new();
+            let mut x = buf.area.left();
+            while x < buf.area.right() {
+                let sym = buf[(x, y)].symbol().to_string();
+                let w = (Span::raw(sym.as_str()).width()).max(1) as u16;
+                cols.push((x, sym));
+                x = x.saturating_add(w);
+            }
+            for start in 0..cols.len() {
+                let mut acc = String::new();
+                for (_, sym) in &cols[start..] {
+                    acc.push_str(sym);
+                    if acc == needle {
+                        hits.push((cols[start].0, y));
+                        break;
+                    }
+                    if acc.len() >= needle.len() && !needle.starts_with(&acc) {
+                        break;
+                    }
+                }
+            }
+        }
+        hits
+    }
+
+    fn render_feed_on_test_backend<T: FeedPageProvider>(feed_page: &mut Feed<T>, width: u16, height: u16) -> Buffer {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        let completed = terminal
+            .draw(|frame| {
+                feed_page.render(frame.area(), frame);
+            })
+            .unwrap();
+        completed.buffer.clone()
+    }
+
+    fn click_left<T: FeedPageProvider>(feed_page: &mut Feed<T>, column: u16, row: u16) {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        feed_page.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+
+    fn click_right<T: FeedPageProvider>(feed_page: &mut Feed<T>, column: u16, row: u16) {
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
+        feed_page.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Right),
+            column,
+            row,
+            modifiers: KeyModifiers::NONE,
+        });
+    }
+
+    #[test]
+    fn rendered_tabs_align_mouse_clicks_at_wide_and_narrow_widths_without_false_hits() {
+        let mut feed_page: Feed<MockMangaPageProvider> = Feed::new().with_api_client(MockMangaPageProvider::new().into());
+
+        // Wide terminal (180 cols): previously broke because 111-col tabs_area was split into 27-col quarters
+        let buf = render_feed_on_test_backend(&mut feed_page, 180, 40);
+
+        let descargas_label = tr("Descargas", "Downloads");
+        let (dx, dy) = find_text_in_buffer(&buf, descargas_label).expect("Downloads tab must be rendered");
+        click_left(&mut feed_page, dx + 2, dy);
+        let act = feed_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(act, FeedActions::SetTab(FeedTabs::Downloads));
+        feed_page.update(act);
+        assert_eq!(feed_page.tabs, FeedTabs::Downloads);
+
+        let lib_label = tr("Biblioteca", "Library");
+        let (lx, ly) = find_text_in_buffer(&buf, lib_label).expect("Library tab must be rendered");
+        click_left(&mut feed_page, lx + 1, ly);
+        let act = feed_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(act, FeedActions::SetTab(FeedTabs::Library));
+        feed_page.update(act);
+
+        let cont_label = tr("Continuar", "Continue");
+        let (cx, cy) = find_text_in_buffer(&buf, cont_label).expect("Continue tab must be rendered");
+        click_left(&mut feed_page, cx + 1, cy);
+        let act = feed_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(act, FeedActions::SetTab(FeedTabs::ContinueReading));
+        feed_page.update(act);
+
+        let upd_label = tr("Novedades", "Updates");
+        let (ux, uy) = find_text_in_buffer(&buf, upd_label).expect("Timeline tab must be rendered");
+        click_left(&mut feed_page, ux + 1, uy);
+        let act = feed_page.local_action_rx.try_recv().unwrap();
+        assert_eq!(act, FeedActions::SetTab(FeedTabs::Timeline));
+        feed_page.update(act);
+
+        // Clicking empty space to the right of the tab labels or on the hint row below MUST NOT switch tabs
+        click_left(&mut feed_page, 95, dy);
+        click_left(&mut feed_page, dx + 2, dy + 1);
+        assert!(feed_page.local_action_rx.try_recv().is_err());
+
+        // Narrow terminal (92 cols): switches automatically to compact labels and stays clickable
+        let narrow_buf = render_feed_on_test_backend(&mut feed_page, 92, 30);
+        let compact_dl = tr("4:Desc.", "4:Down.");
+        let (ndx, ndy) = find_text_in_buffer(&narrow_buf, compact_dl).expect("Compact Downloads tab must fit on 92 cols");
+        click_left(&mut feed_page, ndx + 1, ndy);
+        assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::SetTab(FeedTabs::Downloads));
+    }
+
+    #[test]
+    fn downloads_tab_scrolled_mouse_clamps_wheel_clicks_exact_card_and_inline_actions() {
+        use crossterm::event::{KeyModifiers, MouseEvent, MouseEventKind};
+
+        let mut feed_page: Feed<MockMangaPageProvider> = Feed::new().with_api_client(MockMangaPageProvider::new().into());
+        feed_page.tabs = FeedTabs::Downloads;
+
+        let mangas: Vec<OfflineManga> = (0..6)
+            .map(|i| OfflineManga {
+                manga_id: format!("id-{i}"),
+                title: format!("Downloaded Manga {i}"),
+                folder_name: format!("Downloaded Manga {i}"),
+                provider: Some(MangaProviders::Inmanga),
+                is_favorite: false,
+                chapters: vec![],
+                total_size_bytes: 1024,
+                languages: vec![Languages::Spanish],
+            })
+            .collect();
+        feed_page.load_offline_downloads(mangas);
+
+        let _ = render_feed_on_test_backend(&mut feed_page, 120, 24);
+
+        // Mouse wheel up at top clamps to 0 (no infinite wrap to 5)
+        feed_page.handle_mouse_event(MouseEvent {
+            kind: MouseEventKind::ScrollUp,
+            column: 10,
+            row: 10,
+            modifiers: KeyModifiers::NONE,
+        });
+        let up_act = feed_page.local_action_rx.try_recv().unwrap();
+        feed_page.update(up_act);
+        assert_eq!(feed_page.offline_downloads.as_ref().unwrap().state.selected, Some(0));
+
+        // Mouse wheel down past end clamps to 5 (no infinite wrap to 0)
+        for _ in 0..8 {
+            feed_page.handle_mouse_event(MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: 10,
+                row: 10,
+                modifiers: KeyModifiers::NONE,
+            });
+            let act = feed_page.local_action_rx.try_recv().unwrap();
+            feed_page.update(act);
+        }
+        assert_eq!(feed_page.offline_downloads.as_ref().unwrap().state.selected, Some(5));
+
+        // Scroll back to item 2 so top card is partially truncated (scroll_truncation > 0)
+        feed_page.offline_downloads.as_mut().unwrap().state.select(Some(0));
+        let _ = render_feed_on_test_backend(&mut feed_page, 120, 24);
+        feed_page.offline_downloads.as_mut().unwrap().state.select(Some(2));
+        let scrolled_buf = render_feed_on_test_backend(&mut feed_page, 120, 24);
+        assert!(
+            feed_page.offline_downloads.as_ref().unwrap().state.scroll_truncation() > 0,
+            "card 0 should be partially scrolled off top"
+        );
+
+        // Right-click on card 1 selects card 1 without opening it
+        let (m1x, m1y) = find_text_in_buffer(&scrolled_buf, "Downloaded Manga 1").unwrap();
+        click_right(&mut feed_page, m1x, m1y);
+        assert_eq!(feed_page.offline_downloads.as_ref().unwrap().state.selected, Some(1));
+        assert!(feed_page.local_action_rx.try_recv().is_err());
+
+        // Restore scrolled state and click inline "Visor Web" / "Web HD" on card 2
+        feed_page.offline_downloads.as_mut().unwrap().state.select(Some(2));
+        let scrolled_buf = render_feed_on_test_backend(&mut feed_page, 120, 24);
+        let web_label = tr("Visor Web", "Web HD");
+        let web_hits = find_all_text_in_buffer(&scrolled_buf, web_label);
+        // Pick the inline hit that belongs to card 2 (lowest card row above the bottom border of content_area)
+        let &(wx, wy) = web_hits
+            .iter()
+            .filter(|&&(_, y)| y < feed_page.content_area.bottom() - 1)
+            .max_by_key(|&&(_, y)| y)
+            .expect("inline Web Viewer button on card 2");
+        click_left(&mut feed_page, wx + 1, wy);
+        assert_eq!(feed_page.offline_downloads.as_ref().unwrap().state.selected, Some(2));
+        assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::OpenOfflineWebViewer);
+
+        // Click inline "Fav." button on card 1 (the upper card)
+        let fav_hits = find_all_text_in_buffer(&scrolled_buf, "Fav.");
+        let &(fx, fy) = fav_hits
+            .iter()
+            .filter(|&&(_, y)| y < wy)
+            .max_by_key(|&&(_, y)| y)
+            .expect("inline Fav button on card 1");
+        click_left(&mut feed_page, fx + 1, fy);
+        assert_eq!(feed_page.offline_downloads.as_ref().unwrap().state.selected, Some(1));
+        assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::ToggleFavorite);
+
+        // Click body/title of card 2 -> opens GoToMangaPage for card 2
+        let (m2x, m2y) = find_text_in_buffer(&scrolled_buf, "Downloaded Manga 2").unwrap();
+        click_left(&mut feed_page, m2x, m2y);
+        assert_eq!(feed_page.offline_downloads.as_ref().unwrap().state.selected, Some(2));
+        assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::GoToMangaPage);
+
+        // Click bottom bar Rescan chip -> RefreshTimeline
+        let rescan_label = tr("Re-escanear", "Rescan");
+        let (rx_pos, ry_pos) = find_text_in_buffer(&scrolled_buf, rescan_label).unwrap();
+        click_left(&mut feed_page, rx_pos, ry_pos);
+        assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::RefreshTimeline);
+    }
+
+    #[test]
+    fn history_pagination_arrows_typing_unfocus_and_delete_modal_respond_to_mouse() {
+        let mut feed_page: Feed<MockMangaPageProvider> = Feed::new().with_api_client(MockMangaPageProvider::new().into());
+        feed_page.tabs = FeedTabs::ContinueReading;
+
+        let mut hist = manga_history_response();
+        hist.page = 2;
+        hist.total_items = 15;
+        hist.mangas = (0..5)
+            .map(|i| MangaHistory {
+                id: format!("m-{i}"),
+                title: format!("History Manga {i}"),
+                ..Default::default()
+            })
+            .collect();
+        feed_page.load_history(Some(hist));
+
+        let buf = render_feed_on_test_backend(&mut feed_page, 120, 30);
+
+        // Click ◀ <b> pagination arrow -> PreviousPage
+        let (px, py) = find_text_in_buffer(&buf, "◀ <b>").expect("prev arrow must be rendered");
+        click_left(&mut feed_page, px, py);
+        assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::PreviousPage);
+
+        // Click <w> ▶ pagination arrow -> NextPage
+        let (nx, ny) = find_text_in_buffer(&buf, "<w> ▶").expect("next arrow must be rendered");
+        click_left(&mut feed_page, nx, ny);
+        assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::NextPage);
+
+        // Click <R> Refresh chip inside search bar top border -> RefreshTimeline
+        let (rx, ry) = find_text_in_buffer(&buf, "<R>").expect("<R> refresh chip must be rendered");
+        click_left(&mut feed_page, rx, ry);
+        assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::RefreshTimeline);
+
+        // Click inline "Favorito"/"Favorite" on first card -> ToggleFavorite
+        let fav_label = tr("Favorito", "Favorite");
+        let fav_hits = find_all_text_in_buffer(&buf, fav_label);
+        let &(cfx, cfy) = fav_hits
+            .iter()
+            .find(|&&(_, y)| y >= feed_page.list_inner_area.y && y < feed_page.list_inner_area.bottom())
+            .expect("inline card Favorite chip must be rendered");
+        click_left(&mut feed_page, cfx, cfy);
+        assert_eq!(feed_page.local_action_rx.try_recv().unwrap(), FeedActions::ToggleFavorite);
+
+        // Focus search bar, then click directly over card 0: must ONLY exit typing without opening card 0
+        feed_page.is_typing = true;
+        let _ = render_feed_on_test_backend(&mut feed_page, 120, 30);
+        let (m0x, m0y) = find_text_in_buffer(&buf, "History Manga 0").unwrap();
+        click_left(&mut feed_page, m0x, m0y);
+        assert!(!feed_page.is_typing);
+        assert!(feed_page.local_action_rx.try_recv().is_err());
+
+        // Clicking Cancel on delete-all modal closes the modal cleanly
+        feed_page.state = FeedState::AskingDeleteAllConfirmation;
+        let modal_buf = render_feed_on_test_backend(&mut feed_page, 120, 30);
+        let cancel_label = tr("No, cancelar", "No, cancel");
+        let (cx, cy) = find_text_in_buffer(&modal_buf, cancel_label).expect("modal cancel button");
+        click_left(&mut feed_page, cx, cy);
+        assert_eq!(feed_page.state, FeedState::DisplayingHistory);
     }
 }

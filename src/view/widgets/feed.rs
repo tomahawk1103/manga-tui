@@ -6,7 +6,7 @@ use ratatui::layout::{Alignment, Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, StatefulWidget, Widget, WidgetRef, Wrap};
-use tui_widget_list::PreRender;
+use tui_widget_list::{ListBuilder, ListView};
 
 use crate::backend::database::MangaHistoryResponse;
 use crate::backend::manga_provider::{Languages, LatestChapter, MangaProviders};
@@ -16,6 +16,123 @@ use crate::i18n::tr;
 use crate::theme::theme;
 use crate::utils::display_dates_since_publication;
 use crate::view::widgets::ModalBuilder;
+
+pub const TIMELINE_ITEM_HEIGHT: u16 = 4;
+pub const HISTORY_ITEM_HEIGHT: u16 = 8;
+pub const OFFLINE_ITEM_HEIGHT: u16 = 7;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeedBottomAction {
+    OpenManga,
+    ReadTimelineChapter,
+    OpenOfflineWebViewer,
+    ToggleFavorite,
+    DownloadTimelineChapter,
+    RemoveSelected,
+    AskDeleteAll,
+    ToggleSearch,
+    Refresh,
+    NextPage,
+    PreviousPage,
+    CycleTab,
+    GoToSearch,
+}
+
+pub fn build_bottom_instructions_with_hitboxes(
+    area: Rect,
+    items: Vec<(Span<'static>, Span<'static>, Option<FeedBottomAction>)>,
+) -> (Line<'static>, Vec<(Rect, FeedBottomAction)>) {
+    let mut spans = vec![Span::raw(" ")];
+    let mut hit_boxes = Vec::new();
+    let max_x = area.right().saturating_sub(1);
+    let y = area.bottom().saturating_sub(1);
+    let mut cursor_x = area.x.saturating_add(2);
+
+    for (key_span, desc_span, maybe_action) in items {
+        let key_w = key_span.width() as u16;
+        let full_desc_w = desc_span.width() as u16;
+        let trimmed_desc_w = Span::raw(desc_span.content.trim_end()).width() as u16;
+        let hit_w = key_w.saturating_add(trimmed_desc_w);
+
+        if let Some(action) = maybe_action
+            && area.height > 0
+            && area.width > 2
+            && cursor_x < max_x
+            && hit_w > 0
+        {
+            let clamped_w = hit_w.min(max_x.saturating_sub(cursor_x));
+            if clamped_w > 0 {
+                hit_boxes.push((Rect::new(cursor_x, y, clamped_w, 1), action));
+            }
+        }
+
+        cursor_x = cursor_x.saturating_add(key_w).saturating_add(full_desc_w);
+        spans.push(key_span);
+        spans.push(desc_span);
+    }
+
+    (Line::from(spans), hit_boxes)
+}
+
+fn clamp_select_next(state: &mut tui_widget_list::ListState, len: usize) {
+    if len == 0 {
+        return;
+    }
+    let next = match state.selected {
+        Some(idx) => (idx + 1).min(len - 1),
+        None => 0,
+    };
+    state.select(Some(next));
+}
+
+fn clamp_select_previous(state: &mut tui_widget_list::ListState, len: usize) {
+    if len == 0 {
+        return;
+    }
+    let prev = match state.selected {
+        Some(idx) => idx.saturating_sub(1),
+        None => 0,
+    };
+    state.select(Some(prev));
+}
+
+fn render_inline_action_segments(area: Rect, buf: &mut Buffer, segments: Vec<(Vec<Span<'static>>, Option<FeedBottomAction>)>) {
+    let mut spans = Vec::new();
+    for (seg_spans, _) in segments {
+        spans.extend(seg_spans);
+    }
+    Paragraph::new(Line::from(spans)).render(area, buf);
+}
+
+fn inline_action_hit_ranges(
+    info_x: u16,
+    info_right: u16,
+    segments: Vec<(Vec<Span<'static>>, Option<FeedBottomAction>)>,
+) -> Vec<((u16, u16), FeedBottomAction)> {
+    let mut ranges = Vec::new();
+    let mut cursor_x = info_x;
+    for (seg_spans, maybe_action) in segments {
+        let full_w: u16 = seg_spans.iter().map(|s| s.width() as u16).sum();
+        let trimmed_w: u16 = if let Some(last) = seg_spans.last() {
+            let prefix_w: u16 = seg_spans[..seg_spans.len() - 1].iter().map(|s| s.width() as u16).sum();
+            let last_trimmed = Span::raw(last.content.trim_end()).width() as u16;
+            prefix_w.saturating_add(last_trimmed)
+        } else {
+            0
+        };
+        if let Some(action) = maybe_action
+            && cursor_x < info_right
+            && trimmed_w > 0
+        {
+            let end_x = cursor_x.saturating_add(trimmed_w).min(info_right);
+            if end_x > cursor_x {
+                ranges.push(((cursor_x, end_x), action));
+            }
+        }
+        cursor_x = cursor_x.saturating_add(full_w);
+    }
+    ranges
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, Default)]
 pub enum FeedTabs {
@@ -73,15 +190,6 @@ pub struct TimelineChapterItem {
     pub language: Languages,
     pub is_read: bool,
     pub style: Style,
-}
-
-impl PreRender for TimelineChapterItem {
-    fn pre_render(&mut self, context: &tui_widget_list::PreRenderContext) -> u16 {
-        if context.is_selected {
-            self.style = *CURRENT_LIST_ITEM_STYLE;
-        }
-        4
-    }
 }
 
 impl Widget for TimelineChapterItem {
@@ -172,17 +280,60 @@ pub struct TimelineWidget {
 impl TimelineWidget {
     #[inline]
     pub fn select_next(&mut self) {
-        self.state.next();
+        clamp_select_next(&mut self.state, self.items.len());
     }
 
     #[inline]
     pub fn select_previous(&mut self) {
-        self.state.previous();
+        clamp_select_previous(&mut self.state, self.items.len());
     }
 
     #[inline]
     pub fn get_current_selected(&self) -> Option<&TimelineChapterItem> {
         self.state.selected.and_then(|index| self.items.get(index))
+    }
+
+    pub fn list_inner_area(area: Rect) -> Rect {
+        Block::bordered().border_type(BorderType::Rounded).inner(area).inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        })
+    }
+
+    fn bottom_items() -> Vec<(Span<'static>, Span<'static>, Option<FeedBottomAction>)> {
+        let t = theme();
+        vec![
+            (t.key_chip("j / k"), Span::styled(tr(" Mover  ", " Move  "), Style::default().fg(t.text_muted)), None),
+            (
+                t.action_chip_primary("Enter"),
+                Span::styled(tr(" Leer cap.  ", " Read chap.  "), Style::default().fg(t.text_primary).bold()),
+                Some(FeedBottomAction::ReadTimelineChapter),
+            ),
+            (
+                t.key_chip("r / m"),
+                Span::styled(tr(" Abrir ficha  ", " Open manga  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::OpenManga),
+            ),
+            (
+                t.key_chip("f"),
+                Span::styled(tr(" Favorito  ", " Favorite  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::ToggleFavorite),
+            ),
+            (
+                t.key_chip("d"),
+                Span::styled(tr(" Descargar  ", " Download  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::DownloadTimelineChapter),
+            ),
+            (
+                t.key_chip("R"),
+                Span::styled(tr(" Actualizar ", " Refresh "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::Refresh),
+            ),
+        ]
+    }
+
+    pub fn bottom_action_hit_boxes(area: Rect) -> Vec<(Rect, FeedBottomAction)> {
+        build_bottom_instructions_with_hitboxes(area, Self::bottom_items()).1
     }
 }
 
@@ -210,21 +361,7 @@ impl StatefulWidget for TimelineWidget {
             ));
         }
 
-        let bottom_instructions = Line::from(vec![
-            Span::raw(" "),
-            t.key_chip("j / k"),
-            Span::styled(tr(" Mover  ", " Move  "), Style::default().fg(t.text_muted)),
-            t.action_chip_primary("Enter"),
-            Span::styled(tr(" Leer cap.  ", " Read chap.  "), Style::default().fg(t.text_primary).bold()),
-            t.key_chip("r / m"),
-            Span::styled(tr(" Abrir ficha  ", " Open manga  "), Style::default().fg(t.text_muted)),
-            t.key_chip("f"),
-            Span::styled(tr(" Favorito  ", " Favorite  "), Style::default().fg(t.text_muted)),
-            t.key_chip("d"),
-            Span::styled(tr(" Descargar  ", " Download  "), Style::default().fg(t.text_muted)),
-            t.key_chip("R"),
-            Span::styled(tr(" Actualizar ", " Refresh "), Style::default().fg(t.text_muted)),
-        ]);
+        let (bottom_instructions, _) = build_bottom_instructions_with_hitboxes(area, Self::bottom_items());
 
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -232,10 +369,7 @@ impl StatefulWidget for TimelineWidget {
             .title(Line::from(top_left_spans))
             .title_bottom(bottom_instructions);
 
-        let inner = block.inner(area).inner(Margin {
-            horizontal: 1,
-            vertical: 0,
-        });
+        let inner = Self::list_inner_area(area);
         block.render(area, buf);
 
         if inner.width == 0 || inner.height == 0 {
@@ -262,7 +396,16 @@ impl StatefulWidget for TimelineWidget {
                 .render(inner, buf);
             }
         } else {
-            let list = tui_widget_list::List::new(self.items);
+            let items = self.items;
+            let item_count = items.len();
+            let builder = ListBuilder::new(move |context| {
+                let mut item = items[context.index].clone();
+                if context.is_selected {
+                    item.style = *CURRENT_LIST_ITEM_STYLE;
+                }
+                (item, TIMELINE_ITEM_HEIGHT)
+            });
+            let list = ListView::new(builder, item_count).infinite_scrolling(false);
             StatefulWidget::render(list, inner, buf, state);
         }
     }
@@ -327,6 +470,45 @@ impl From<LatestChapter> for RecentChapters {
             readeable_at: value.publication_date,
             translated_language,
         }
+    }
+}
+
+impl MangasRead {
+    pub const fn action_row_local_y() -> usize {
+        (HISTORY_ITEM_HEIGHT - 2) as usize
+    }
+
+    fn action_segments() -> Vec<(Vec<Span<'static>>, Option<FeedBottomAction>)> {
+        let t = theme();
+        vec![
+            (
+                vec![
+                    t.key_chip("Enter / r"),
+                    Span::styled(tr(" Abrir ficha  ", " Open manga  "), Style::default().fg(t.text_muted)),
+                ],
+                Some(FeedBottomAction::OpenManga),
+            ),
+            (
+                vec![t.key_chip("f"), Span::styled(tr(" Favorito", " Favorite"), Style::default().fg(t.text_muted))],
+                Some(FeedBottomAction::ToggleFavorite),
+            ),
+        ]
+    }
+
+    pub fn inline_favorite_x_range(list_inner_x: u16, list_inner_width: u16) -> Option<(u16, u16)> {
+        let inner_w = list_inner_width.saturating_sub(2);
+        if inner_w < 4 {
+            return None;
+        }
+        let inner_rect = Rect::new(list_inner_x.saturating_add(1), 0, inner_w, 1);
+        let [info_area, _] = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(inner_rect);
+        let info_inner = Block::default().borders(Borders::RIGHT).inner(info_area.inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        }));
+        inline_action_hit_ranges(info_inner.x, info_inner.right(), Self::action_segments())
+            .into_iter()
+            .find_map(|(range, act)| (act == FeedBottomAction::ToggleFavorite).then_some(range))
     }
 }
 
@@ -425,24 +607,19 @@ impl Widget for MangasRead {
             info_lines.push(Line::from(progress_spans));
         }
 
-        // 4. Action hint
-        info_lines.push(Line::from(vec![
-            t.key_chip("Enter / r"),
-            Span::styled(tr(" Abrir ficha  ", " Open manga  "), Style::default().fg(t.text_muted)),
-            t.key_chip("f"),
-            Span::styled(tr(" Favorito", " Favorite"), Style::default().fg(t.text_muted)),
-        ]));
+        let info_outer = info_area.inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
+        let info_block = Block::default().borders(Borders::RIGHT).border_style(Style::default().fg(t.border_muted));
+        let info_inner = info_block.inner(info_outer);
+        info_block.render(info_outer, buf);
 
-        Paragraph::new(info_lines)
-            .block(Block::default().borders(Borders::RIGHT).border_style(Style::default().fg(t.border_muted)))
-            .wrap(Wrap { trim: true })
-            .render(
-                info_area.inner(Margin {
-                    horizontal: 1,
-                    vertical: 0,
-                }),
-                buf,
-            );
+        if info_inner.width > 0 && info_inner.height > 0 {
+            let [top_info_area, action_row_area] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(info_inner);
+            Paragraph::new(info_lines).wrap(Wrap { trim: true }).render(top_info_area, buf);
+            render_inline_action_segments(action_row_area, buf, Self::action_segments());
+        }
 
         let recent_block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -463,15 +640,6 @@ impl Widget for MangasRead {
     }
 }
 
-impl PreRender for MangasRead {
-    fn pre_render(&mut self, context: &tui_widget_list::PreRenderContext) -> u16 {
-        if context.is_selected {
-            self.style = *CURRENT_LIST_ITEM_STYLE;
-        }
-        8
-    }
-}
-
 #[derive(Clone, Debug, Default)]
 pub struct HistoryWidget {
     pub page: u32,
@@ -484,12 +652,12 @@ pub struct HistoryWidget {
 impl HistoryWidget {
     #[inline]
     pub fn select_next(&mut self) {
-        self.state.next();
+        clamp_select_next(&mut self.state, self.mangas.len());
     }
 
     #[inline]
     pub fn select_previous(&mut self) {
-        self.state.previous();
+        clamp_select_previous(&mut self.state, self.mangas.len());
     }
 
     #[inline]
@@ -521,6 +689,73 @@ impl HistoryWidget {
 
     pub fn can_search_previous_page(&self) -> bool {
         !self.mangas.is_empty() && self.page != 1
+    }
+
+    pub fn list_inner_area(area: Rect) -> Rect {
+        Block::bordered().border_type(BorderType::Rounded).inner(area)
+    }
+
+    fn pagination_spans(page: u32, total_results: u32) -> (Span<'static>, Span<'static>, Span<'static>) {
+        let t = theme();
+        let amount_pages = (total_results as f64 / 5_f64).ceil().max(1.0) as u32;
+        (
+            Span::styled(" ◀ <b> ", Style::default().fg(t.accent_primary).bold()),
+            Span::styled(
+                format!(" {} {page}/{amount_pages} ", tr("Pág.", "Page")),
+                Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
+            ),
+            Span::styled(" <w> ▶ ", Style::default().fg(t.accent_primary).bold()),
+        )
+    }
+
+    pub fn pagination_hit_boxes(area: Rect, page: u32, total_results: u32) -> (Option<Rect>, Option<Rect>) {
+        if area.width <= 2 || area.height == 0 {
+            return (None, None);
+        }
+        let (prev_span, page_span, next_span) = Self::pagination_spans(page, total_results);
+        let prev_w = prev_span.width() as u16;
+        let page_w = page_span.width() as u16;
+        let next_w = next_span.width() as u16;
+        let total_w = prev_w.saturating_add(page_w).saturating_add(next_w);
+        let max_x = area.right().saturating_sub(1);
+        let min_x = area.x.saturating_add(1);
+        if max_x <= min_x || total_w == 0 || max_x.saturating_sub(min_x) < total_w {
+            return (None, None);
+        }
+        let start_x = max_x.saturating_sub(total_w);
+        (Some(Rect::new(start_x, area.y, prev_w, 1)), Some(Rect::new(max_x.saturating_sub(next_w), area.y, next_w, 1)))
+    }
+
+    fn bottom_items() -> Vec<(Span<'static>, Span<'static>, Option<FeedBottomAction>)> {
+        let t = theme();
+        vec![
+            (t.key_chip("j / k"), Span::styled(tr(" Mover  ", " Move  "), Style::default().fg(t.text_muted)), None),
+            (
+                t.action_chip_primary("Enter / r"),
+                Span::styled(tr(" Abrir ficha  ", " Open manga  "), Style::default().fg(t.text_primary).bold()),
+                Some(FeedBottomAction::OpenManga),
+            ),
+            (t.key_chip("w / b"), Span::styled(tr(" Página  ", " Page  "), Style::default().fg(t.text_muted)), None),
+            (
+                t.key_chip("f"),
+                Span::styled(tr(" Favorito  ", " Favorite  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::ToggleFavorite),
+            ),
+            (
+                t.key_chip("d"),
+                Span::styled(tr(" Quitar  ", " Remove  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::RemoveSelected),
+            ),
+            (
+                Span::styled(" X ", Style::default().fg(Color::White).bg(t.status_error).bold()),
+                Span::styled(tr(" Borrar todo ", " Clear all "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::AskDeleteAll),
+            ),
+        ]
+    }
+
+    pub fn bottom_action_hit_boxes(area: Rect) -> Vec<(Rect, FeedBottomAction)> {
+        build_bottom_instructions_with_hitboxes(area, Self::bottom_items()).1
     }
 
     pub fn from_database_response(response: MangaHistoryResponse) -> Self {
@@ -557,7 +792,6 @@ impl StatefulWidget for HistoryWidget {
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let t = theme();
-        let amount_pages = (self.total_results as f64 / 5_f64).ceil().max(1.0) as u32;
 
         let tab_label = match self.active_tab {
             FeedTabs::Library => tr(" 📚 Biblioteca ", " 📚 Library "),
@@ -569,31 +803,10 @@ impl StatefulWidget for HistoryWidget {
             Span::styled(format!(" ({}) ", self.total_results), Style::default().fg(t.accent_highlight).bold()),
         ]);
 
-        let pagination_top = Line::from(vec![
-            Span::styled(" ◀ <b> ", Style::default().fg(t.accent_primary).bold()),
-            Span::styled(
-                format!(" {} {}/{amount_pages} ", tr("Pág.", "Page"), self.page),
-                Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
-            ),
-            Span::styled(" <w> ▶ ", Style::default().fg(t.accent_primary).bold()),
-        ])
-        .right_aligned();
+        let (prev_span, page_span, next_span) = Self::pagination_spans(self.page, self.total_results);
+        let pagination_top = Line::from(vec![prev_span, page_span, next_span]).right_aligned();
 
-        let bottom_instructions = Line::from(vec![
-            Span::raw(" "),
-            t.key_chip("j / k"),
-            Span::styled(tr(" Mover  ", " Move  "), Style::default().fg(t.text_muted)),
-            t.action_chip_primary("Enter / r"),
-            Span::styled(tr(" Abrir ficha  ", " Open manga  "), Style::default().fg(t.text_primary).bold()),
-            t.key_chip("w / b"),
-            Span::styled(tr(" Página  ", " Page  "), Style::default().fg(t.text_muted)),
-            t.key_chip("f"),
-            Span::styled(tr(" Favorito  ", " Favorite  "), Style::default().fg(t.text_muted)),
-            t.key_chip("d"),
-            Span::styled(tr(" Quitar  ", " Remove  "), Style::default().fg(t.text_muted)),
-            Span::styled(" X ", Style::default().fg(Color::White).bg(t.status_error).bold()),
-            Span::styled(tr(" Borrar todo ", " Clear all "), Style::default().fg(t.text_muted)),
-        ]);
+        let (bottom_instructions, _) = build_bottom_instructions_with_hitboxes(area, Self::bottom_items());
 
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -602,14 +815,23 @@ impl StatefulWidget for HistoryWidget {
             .title_top(pagination_top)
             .title_bottom(bottom_instructions);
 
-        let inner = block.inner(area);
+        let inner = Self::list_inner_area(area);
         block.render(area, buf);
 
         if inner.width == 0 || inner.height == 0 {
             return;
         }
 
-        let list = tui_widget_list::List::new(self.mangas);
+        let mangas = self.mangas;
+        let item_count = mangas.len();
+        let builder = ListBuilder::new(move |context| {
+            let mut item = mangas[context.index].clone();
+            if context.is_selected {
+                item.style = *CURRENT_LIST_ITEM_STYLE;
+            }
+            (item, HISTORY_ITEM_HEIGHT)
+        });
+        let list = ListView::new(builder, item_count).infinite_scrolling(false);
         StatefulWidget::render(list, inner, buf, state);
     }
 }
@@ -665,13 +887,58 @@ impl From<&OfflineManga> for OfflineMangaItem {
     }
 }
 
-impl PreRender for OfflineMangaItem {
-    fn pre_render(&mut self, context: &tui_widget_list::PreRenderContext) -> u16 {
-        if context.is_selected {
-            self.style = *CURRENT_LIST_ITEM_STYLE;
-        }
-        7
+impl OfflineMangaItem {
+    pub const fn action_row_local_y() -> usize {
+        (OFFLINE_ITEM_HEIGHT - 2) as usize
     }
+
+    fn action_segments(has_provider: bool) -> Vec<(Vec<Span<'static>>, Option<FeedBottomAction>)> {
+        let t = theme();
+        let mut segments = vec![
+            (
+                vec![t.key_chip("Enter / r"), Span::styled(tr(" Abrir  ", " Open  "), Style::default().fg(t.text_muted))],
+                Some(FeedBottomAction::OpenManga),
+            ),
+            (
+                vec![t.key_chip("v"), Span::styled(tr(" Visor Web", " Web HD"), Style::default().fg(t.text_muted))],
+                Some(FeedBottomAction::OpenOfflineWebViewer),
+            ),
+        ];
+        if has_provider {
+            segments.push((vec![Span::raw("  ")], None));
+            segments.push((
+                vec![t.key_chip("f"), Span::styled(tr(" Fav.", " Fav."), Style::default().fg(t.text_muted))],
+                Some(FeedBottomAction::ToggleFavorite),
+            ));
+        }
+        segments
+    }
+
+    pub fn inline_action_x_ranges(list_inner_x: u16, list_inner_width: u16, has_provider: bool) -> OfflineInlineActionRanges {
+        let inner_w = list_inner_width.saturating_sub(2);
+        if inner_w < 4 {
+            return OfflineInlineActionRanges::default();
+        }
+        let inner_rect = Rect::new(list_inner_x.saturating_add(1), 0, inner_w, 1);
+        let [info_area, _] = Layout::horizontal([Constraint::Percentage(52), Constraint::Percentage(48)]).areas(inner_rect);
+        let info_inner = Block::default().borders(Borders::RIGHT).inner(info_area.inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        }));
+        let ranges = inline_action_hit_ranges(info_inner.x, info_inner.right(), Self::action_segments(has_provider));
+        OfflineInlineActionRanges {
+            web_viewer: ranges
+                .iter()
+                .find_map(|(r, a)| (*a == FeedBottomAction::OpenOfflineWebViewer).then_some(*r)),
+            favorite: ranges.iter().find_map(|(r, a)| (*a == FeedBottomAction::ToggleFavorite).then_some(*r)),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct OfflineInlineActionRanges {
+    pub web_viewer: Option<(u16, u16)>,
+    pub favorite: Option<(u16, u16)>,
 }
 
 impl Widget for OfflineMangaItem {
@@ -739,29 +1006,19 @@ impl Widget for OfflineMangaItem {
             Span::styled(format!("{}/{}", self.read_count, self.chapter_count), Style::default().fg(t.text_primary)),
         ]));
 
-        let mut hint_spans = vec![
-            t.key_chip("Enter / r"),
-            Span::styled(tr(" Abrir  ", " Open  "), Style::default().fg(t.text_muted)),
-            t.key_chip("v"),
-            Span::styled(tr(" Visor Web", " Web HD"), Style::default().fg(t.text_muted)),
-        ];
-        if self.provider.is_some() {
-            hint_spans.push(Span::raw("  "));
-            hint_spans.push(t.key_chip("f"));
-            hint_spans.push(Span::styled(tr(" Fav.", " Fav."), Style::default().fg(t.text_muted)));
-        }
-        info_lines.push(Line::from(hint_spans));
+        let info_outer = info_area.inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        });
+        let info_block = Block::default().borders(Borders::RIGHT).border_style(Style::default().fg(t.border_muted));
+        let info_inner = info_block.inner(info_outer);
+        info_block.render(info_outer, buf);
 
-        Paragraph::new(info_lines)
-            .block(Block::default().borders(Borders::RIGHT).border_style(Style::default().fg(t.border_muted)))
-            .wrap(Wrap { trim: true })
-            .render(
-                info_area.inner(Margin {
-                    horizontal: 1,
-                    vertical: 0,
-                }),
-                buf,
-            );
+        if info_inner.width > 0 && info_inner.height > 0 {
+            let [top_info_area, action_row_area] = Layout::vertical([Constraint::Min(1), Constraint::Length(1)]).areas(info_inner);
+            Paragraph::new(info_lines).wrap(Wrap { trim: true }).render(top_info_area, buf);
+            render_inline_action_segments(action_row_area, buf, Self::action_segments(self.provider.is_some()));
+        }
 
         let preview_block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -822,17 +1079,60 @@ impl OfflineDownloadsWidget {
 
     #[inline]
     pub fn select_next(&mut self) {
-        self.state.next();
+        clamp_select_next(&mut self.state, self.items.len());
     }
 
     #[inline]
     pub fn select_previous(&mut self) {
-        self.state.previous();
+        clamp_select_previous(&mut self.state, self.items.len());
     }
 
     #[inline]
     pub fn get_current_selected(&self) -> Option<&OfflineManga> {
         self.state.selected.and_then(|index| self.raw_mangas.get(index))
+    }
+
+    pub fn list_inner_area(area: Rect) -> Rect {
+        Block::bordered().border_type(BorderType::Rounded).inner(area).inner(Margin {
+            horizontal: 1,
+            vertical: 0,
+        })
+    }
+
+    fn bottom_items() -> Vec<(Span<'static>, Span<'static>, Option<FeedBottomAction>)> {
+        let t = theme();
+        vec![
+            (t.key_chip("j / k"), Span::styled(tr(" Mover  ", " Move  "), Style::default().fg(t.text_muted)), None),
+            (
+                t.action_chip_primary("Enter / r"),
+                Span::styled(tr(" Abrir ficha  ", " Open manga  "), Style::default().fg(t.text_primary).bold()),
+                Some(FeedBottomAction::OpenManga),
+            ),
+            (
+                t.key_chip("v"),
+                Span::styled(tr(" Visor Web  ", " Web HD  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::OpenOfflineWebViewer),
+            ),
+            (
+                t.key_chip("s"),
+                Span::styled(tr(" Filtrar  ", " Filter  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::ToggleSearch),
+            ),
+            (
+                t.key_chip("R"),
+                Span::styled(tr(" Re-escanear  ", " Rescan  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::Refresh),
+            ),
+            (
+                t.key_chip("f"),
+                Span::styled(tr(" Favorito ", " Favorite "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::ToggleFavorite),
+            ),
+        ]
+    }
+
+    pub fn bottom_action_hit_boxes(area: Rect) -> Vec<(Rect, FeedBottomAction)> {
+        build_bottom_instructions_with_hitboxes(area, Self::bottom_items()).1
     }
 }
 
@@ -856,21 +1156,7 @@ impl StatefulWidget for OfflineDownloadsWidget {
             ),
         ]);
 
-        let bottom_instructions = Line::from(vec![
-            Span::raw(" "),
-            t.key_chip("j / k"),
-            Span::styled(tr(" Mover  ", " Move  "), Style::default().fg(t.text_muted)),
-            t.action_chip_primary("Enter / r"),
-            Span::styled(tr(" Abrir ficha  ", " Open manga  "), Style::default().fg(t.text_primary).bold()),
-            t.key_chip("v"),
-            Span::styled(tr(" Visor Web  ", " Web HD  "), Style::default().fg(t.text_muted)),
-            t.key_chip("s"),
-            Span::styled(tr(" Filtrar  ", " Filter  "), Style::default().fg(t.text_muted)),
-            t.key_chip("R"),
-            Span::styled(tr(" Re-escanear  ", " Rescan  "), Style::default().fg(t.text_muted)),
-            t.key_chip("f"),
-            Span::styled(tr(" Favorito ", " Favorite "), Style::default().fg(t.text_muted)),
-        ]);
+        let (bottom_instructions, _) = build_bottom_instructions_with_hitboxes(area, Self::bottom_items());
 
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
@@ -878,10 +1164,7 @@ impl StatefulWidget for OfflineDownloadsWidget {
             .title(top_left)
             .title_bottom(bottom_instructions);
 
-        let inner = block.inner(area).inner(Margin {
-            horizontal: 1,
-            vertical: 0,
-        });
+        let inner = Self::list_inner_area(area);
         block.render(area, buf);
 
         if inner.width == 0 || inner.height == 0 {
@@ -908,7 +1191,16 @@ impl StatefulWidget for OfflineDownloadsWidget {
                 .render(inner, buf);
             }
         } else {
-            let list = tui_widget_list::List::new(self.items);
+            let items = self.items;
+            let item_count = items.len();
+            let builder = ListBuilder::new(move |context| {
+                let mut item = items[context.index].clone();
+                if context.is_selected {
+                    item.style = *CURRENT_LIST_ITEM_STYLE;
+                }
+                (item, OFFLINE_ITEM_HEIGHT)
+            });
+            let list = ListView::new(builder, item_count).infinite_scrolling(false);
             StatefulWidget::render(list, inner, buf, state);
         }
     }
@@ -953,29 +1245,33 @@ impl WidgetRef for AskConfirmationDeleteAllModalBody {
             .wrap(Wrap { trim: true })
             .render(warning_area, buf);
 
-        let lines = vec![
-            Line::styled(
-                tr(
-                    "Tus archivos descargados en disco se mantendrán, pero se vaciará esta lista.",
-                    "Your downloaded files on disk will be kept, but this list will be cleared.",
-                ),
-                Style::default().fg(t.text_muted),
-            ),
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(" w ", Style::default().fg(Color::White).bg(t.status_error).bold()),
-                Span::styled(tr(" Sí, eliminar todo", " Yes, delete all"), Style::default().fg(t.text_primary).bold()),
-            ]),
-            Line::from(""),
-            Line::from(vec![
-                Span::raw("  "),
-                Span::styled(" q / Esc ", Style::default().fg(Color::Black).bg(t.status_success).bold()),
-                Span::styled(tr(" No, cancelar", " No, cancel"), Style::default().fg(t.text_primary).bold()),
-            ]),
-        ];
+        let [note_area, confirm_area, _, cancel_area] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
+                .areas(options_area);
 
-        Paragraph::new(lines).wrap(Wrap { trim: true }).render(options_area, buf);
+        Paragraph::new(Line::styled(
+            tr(
+                "Tus archivos descargados en disco se mantendrán, pero se vaciará esta lista.",
+                "Your downloaded files on disk will be kept, but this list will be cleared.",
+            ),
+            Style::default().fg(t.text_muted),
+        ))
+        .wrap(Wrap { trim: true })
+        .render(note_area, buf);
+
+        Paragraph::new(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(" w ", Style::default().fg(Color::White).bg(t.status_error).bold()),
+            Span::styled(tr(" Sí, eliminar todo", " Yes, delete all"), Style::default().fg(t.text_primary).bold()),
+        ]))
+        .render(confirm_area, buf);
+
+        Paragraph::new(Line::from(vec![
+            Span::raw("  "),
+            Span::styled(" q / Esc ", Style::default().fg(Color::Black).bg(t.status_success).bold()),
+            Span::styled(tr(" No, cancelar", " No, cancel"), Style::default().fg(t.text_primary).bold()),
+        ]))
+        .render(cancel_area, buf);
     }
 }
 
@@ -991,6 +1287,19 @@ impl AskConfirmationDeleteAllModal {
             manga_provider: provider,
             tab,
         }
+    }
+
+    pub fn hit_boxes(area: Rect) -> (Rect, Rect, Rect) {
+        let modal_rect = crate::utils::centered_rect(area, 62, 42);
+        let inner = Block::bordered().border_type(BorderType::Rounded).inner(modal_rect).inner(Margin {
+            horizontal: 2,
+            vertical: 1,
+        });
+        let [_, options_area] = Layout::vertical([Constraint::Percentage(35), Constraint::Percentage(65)]).areas(inner);
+        let [_, confirm_area, _, cancel_area] =
+            Layout::vertical([Constraint::Min(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)])
+                .areas(options_area);
+        (modal_rect, confirm_area, cancel_area)
     }
 }
 
