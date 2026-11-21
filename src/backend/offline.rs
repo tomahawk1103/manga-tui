@@ -569,6 +569,12 @@ pub fn parse_disk_chapter_name(stem: &str) -> ParsedDiskChapterName {
         } else {
             let mut parts: Vec<&str> = rest.split_whitespace().collect();
             let id_tok = parts.pop().unwrap_or_default().to_string();
+            if parts.last() == Some(&"_") {
+                parts.pop();
+            }
+            if parts == ["_"] {
+                parts.clear();
+            }
             let title_str = parts.join(" ");
             (title_str, id_tok)
         };
@@ -815,6 +821,14 @@ fn db_chapter_matches_disk(
     false
 }
 
+fn default_provider_language(provider: Option<MangaProviders>) -> Option<Languages> {
+    match provider? {
+        MangaProviders::Mangaoni | MangaProviders::Leercapitulo | MangaProviders::Inmanga => Some(Languages::Spanish),
+        MangaProviders::Weebcentral | MangaProviders::Mangapill | MangaProviders::Comizy => Some(Languages::English),
+        MangaProviders::Mangadex => None,
+    }
+}
+
 fn compare_chapters_ascending(a: &OfflineChapter, b: &OfflineChapter) -> Ordering {
     let na = a.chapter.chapter_number.trim().parse::<f64>().ok().filter(|n| n.is_finite());
     let nb = b.chapter.chapter_number.trim().parse::<f64>().ok().filter(|n| n.is_finite());
@@ -974,6 +988,21 @@ pub fn scan_offline_mangas_in_dir(base_dir: &Path, db: Option<&Database<'_>>) ->
             }
         }
 
+        let folder_fallback_language = disk_entries
+            .iter()
+            .find_map(|d| d.language.filter(|&l| l != Languages::Unkown))
+            .or_else(|| {
+                candidate_db_chapters.iter().find_map(|c| {
+                    let s = c.translated_language.trim();
+                    (!s.is_empty())
+                        .then(|| Languages::from_str_lenient(s))
+                        .flatten()
+                        .filter(|&l| l != Languages::Unkown)
+                })
+            })
+            .or_else(|| default_provider_language(provider))
+            .unwrap_or_else(|| *Languages::get_preferred_lang());
+
         let mut chapters = Vec::with_capacity(disk_entries.len());
         let mut total_size_bytes = 0u64;
         let mut languages = Vec::new();
@@ -995,13 +1024,15 @@ pub fn scan_offline_mangas_in_dir(base_dir: &Path, db: Option<&Database<'_>>) ->
 
             let language = d
                 .language
+                .filter(|&l| l != Languages::Unkown)
                 .or_else(|| {
                     matched_ch
-                        .map(|c| c.translated_language.as_str())
+                        .map(|c| c.translated_language.trim())
                         .filter(|s| !s.is_empty())
                         .and_then(Languages::from_str_lenient)
+                        .filter(|&l| l != Languages::Unkown)
                 })
-                .unwrap_or_default();
+                .unwrap_or(folder_fallback_language);
 
             if language != Languages::Unkown && !languages.contains(&language) {
                 languages.push(language);
@@ -1318,6 +1349,74 @@ mod tests {
         assert_eq!(p4.chapter_number, "15");
         assert_eq!(p4.volume_number, None);
         assert_eq!(p4.title, "One Piece 015 - Special.cbz");
+
+        let p5 = parse_disk_chapter_name("Ch 31.1 Vol none Capítulo 31.1 _ manga_dame-ningen-no-aishikata_826027");
+        assert_eq!(p5.chapter_number, "31.1");
+        assert_eq!(p5.volume_number, None);
+        assert_eq!(p5.title, "Capítulo 31.1");
+        assert_eq!(p5.disk_id_token, "manga_dame-ningen-no-aishikata_826027");
+    }
+
+    #[test]
+    fn scan_offline_mangas_unifies_single_folder_language_when_downloaded_chapters_have_empty_db_lang() {
+        let temp = TempDir::new("offline_single_lang");
+        let root = &temp.0;
+
+        let oni_dir = root.join("Dame Ningen no Aishikata");
+        std::fs::create_dir_all(&oni_dir).unwrap();
+        std::fs::write(oni_dir.join("Ch 31.1 Vol none Capítulo 31.1 _ manga_dame-ningen-no-aishikata_826027.cbz"), b"cbz31")
+            .unwrap();
+        std::fs::write(oni_dir.join("Ch 30.2 Vol none Capítulo 30.2 _ manga_dame-ningen-no-aishikata_824811.cbz"), b"cbz30")
+            .unwrap();
+        std::fs::write(oni_dir.join("Ch 1 Vol none Capítulo 1 _ manga_dame-ningen-no-aishikata_780954.cbz"), b"cbz1").unwrap();
+
+        let conn = Connection::open_in_memory().unwrap();
+        let db = Database::new(&conn);
+        db.setup().unwrap();
+
+        // All 3 chapters marked downloaded (which inserts translated_language = "")
+        for (id, title) in [
+            ("manga/dame-ningen-no-aishikata|826027", "Capítulo 31.1"),
+            ("manga/dame-ningen-no-aishikata|824811", "Capítulo 30.2"),
+            ("manga/dame-ningen-no-aishikata|780954", "Capítulo 1"),
+        ] {
+            db.set_chapter_downloaded(SetChapterDownloaded {
+                id,
+                title,
+                manga_id: "manga/dame-ningen-no-aishikata",
+                manga_title: "Dame Ningen no Aishikata",
+                img_url: None,
+                provider: MangaProviders::Mangaoni,
+            })
+            .unwrap();
+        }
+
+        // Only chapter 1 was opened in reader (sets translated_language = "es" on just 1 chapter)
+        db.save_history(MangaReadingHistorySave {
+            id: "manga/dame-ningen-no-aishikata",
+            title: "Dame Ningen no Aishikata",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "manga/dame-ningen-no-aishikata|780954",
+                title: "Capítulo 1",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangaoni,
+        })
+        .unwrap();
+
+        let scanned = scan_offline_mangas_in_dir(root, Some(&db));
+        assert_eq!(scanned.len(), 1);
+        let manga = &scanned[0];
+        assert_eq!(manga.provider, Some(MangaProviders::Mangaoni));
+        // Must NOT split into [Spanish, English]; all 3 chapters are Spanish
+        assert_eq!(manga.languages, vec![Languages::Spanish]);
+        assert_eq!(manga.chapters.len(), 3);
+        assert!(manga.chapters.iter().all(|c| c.chapter.language == Languages::Spanish));
+        assert_eq!(manga.chapters[0].chapter.chapter_number, "31.1");
+        assert_eq!(manga.chapters[0].chapter.title, "Capítulo 31.1");
+        assert_eq!(manga.chapters[1].chapter.chapter_number, "30.2");
+        assert_eq!(manga.chapters[2].chapter.chapter_number, "1");
     }
 
     #[test]
