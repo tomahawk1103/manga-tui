@@ -27,7 +27,7 @@ jobs:
 
       - name: Install dependencies (Linux only)
         if: runner.os == 'Linux'
-        run: sudo apt install libdbus-1-dev pkg-config
+        run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev pkg-config
 
       - name: Setup
         run: rustup target add ${{ matrix.targets.target }}
@@ -113,7 +113,7 @@ jobs:
           pattern: release-*
           merge-multiple: true
       - name: Checksum
-        run: sha256sum releases/* > ./releases/checksum.txt
+        run: (cd releases && sha256sum manga-tui-* > checksum.txt)
       - name: Create Release
         uses: softprops/action-gh-release@v2.4.2
         with:

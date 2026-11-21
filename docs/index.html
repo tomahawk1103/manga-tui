@@ -44,9 +44,11 @@
     .actions { flex-wrap: wrap; gap: .9rem 1.4rem; margin-top: 1.85rem }
     .button { display: inline-flex; align-items: center; gap: .65rem; padding: .8rem 1.25rem; border: 2px solid var(--ink); background: var(--red); box-shadow: 3px 3px var(--ink); color: #fff; font-weight: 700; text-decoration: none }
     .button:hover { background: #a1201b; color: white }
-    .secondary { font-weight: 650 }
+    .secondary { padding: .8rem 1.05rem; border: 2px solid var(--ink); background: var(--paper); color: var(--ink); font: inherit; font-weight: 700; cursor: pointer }
+    .secondary:hover { background: var(--ink); color: var(--paper) }
     .platforms { gap: .65rem; flex-wrap: wrap; color: var(--muted); font-size: .82rem; margin-top: 1.35rem }
     .platforms span + span::before { content: "/"; margin-right: .65rem; color: #88877b }
+    .platforms a { text-decoration: none }
     .stage { position: relative; min-width: 0; padding: 1.3rem .95rem 1.3rem 1rem; isolation: isolate }
     .stage::before { content: ""; position: absolute; inset: 0 0 0 8%; border: 1px solid var(--ink); transform: rotate(2deg); background: radial-gradient(var(--red) 1px, transparent 1.4px) 0 0/6px 6px; z-index: -1 }
     figure { border: 2px solid var(--ink); background: var(--paper); box-shadow: 6px 6px var(--ink) }
@@ -55,7 +57,7 @@
     .dots { display: flex; gap: 5px }
     .dots i { width: 7px; height: 7px; border: 1px solid #e4e3db; border-radius: 50% }
     .dots i:first-child { background: #ec554a; border-color: #ec554a }
-    .panel { display: block; overflow: hidden; border-bottom: 2px solid var(--ink); background: white }
+    .panel { display: block; overflow: hidden; border-bottom: 2px solid var(--ink); background: white; cursor: zoom-in }
     .panel img { width: 100%; aspect-ratio: 1.45; object-fit: cover; object-position: center 64%; display: block }
     .reader-foot { min-height: 3.2rem; font-weight: bold }
     .pager { gap: .4rem }
@@ -78,6 +80,22 @@
     .privacy { display: grid; grid-template-columns: 1fr 1.4fr; gap: 2rem; align-items: start; border-left: .4rem solid var(--red); padding: clamp(1.25rem, 3vw, 2.8rem); background: #ecebe3; margin-bottom: 4rem }
     .privacy h2 { font-size: clamp(2rem, 3vw, 3rem); margin: 0 }
     .privacy a { display: inline-block; margin-top: .8rem; font-weight: 700 }
+    .downloads { padding-bottom: clamp(3rem, 5.5vw, 5rem) }
+    .downloads h2 { margin-bottom: .5rem }
+    .release-meta { font-family: var(--mono); font-size: .88rem; color: var(--muted); margin-bottom: 1.75rem }
+    .dl-actions { display: flex; flex-direction: column; align-items: flex-start; gap: .65rem; margin-top: 1.15rem }
+    .dl-link { font-weight: 700 }
+    .release-foot { margin-top: 1.25rem; font-family: var(--mono); font-size: .86rem; color: var(--muted) }
+    dialog.lightbox { padding: 0; border: 2px solid var(--ink); background: var(--paper); box-shadow: 8px 8px var(--ink); width: min(920px, 94vw); max-height: 92vh; overflow: hidden; color: var(--ink) }
+    dialog.lightbox[open] { display: flex; flex-direction: column }
+    dialog.lightbox::backdrop { background: rgba(25, 25, 24, .82); backdrop-filter: blur(2px) }
+    .modal-close { border: 1px solid #e4e3db; background: transparent; color: white; font: inherit; font-weight: 700; padding: .2rem .55rem; cursor: pointer }
+    .modal-close:hover { background: var(--red); border-color: var(--red) }
+    .lightbox-body { flex: 1; min-height: 0; display: grid; place-items: center; background: #141413; overflow: auto; padding: .75rem; border-bottom: 2px solid var(--ink) }
+    .lightbox-body img { max-width: 100%; max-height: calc(92vh - 7.5rem); width: auto; height: auto; object-fit: contain; display: block; background: white }
+    .modal-hint { font-weight: 400; color: var(--muted); font-size: .78rem }
+    .raw-link { display: inline-flex; align-items: center; height: 2.25rem; padding-inline: .65rem; border: 1px solid var(--ink); font-size: .8rem; font-weight: 650; text-decoration: none }
+    .raw-link:hover { background: var(--ink); color: white }
     footer { border-top: 1px solid var(--ink) }
     .foot { flex-wrap: wrap; padding-block: 1.5rem; font-size: .9rem }
     .foot p { color: var(--muted) }
@@ -91,6 +109,9 @@
       .grid article + article { border-left: 0; border-top: 1px solid var(--line) }
       .privacy { gap: 1rem }
       .ribbon .wrap { flex-wrap: wrap; justify-content: flex-start; gap: .5rem 1.5rem }
+    }
+    @media (max-width: 640px) {
+      .modal-hint { display: none }
     }
     @media (max-width: 520px) {
       .bar { flex-wrap: wrap; padding-block: .85rem }
@@ -108,6 +129,7 @@
     <div class="wrap bar">
       <a class="brand" href="./index.html"><span class="mark" aria-hidden="true">&gt;_</span>Manga TUI</a>
       <nav aria-label="Navegación principal">
+        <a href="#descargas">Descargas</a>
         <a href="#funciones">Funciones</a>
         <a href="./privacy.html">Privacidad</a>
         <a class="repo" href="https://github.com/tomahawk1103/manga-tui">GitHub</a>
@@ -117,14 +139,21 @@
   <main id="contenido">
     <section class="hero wrap" aria-labelledby="portada">
       <div>
-        <p class="eyebrow">Lector de manga · v0.3.1</p>
+        <p class="eyebrow" id="eyebrow-version">Lector de manga · v0.3.1</p>
         <h1 id="portada">Tu manga,<em>en terminal.</em></h1>
         <p class="intro">Encuentra tu próxima serie, guarda sus capítulos y sigue leyendo sin conexión. En tu terminal o a toda página en el navegador.</p>
         <div class="actions">
-          <a class="button" href="https://github.com/tomahawk1103/manga-tui/releases">Descargar Manga TUI</a>
-          <a class="secondary" href="#muestra">Ver muestra</a>
+          <a class="button" id="download-btn" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-x86_64-pc-windows-msvc-setup.exe">
+            <span aria-hidden="true">↓</span>
+            <span id="download-btn-label">Descargar para Windows (.exe)</span>
+          </a>
+          <button class="secondary" id="open-sample" type="button">Ver muestra</button>
         </div>
-        <p class="platforms"><span>Windows</span><span>Linux</span><span>macOS</span></p>
+        <p class="platforms">
+          <span><a href="#descargas">Windows (.exe / .zip)</a></span>
+          <span><a href="#descargas">Linux</a></span>
+          <span><a href="#descargas">macOS</a></span>
+        </p>
       </div>
       <div class="stage" id="muestra">
         <figure aria-label="Lector de muestra">
@@ -153,6 +182,39 @@
         <article><span class="glyph" aria-hidden="true">[↓]</span><h3>Llévatelo sin conexión</h3><p>Descarga los capítulos antes de salir. Los encontrarás en la pestaña Descargas incluso cuando estés sin internet.</p></article>
       </div>
     </section>
+    <section id="descargas" class="wrap downloads" aria-labelledby="descargas-titulo">
+      <h2 id="descargas-titulo">Descarga directa.</h2>
+      <p class="release-meta" id="release-meta">Versión v0.3.1 · Descarga directa del instalador oficial.</p>
+      <div class="grid">
+        <article>
+          <span class="glyph" aria-hidden="true">[WIN]</span>
+          <h3>Windows</h3>
+          <p>Instalador clásico con acceso directo y desinstalador que conserva tu biblioteca y configuración.</p>
+          <div class="dl-actions">
+            <a class="button" id="dl-win-installer" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-x86_64-pc-windows-msvc-setup.exe">↓ Instalador (.exe)</a>
+            <a class="dl-link" id="dl-win-portable" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-x86_64-pc-windows-msvc-portable.zip">Versión portable (.zip)</a>
+          </div>
+        </article>
+        <article>
+          <span class="glyph" aria-hidden="true">[LNX]</span>
+          <h3>Linux</h3>
+          <p>Binario estático para terminales compatibles con Sixel o Kitty. También disponible vía Cargo o Nix.</p>
+          <div class="dl-actions">
+            <a class="dl-link" id="dl-linux" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-x86_64-unknown-linux-gnu.tar.gz">↓ Linux x86_64 (.tar.gz)</a>
+          </div>
+        </article>
+        <article>
+          <span class="glyph" aria-hidden="true">[MAC]</span>
+          <h3>macOS</h3>
+          <p>Compilado nativo para Apple Silicon e Intel. Recomendado en iTerm2 o Kitty con soporte de imágenes.</p>
+          <div class="dl-actions">
+            <a class="dl-link" id="dl-mac-arm" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-aarch64-apple-darwin.tar.gz">↓ Apple Silicon (.tar.gz)</a>
+            <a class="dl-link" id="dl-mac-intel" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-x86_64-apple-darwin.tar.gz">Intel x86_64 (.tar.gz)</a>
+          </div>
+        </article>
+      </div>
+      <p class="release-foot"><a id="all-releases-link" href="https://github.com/tomahawk1103/manga-tui/releases">Ver todas las versiones, notas de cambio y checksums SHA-256 en GitHub ↗</a></p>
+    </section>
     <section class="wrap privacy" aria-labelledby="privacidad">
       <h2 id="privacidad">Tu progreso,<br>en tus manos.</h2>
       <div><p>Tu biblioteca se guarda en tu equipo. Si quieres continuar en otro dispositivo, puedes sincronizar el progreso con una carpeta local de nube o con Google Drive. La integración usa el permiso <code>drive.file</code> para gestionar su propia carpeta <code>MangaTUI</code>.</p>
@@ -164,6 +226,24 @@
     <p><strong>Manga TUI</strong> · Licencia MIT · tomahawk1103 &amp; drodri22</p>
     <div class="foot-links"><a href="https://github.com/tomahawk1103/manga-tui/issues">Soporte técnico</a><a href="mailto:raum973@gmail.com">Contacto</a></div>
   </div></footer>
+  <dialog id="sample-modal" class="lightbox" aria-labelledby="modal-title">
+    <div class="reader-bar">
+      <span id="modal-title">&gt;_ manga-tui / visor de muestra</span>
+      <button type="button" class="modal-close" id="modal-close" aria-label="Cerrar muestra">Cerrar ✕</button>
+    </div>
+    <div class="lightbox-body">
+      <img id="modal-art" src="images/pagina-2.jpg" alt="Una joven sonríe con las manos levantadas en una viñeta en blanco y negro.">
+    </div>
+    <div class="reader-foot">
+      <span id="modal-page-label" aria-live="polite" aria-atomic="true">Página 2 de 3</span>
+      <span class="modal-hint">← → cambiar · Esc cerrar</span>
+      <span class="pager">
+        <a class="raw-link" id="modal-raw" href="images/pagina-2.jpg" target="_blank" rel="noopener">Original ↗</a>
+        <button id="modal-prev" type="button" aria-label="Página anterior">‹</button>
+        <button id="modal-next" type="button" aria-label="Página siguiente">›</button>
+      </span>
+    </div>
+  </dialog>
   <script>
     const descriptions = [
       'Una casa y varios personajes en una secuencia de viñetas.',
@@ -175,22 +255,163 @@
     const label = document.querySelector('#page-label');
     const previous = document.querySelector('#prev');
     const next = document.querySelector('#next');
+
+    const modal = document.querySelector('#sample-modal');
+    const modalArt = document.querySelector('#modal-art');
+    const modalRaw = document.querySelector('#modal-raw');
+    const modalLabel = document.querySelector('#modal-page-label');
+    const modalPrev = document.querySelector('#modal-prev');
+    const modalNext = document.querySelector('#modal-next');
+    const openSample = document.querySelector('#open-sample');
+    const closeSample = document.querySelector('#modal-close');
+
     let page = 2;
 
     function showPage(number) {
+      if (number < 1 || number > descriptions.length) return;
       page = number;
       const path = 'images/pagina-' + page + '.jpg';
+      const desc = descriptions[page - 1];
+      const text = 'Página ' + page + ' de ' + descriptions.length;
+
       art.src = path;
-      art.alt = descriptions[page - 1];
+      art.alt = desc;
       fullPage.href = path;
-      label.textContent = 'Página ' + page + ' de ' + descriptions.length;
+      label.textContent = text;
       previous.disabled = page === 1;
       next.disabled = page === descriptions.length;
+
+      modalArt.src = path;
+      modalArt.alt = desc;
+      modalRaw.href = path;
+      modalLabel.textContent = text;
+      modalPrev.disabled = page === 1;
+      modalNext.disabled = page === descriptions.length;
+    }
+
+    function openLightbox() {
+      showPage(page);
+      if (typeof modal.showModal === 'function') {
+        modal.showModal();
+      } else {
+        window.open(fullPage.href, '_blank', 'noopener');
+      }
     }
 
     previous.addEventListener('click', () => showPage(page - 1));
     next.addEventListener('click', () => showPage(page + 1));
+    modalPrev.addEventListener('click', () => showPage(page - 1));
+    modalNext.addEventListener('click', () => showPage(page + 1));
+
+    openSample.addEventListener('click', openLightbox);
+    fullPage.addEventListener('click', (event) => {
+      event.preventDefault();
+      openLightbox();
+    });
+    closeSample.addEventListener('click', () => modal.close());
+    modal.addEventListener('click', (event) => {
+      if (event.target === modal) modal.close();
+    });
+    modal.addEventListener('keydown', (event) => {
+      if (event.key === 'ArrowLeft') {
+        event.preventDefault();
+        showPage(page - 1);
+      } else if (event.key === 'ArrowRight') {
+        event.preventDefault();
+        showPage(page + 1);
+      }
+    });
+
     document.querySelector('.pager').hidden = false;
+    showPage(page);
+
+    (async function hydrateReleases() {
+      try {
+        const res = await fetch('https://api.github.com/repos/tomahawk1103/manga-tui/releases?per_page=10', {
+          headers: { Accept: 'application/vnd.github+json' }
+        });
+        if (!res.ok) return;
+        const releases = await res.json();
+        if (!Array.isArray(releases)) return;
+
+        const stable = releases.find((r) => !r.draft && !r.prerelease && Array.isArray(r.assets) && r.assets.length > 0);
+        const nightly = releases.find((r) => !r.draft && r.tag_name && r.tag_name.toLowerCase() === 'nightly' && Array.isArray(r.assets) && r.assets.length > 0);
+        const active = stable || nightly;
+        if (!active) return;
+
+        const findAsset = (suffix) => active.assets.find((a) => a.name && a.name.endsWith(suffix));
+        const fmtSize = (asset) => asset && asset.size ? ' · ' + (asset.size / (1024 * 1024)).toFixed(1) + ' MB' : '';
+
+        const winExe = findAsset('-x86_64-pc-windows-msvc-setup.exe');
+        const winZip = findAsset('-x86_64-pc-windows-msvc-portable.zip');
+        const linuxTar = findAsset('-x86_64-unknown-linux-gnu.tar.gz');
+        const macArm = findAsset('-aarch64-apple-darwin.tar.gz');
+        const macIntel = findAsset('-x86_64-apple-darwin.tar.gz');
+
+        const dlWinExe = document.querySelector('#dl-win-installer');
+        const dlWinZip = document.querySelector('#dl-win-portable');
+        const dlLinux = document.querySelector('#dl-linux');
+        const dlMacArm = document.querySelector('#dl-mac-arm');
+        const dlMacIntel = document.querySelector('#dl-mac-intel');
+        const heroBtn = document.querySelector('#download-btn');
+        const heroLabel = document.querySelector('#download-btn-label');
+        const eyebrow = document.querySelector('#eyebrow-version');
+        const meta = document.querySelector('#release-meta');
+        const allLink = document.querySelector('#all-releases-link');
+
+        if (winExe) {
+          dlWinExe.href = winExe.browser_download_url;
+          dlWinExe.textContent = '↓ Instalador (.exe' + fmtSize(winExe) + ')';
+        }
+        if (winZip) {
+          dlWinZip.href = winZip.browser_download_url;
+          dlWinZip.textContent = 'Versión portable (.zip' + fmtSize(winZip) + ')';
+        }
+        if (linuxTar) {
+          dlLinux.href = linuxTar.browser_download_url;
+          dlLinux.textContent = '↓ Linux x86_64 (.tar.gz' + fmtSize(linuxTar) + ')';
+        } else if (!stable) {
+          dlLinux.href = active.html_url;
+          dlLinux.textContent = 'Ver en GitHub Releases ↗';
+        }
+        if (macArm) {
+          dlMacArm.href = macArm.browser_download_url;
+          dlMacArm.textContent = '↓ Apple Silicon (.tar.gz' + fmtSize(macArm) + ')';
+        } else if (!stable) {
+          dlMacArm.href = active.html_url;
+          dlMacArm.textContent = 'Ver en GitHub Releases ↗';
+        }
+        if (macIntel) {
+          dlMacIntel.href = macIntel.browser_download_url;
+          dlMacIntel.textContent = 'Intel x86_64 (.tar.gz' + fmtSize(macIntel) + ')';
+        } else if (!stable) {
+          dlMacIntel.href = active.html_url;
+          dlMacIntel.textContent = 'Ver todas las plataformas ↗';
+        }
+
+        const ua = navigator.userAgent || '';
+        if (/Linux/i.test(ua) && !/Android/i.test(ua) && linuxTar) {
+          heroBtn.href = linuxTar.browser_download_url;
+          heroLabel.textContent = 'Descargar para Linux (.tar.gz)';
+        } else if (/Macintosh|Mac OS X/i.test(ua)) {
+          heroBtn.href = '#descargas';
+          heroLabel.textContent = 'Descargar para macOS';
+        } else if (winExe) {
+          heroBtn.href = winExe.browser_download_url;
+          heroLabel.textContent = 'Descargar para Windows (.exe)';
+        }
+
+        if (stable) {
+          eyebrow.textContent = 'Lector de manga · ' + stable.tag_name;
+          meta.textContent = 'Versión estable ' + stable.tag_name + ' · Descarga directa oficial.';
+        } else {
+          meta.textContent = 'Última compilación publicada (' + (active.name || active.tag_name) + ') · Descarga directa oficial.';
+        }
+        if (active.html_url) {
+          allLink.href = active.html_url;
+        }
+      } catch {}
+    })();
   </script>
 </body>
 </html>
