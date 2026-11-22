@@ -1,0 +1,115 @@
+use std::sync::LazyLock;
+
+use once_cell::sync::OnceCell;
+use rand::Rng;
+
+use crate::backend::manga_provider::Languages;
+
+pub static PREFERRED_LANGUAGE: OnceCell<Languages> = OnceCell::new();
+
+pub static APP_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
+    format!(
+        "manga-tui/{} ({}/{}/{})",
+        env!("CARGO_PKG_VERSION"),
+        std::env::consts::FAMILY,
+        std::env::consts::OS,
+        std::env::consts::ARCH
+    )
+});
+
+const USER_AGENTS: &[&str] = &[
+    "Mozilla/5.0 (X11; Linux x86_64; rv:133.0) Gecko/20100101 Firefox/133.0",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_3) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.5412.99 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_10) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/108.0.5361.172 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux i686) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.5388.177 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 11_14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.5397.215 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123.0.0.0 Safari/537.36",
+];
+
+#[inline]
+fn random_between_1_and_5() -> u8 {
+    let mut rng = rand::rng();
+    rng.random_range(1..=5)
+}
+
+#[inline]
+pub fn get_random_user_agent() -> &'static str {
+    USER_AGENTS[random_between_1_and_5() as usize]
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+pub mod test_utils {
+    use std::error::Error;
+
+    use crate::backend::tracker::{MangaTracker, PlanToReadArgs};
+    use crate::global::get_random_user_agent;
+
+    /// NOTE: this should be under `manga_tracker`
+    #[derive(Debug, Clone)]
+    pub struct TrackerTest {
+        pub should_fail: bool,
+        pub title_manga_tracked: Option<String>,
+        pub error_message: Option<String>,
+    }
+
+    impl TrackerTest {
+        pub fn new() -> Self {
+            Self {
+                title_manga_tracked: None,
+                should_fail: false,
+                error_message: None,
+            }
+        }
+
+        pub fn failing() -> Self {
+            Self {
+                should_fail: true,
+                title_manga_tracked: None,
+                error_message: None,
+            }
+        }
+
+        pub fn failing_with_error_message(error_message: &str) -> Self {
+            Self {
+                should_fail: true,
+                title_manga_tracked: None,
+                error_message: Some(error_message.to_string()),
+            }
+        }
+    }
+
+    impl Default for TrackerTest {
+        fn default() -> Self {
+            Self::new()
+        }
+    }
+
+    impl MangaTracker for TrackerTest {
+        async fn search_manga_by_title(
+            &self,
+            _title: crate::SearchTerm,
+        ) -> Result<Option<crate::backend::tracker::MangaToTrack>, Box<dyn std::error::Error>> {
+            if self.should_fail {
+                return Err(self.error_message.clone().unwrap_or("".to_string()).into());
+            }
+            Ok(None)
+        }
+
+        async fn mark_manga_as_read_with_chapter_count(
+            &self,
+            _manga: crate::backend::tracker::MarkAsRead<'_>,
+        ) -> Result<(), Box<dyn Error>> {
+            if self.should_fail {
+                return Err(self.error_message.clone().unwrap_or("".to_string()).into());
+            }
+            Ok(())
+        }
+
+        async fn mark_manga_as_plan_to_read(&self, _manga_to_plan_to_read: PlanToReadArgs<'_>) -> Result<(), Box<dyn Error>> {
+            if self.should_fail {
+                return Err(self.error_message.clone().unwrap_or("".to_string()).into());
+            }
+            Ok(())
+        }
+    }
+}

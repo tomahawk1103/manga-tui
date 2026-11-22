@@ -135,16 +135,47 @@ mod tests {
 
         let _ = std::fs::remove_dir_all(&base);
     }
+
+    #[test]
+    fn windows_icon_is_valid_multi_resolution_ico() {
+        let icon_path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets").join("icon.ico");
+        let bytes = std::fs::read(&icon_path).expect("assets/icon.ico must exist");
+        assert!(bytes.len() >= 22, "ICO file too small");
+
+        let reserved = u16::from_le_bytes([bytes[0], bytes[1]]);
+        let icon_type = u16::from_le_bytes([bytes[2], bytes[3]]);
+        let count = u16::from_le_bytes([bytes[4], bytes[5]]) as usize;
+
+        assert_eq!(reserved, 0, "ICO reserved field must be 0");
+        assert_eq!(icon_type, 1, "ICO type field must be 1 (icon)");
+        assert!(count >= 6, "ICO should contain multiple resolutions, found {count}");
+        assert!(bytes.len() >= 6 + count * 16, "ICO directory table truncated");
+
+        let mut sizes = Vec::with_capacity(count);
+        for i in 0..count {
+            let entry = &bytes[6 + i * 16..6 + (i + 1) * 16];
+            let width = if entry[0] == 0 { 256u16 } else { u16::from(entry[0]) };
+            let height = if entry[1] == 0 { 256u16 } else { u16::from(entry[1]) };
+            let byte_len = u32::from_le_bytes([entry[8], entry[9], entry[10], entry[11]]) as usize;
+            let offset = u32::from_le_bytes([entry[12], entry[13], entry[14], entry[15]]) as usize;
+
+            assert_eq!(width, height, "ICO entries should be square");
+            assert!(byte_len > 0, "ICO entry {i} must have non-zero size");
+            assert!(offset + byte_len <= bytes.len(), "ICO entry {i} points outside file bounds");
+            sizes.push(width);
+        }
+
+        for expected in [16u16, 24, 32, 48, 64, 128, 256] {
+            assert!(sizes.contains(&expected), "ICO missing {expected}x{expected} resolution (found: {sizes:?})");
+        }
+    }
 }
+
+pub use manga_core::{config, global, i18n, logger, runtime_settings};
 
 mod backend;
 mod cli;
 mod common;
-mod config;
-mod global;
-mod i18n;
-mod logger;
-mod runtime_settings;
 mod theme;
 mod utils;
 mod view;

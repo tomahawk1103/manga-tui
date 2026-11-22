@@ -1,3 +1,8 @@
+[workspace]
+members = [".", "crates/manga-core"]
+default-members = [".", "crates/manga-core"]
+resolver = "3"
+
 [package]
 name = "manga-tui"
 version = "0.3.1"
@@ -16,6 +21,7 @@ exclude = [
 ]
 
 [dependencies]
+manga-core = { path = "crates/manga-core", features = ["clap"] }
 # ratatui related dependencies
 ratatui = { version = "0.29.0", features = ["all-widgets", "palette", "unstable-widget-ref"] }
 ratatui-image = { version = "1.0.5", features = ["rustix"]}
@@ -56,6 +62,7 @@ base64 = "0.22"
 sha2 = "0.10"
 
 [dev-dependencies]
+manga-core = { path = "crates/manga-core", features = ["test-utils"] }
 httpmock = "0.7.0-rc.1"
 pretty_assertions = "1.4.0"
 rusty-hook = "0.11.2"
@@ -89,4 +96,4 @@ opt-level = "z"
 strip = "debuginfo"
 
 [features]
-local_only = []
+local_only = ["manga-core/local_only"]
