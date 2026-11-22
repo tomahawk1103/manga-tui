@@ -1,6 +1,6 @@
 # Provider Registration Checklist
 
-When adding `<name>` (struct `<Name>Provider`, enum variant `MangaProviders::<Name>`), you must touch the following 7 files:
+When adding `<name>` (struct `<Name>Provider`, enum variant `MangaProviders::<Name>`), you must touch the following files:
 
 ---
 
@@ -21,10 +21,7 @@ When adding `<name>` (struct `<Name>Provider`, enum variant `MangaProviders::<Na
 ---
 
 ### 2. `src/backend/multi_provider.rs`
-* Import:
-  ```rust
-  use crate::backend::manga_provider::<name>::<Name>Provider;
-  ```
+* Import `<Name>Provider` and `<Name>FilterState`.
 * Add field to `MultiProvider`:
   ```rust
   pub struct MultiProvider {
@@ -40,22 +37,19 @@ When adding `<name>` (struct `<Name>Provider`, enum variant `MangaProviders::<Na
   ```rust
   manga.provider = Some(MangaProviders::<Name>);
   ```
-* Match arm in dispatch methods:
+* Add match arm in all dispatch methods:
   - `get_manga_by_id`: `MangaProviders::<Name> => pool.<name>.get_manga_by_id(manga_id)...`
   - `get_chapter_pages`: `MangaProviders::<Name> => pool.<name>.get_chapter_pages_url_with_extension(...)`
   - `get_raw_image`: `MangaProviders::<Name> => pool.<name>.get_raw_image(...)`
-  - `get_manga_chapters`: `MangaProviders::<Name> => pool.<name>.get_all_chapters(...)`
+  - `get_manga_chapters` & `get_all_chapters` (used by reader & new-chapter notifications across all providers): `MangaProviders::<Name> => pool.<name>.get_all_chapters(...)`
   - `get_popular_mangas`: `MangaProviders::<Name> => pool.<name>.get_popular_mangas(...)`
   - `get_latest_mangas`: `MangaProviders::<Name> => pool.<name>.get_latest_mangas(...)`
 
 ---
 
 ### 3. `src/main.rs`
-* Import:
-  ```rust
-  use backend::manga_provider::<name>::<Name>Provider;
-  ```
-* Match arm in provider router:
+* Import `backend::manga_provider::<name>::<Name>Provider`.
+* Add match arm in provider startup router:
   ```rust
   MangaProviders::<Name> => {
       run_app(
@@ -70,34 +64,32 @@ When adding `<name>` (struct `<Name>Provider`, enum variant `MangaProviders::<Na
 ---
 
 ### 4. `src/view/app.rs`
-* Specify default page size:
+* Specify default page size in `search_page_size()`:
   ```rust
-  MangaProviders::<Name> => 20, // Or whatever the site uses
+  MangaProviders::<Name> => 20, // Or whatever page size the site returns
   ```
 
 ---
 
-### 5. `src/view/widgets/search.rs`
-* Search item provider tag style and prefix:
+### 5. `src/view/widgets/search.rs`, `src/view/pages/manga.rs` & `src/view/widgets/home.rs`
+* Search item provider tag style and prefix (`src/view/widgets/search.rs`):
   ```rust
   MangaProviders::<Name> => ("<Name>", Color::<ChosenColor>),
   ```
-  ```rust
-  MangaProviders::<Name> => ("[<Name>] ", Color::<ChosenColor>),
-  ```
-
----
-
-### 6. `src/view/pages/manga.rs`
-* Manga details header provider badge:
+* Manga details header provider badge (`src/view/pages/manga.rs`):
   ```rust
   crate::backend::manga_provider::MangaProviders::<Name> => ("<Name>", ratatui::style::Color::<ChosenColor>),
   ```
+* Download / New Chapter Notification popup badge (`src/view/widgets/home.rs`):
+  Ensure provider badge rendering covers `MangaProviders::<Name>`.
 
 ---
 
-### 7. Verification
-Run check to ensure all exhaustive pattern matches compile:
+### 6. Verification & Local Sync
+Run check and tests to ensure all exhaustive pattern matches compile, then install and sync:
 ```powershell
 cargo check
+cargo test
+cargo install --path .
+.\scripts\sync-local-install.ps1
 ```

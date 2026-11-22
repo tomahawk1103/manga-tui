@@ -2,22 +2,25 @@
 name: ratatui-widget-creator
 description: >-
   Use this skill when creating, modifying, or refactoring TUI components, pages,
-  modals, or widgets in manga-tui. Guides through Ratatui layouts, StatefulWidgetFrame,
-  Component trait implementations, event handling, async task communication, and theme styling.
+  modals, or widgets in manga-tui. Guides through Ratatui layouts, Component and
+  StatefulWidgetFrame traits, active ThemePalette styling (src/theme.rs), Spanish/English
+  i18n (src/i18n.rs), scroll-aware mouse hitboxes, and Sixel/Zen reader rendering.
 ---
 
 # Ratatui Widget & Page Creator Skill
 
-This skill guides the construction and refactoring of user interface components in `manga-tui` using `ratatui`.
+This skill guides the construction, styling, localization, and event handling of user interface components in `manga-tui` using `ratatui`.
 
 ---
 
 ## Architecture Overview
 
 In `manga-tui`, UI elements are organized under `src/view/`:
-- `src/view/pages/`: Full screen tabs/views (`home.rs`, `manga.rs`, `reader.rs`, `search.rs`, `feed.rs`). Registered in `src/view/pages.rs` (`SelectedPage`).
-- `src/view/widgets/`: Reusable building blocks and modals (`home/`, `manga/`, `reader/`, `search/`, `feed/`).
-- `src/view/widgets.rs`: Defines core traits `Component` and `StatefulWidgetFrame`.
+- `src/view/pages/`: Full-screen tabs/views (`home.rs`, `manga.rs`, `reader.rs`, `search.rs`, `feed.rs`). Registered in `src/view/pages.rs` (`SelectedPage`).
+- `src/view/widgets/`: Reusable building blocks and modals (`home.rs`, `manga.rs`, `reader.rs`, `search.rs`, `feed.rs`, `cloud.rs`, `settings.rs`, `updater.rs`).
+- `src/view/widgets.rs`: Defines core traits `Component`, `StatefulWidgetFrame`, and `ModalBuilder`.
+- `src/theme.rs`: Dynamic theme system (`TokyoNight`, `Catppuccin`, `Classic`) and `ThemePalette`.
+- `src/i18n.rs`: Bilateral Spanish/English localization helper `tr(es, en)` and `is_es()`.
 
 ---
 
@@ -62,7 +65,7 @@ impl Component for MyComponent {
 ```
 
 ### B. Stateful Renderers (`pub trait StatefulWidgetFrame`)
-Use for modular UI elements where state is owned by a parent page (e.g., filter panels, scroll lists):
+Use for modular UI elements where state is owned by a parent page (e.g., modals, filter panels, scroll lists):
 ```rust
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -84,52 +87,41 @@ impl StatefulWidgetFrame for MyWidget {
 
 ---
 
-## 2. Layout & Styling Guidelines
+## 2. Theming & Localization (Mandatory)
 
-1. **Layout Splitting**:
-   Always use `Layout::default()` with `Constraint::Percentage`, `Constraint::Length`, or `Constraint::Min`:
-   ```rust
-   let chunks = Layout::default()
-       .direction(Direction::Vertical)
-       .constraints([
-           Constraint::Length(3),  // Header / Search Bar
-           Constraint::Min(10),    // Main Content
-           Constraint::Length(3),  // Status / Keybindings footer
-       ])
-       .split(area);
-   ```
+### A. Always Use `src/theme.rs` Palette
+Never hardcode raw colors when a semantic theme token exists. Fetch the active palette via `crate::theme::palette()` (or helper block/chip builders in `src/theme.rs`):
+```rust
+let p = crate::theme::palette();
+let border_style = Style::default().fg(p.border_accent);
+let selected_style = Style::default().bg(p.row_selected_bg).fg(p.text_primary);
+let status_ok = Style::default().fg(p.status_success);
+```
 
-2. **Dialogs & Modals**:
-   Use `ModalBuilder` from `src/view/widgets.rs`:
-   ```rust
-   let modal = ModalBuilder::new(my_popup_widget)
-       .with_dimensions(ModalDimensions { width: 60, height: 40 })
-       .build();
-   frame.render_widget(modal, area);
-   ```
+### B. Always Localize UI Copy with `src/i18n.rs`
+Every user-visible string (titles, buttons, status messages, keybinding hints) must support Spanish and English via `crate::i18n::tr`:
+```rust
+use crate::i18n::tr;
 
-3. **Colors & Keybindings**:
-   - Instructions style: use `crate::global::INSTRUCTIONS_STYLE`.
-   - Borders: `Block::default().borders(Borders::ALL).border_type(BorderType::Rounded)`.
-   - Avoid hardcoded raw ANSI codes; use `ratatui::style::{Color, Style, Modifier}`.
+let title = tr(" Descargas y Biblioteca ", " Downloads & Library ");
+let hint = tr("Pulsa [Enter] para abrir", "Press [Enter] to open");
+```
 
 ---
 
-## 3. Keyboard & Event Handling
+## 3. Mouse Hitboxes & Scroll Alignment
 
-1. Capture events in `handle_events`:
-   ```rust
-   match events {
-       Events::Key(key_event) => match key_event.code {
-           KeyCode::Char('j') | KeyCode::Down => self.next_item(),
-           KeyCode::Char('k') | KeyCode::Up => self.previous_item(),
-           KeyCode::Enter => self.activate_selection(),
-           KeyCode::Esc => self.close(),
-           _ => {},
-       },
-       _ => {},
-   }
-   ```
-2. For async background tasks (e.g., fetching details or search results), use `tokio::sync::mpsc::Sender<Events>` or `tokio::task::JoinHandle` stored in the component so it can be aborted inside `clean_up()`.
+When handling `MouseEventKind::Down(MouseButton::Left)` on scrollable lists or cards (such as in `feed.rs`, `search.rs`, or `manga.rs`):
+1. **Store the rendered content `Rect`** (inner area of the block, excluding borders) during `render()`.
+2. **Account for scroll offset**: When mapping `mouse.row` to a card or list item index, add the current scroll offset (`list_state.offset()` or `scroll_offset`) and divide by the exact rendered card height (`CARD_HEIGHT`).
+3. **Verify bounds**: Always check `content_area.contains(Position::new(mouse.column, mouse.row))` and ignore clicks when a modal popup is active above the page.
+
+---
+
+## 4. Reader & Sixel Image Rendering Guidelines (`src/view/pages/reader.rs`)
+
+When modifying the manga reader or image rendering (`ratatui-image` / Sixel / Halfblocks):
+- **Prevent Sixel Vertical Overflow Scroll**: Sixel escape sequences must never touch or exceed the last terminal row (`area.bottom()`), otherwise terminals emit a newline that scrolls the entire TUI buffer upward. Clamp image render `Rect` height strictly inside the available viewport (`height.saturating_sub(1)` when near the bottom boundary).
+- **Zen Mode (HUD-less Reading)**: When `zen_mode` is toggled (`z` / `F11`), hide the top/bottom status bars and give the full clamped viewport to the page canvas while still respecting the Sixel bottom-row safety margin.
 
 See [references/component_patterns.md](./references/component_patterns.md) for full examples.
