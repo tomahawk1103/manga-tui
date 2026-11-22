@@ -225,17 +225,15 @@ pub fn is_running_in_modern_windows_terminal() -> bool {
     let term_program = std::env::var("TERM_PROGRAM").ok();
     let wezterm_exe = std::env::var("WEZTERM_EXECUTABLE").ok();
 
-    if is_modern_windows_terminal_env(wt_session.as_deref(), term_program.as_deref(), wezterm_exe.as_deref()) {
-        return true;
-    }
+    let is_modern_env = is_modern_windows_terminal_env(wt_session.as_deref(), term_program.as_deref(), wezterm_exe.as_deref());
 
     #[cfg(target_os = "windows")]
     {
-        is_conpty_or_pseudo_console()
+        is_modern_env || is_conpty_or_pseudo_console()
     }
     #[cfg(not(target_os = "windows"))]
     {
-        false
+        is_modern_env
     }
 }
 

@@ -368,13 +368,13 @@ impl LocalChapterSource {
         if chapter_id.starts_with("chapters/")
             && let Some(segment) = chapter_id.split('/').nth(1)
             && !segment.is_empty()
-            && !candidates.contains(&segment.to_string())
+            && !candidates.iter().any(|c| c == segment)
         {
             candidates.push(segment.to_string());
         }
         if let Some((_, entry_name)) = chapter_id.rsplit_once("::")
             && !entry_name.is_empty()
-            && !candidates.contains(&entry_name.to_string())
+            && !candidates.iter().any(|c| c == entry_name)
         {
             candidates.push(entry_name.to_string());
         }

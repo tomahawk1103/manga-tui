@@ -533,7 +533,7 @@ impl SearchPageProvider for MangaoniProvider {
         let from = pagination.index_to_slice_from();
         let to = pagination.to_index(total_mangas as usize);
         let next_page = to < total_mangas as usize;
-        let paged_mangas = mangas.as_slice().get(from..to).unwrap_or(&[]).to_vec();
+        let paged_mangas = mangas.get(from..to).unwrap_or(&[]).to_vec();
 
         Ok(GetMangasResponse {
             mangas: paged_mangas,
