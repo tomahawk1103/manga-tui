@@ -289,29 +289,54 @@ where
         } else {
             tr(" 📖 Continuar leyendo ", " 📖 Continue Reading ")
         };
+        let mut top_left_spans =
+            vec![Span::styled(tab_title, Style::default().fg(t.accent_primary).bg(t.title_chip_primary_bg).bold())];
+        if self.tabs == FeedTabs::Library {
+            let shelf_text = match &self.active_shelf_filter {
+                Some(s) => format!(" 🏷 {s} <E> "),
+                None => format!(" 🏷 {} <E> ", tr("Todas", "All Shelves")),
+            };
+            top_left_spans.push(Span::styled(shelf_text, Style::default().fg(Color::Black).bg(t.accent_secondary).bold()));
+        }
         let msg = if self.tabs == FeedTabs::Library {
-            tr(
-                "Tu biblioteca está vacía.\nConsejo: Marca cualquier manga como favorito con <f> o guárdalo como Pendiente (<p> en Buscar).",
-                "Your library is empty.\nTip: Mark any manga as favorite with <f> or save it as Plan to Read (<p> in Search).",
-            )
+            if let Some(shelf) = self.active_shelf_filter.as_deref() {
+                tr(
+                    "La estantería «{shelf}» está vacía.\nConsejo: Pulsa <E> para cambiar de estantería o volver a «Todas», o asigna mangas con <e>.",
+                    "The \"{shelf}\" shelf is empty.\nTip: Press <E> to switch shelves or return to \"All Shelves\", or assign mangas with <e>.",
+                )
+                .replace("{shelf}", shelf)
+            } else {
+                tr(
+                    "Tu biblioteca está vacía.\nConsejo: Marca cualquier manga como favorito con <f> o guárdalo como Pendiente (<p> en Buscar).",
+                    "Your library is empty.\nTip: Mark any manga as favorite with <f> or save it as Plan to Read (<p> in Search).",
+                )
+                .to_string()
+            }
         } else {
             tr(
                 "No tienes historial de lectura todavía.\nConsejo: Comienza a leer cualquier manga para ver aquí tu progreso.",
                 "You have no reading history yet.\nTip: Start reading any manga to track your progress here.",
             )
+            .to_string()
         };
-        let (bottom_line, hit_boxes) = build_bottom_instructions_with_hitboxes(area, vec![
-            (
-                t.key_chip("Tab / 1-4"),
-                Span::styled(tr(" Cambiar pestaña  ", " Switch tab  "), Style::default().fg(t.text_muted)),
-                Some(FeedBottomAction::CycleTab),
-            ),
-            (
-                t.key_chip("i"),
-                Span::styled(tr(" Ir a Buscar ", " Go to Search "), Style::default().fg(t.text_muted)),
-                Some(FeedBottomAction::GoToSearch),
-            ),
-        ]);
+        let mut instructions = vec![(
+            t.key_chip("Tab / 1-4"),
+            Span::styled(tr(" Cambiar pestaña  ", " Switch tab  "), Style::default().fg(t.text_muted)),
+            Some(FeedBottomAction::CycleTab),
+        )];
+        if self.tabs == FeedTabs::Library {
+            instructions.push((
+                t.key_chip("E"),
+                Span::styled(tr(" Cambiar estantería  ", " Switch shelf  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::CycleShelfFilter),
+            ));
+        }
+        instructions.push((
+            t.key_chip("i"),
+            Span::styled(tr(" Ir a Buscar ", " Go to Search "), Style::default().fg(t.text_muted)),
+            Some(FeedBottomAction::GoToSearch),
+        ));
+        let (bottom_line, hit_boxes) = build_bottom_instructions_with_hitboxes(area, instructions);
         self.list_inner_area = Rect::default();
         self.pagination_prev_rect = None;
         self.pagination_next_rect = None;
@@ -320,10 +345,7 @@ where
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(t.border))
-            .title(Line::from(vec![Span::styled(
-                tab_title,
-                Style::default().fg(t.accent_primary).bg(t.title_chip_primary_bg).bold(),
-            )]))
+            .title(Line::from(top_left_spans))
             .title_bottom(bottom_line);
         let inner = block.inner(area).inner(Margin {
             horizontal: 2,
@@ -2660,5 +2682,21 @@ mod tests {
         let (cx, cy) = find_text_in_buffer(&modal_buf, cancel_label).expect("modal cancel button");
         click_left(&mut feed_page, cx, cy);
         assert_eq!(feed_page.state, FeedState::DisplayingHistory);
+    }
+
+    #[test]
+    fn empty_library_card_displays_active_shelf_badge_and_message() {
+        let mut feed_page: Feed<MockMangaPageProvider> = Feed::new().with_api_client(MockMangaPageProvider::new().into());
+        feed_page.tabs = FeedTabs::Library;
+        feed_page.state = FeedState::HistoryNotFound;
+        feed_page.active_shelf_filter = None;
+
+        let all_buf = render_feed_on_test_backend(&mut feed_page, 120, 30);
+        let all_label = format!("🏷 {} <E>", tr("Todas", "All Shelves"));
+        assert!(find_text_in_buffer(&all_buf, &all_label).is_some(), "expected all-shelves badge in empty library");
+
+        feed_page.active_shelf_filter = Some("Seinen".to_string());
+        let shelf_buf = render_feed_on_test_backend(&mut feed_page, 120, 30);
+        assert!(find_text_in_buffer(&shelf_buf, "🏷 Seinen <E>").is_some(), "expected active shelf badge in empty library");
     }
 }
