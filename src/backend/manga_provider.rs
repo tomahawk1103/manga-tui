@@ -8,19 +8,15 @@ use bytes::Bytes;
 use chrono::NaiveDate;
 use image::{DynamicImage, GenericImageView, ImageReader};
 use manga_tui::{SearchTerm, SortedVec};
-use mangadex::filters::filter_provider::FilterListItem;
-use ratatui::style::{Color, Style, Stylize};
-use ratatui::text::Span;
+use mangadex::filters::api_parameter::FilterListItem;
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter, EnumString};
 
 use super::database::ChapterBookmarked;
-use super::tui::Events;
 use crate::config::ImageQuality;
 use crate::global::PREFERRED_LANGUAGE;
-use crate::view::widgets::StatefulWidgetFrame;
 
 pub mod comizy;
 pub mod filters;
@@ -40,17 +36,6 @@ pub enum Rating {
     Nsfw,
 }
 
-impl Rating {
-    pub fn style(&self) -> Style {
-        match self {
-            Self::Moderate => Style::new().black().bg(Color::Yellow),
-            Self::Doujinshi => Style::new().black().bg(Color::Blue),
-            Self::Normal => Style::new(),
-            Self::Nsfw => Style::new().black().bg(Color::Red),
-        }
-    }
-}
-
 /// Genres of manga, providers like `mangadex` call them "tags" and other data about the manga may
 /// be considered a genre, like the content rating ("safe, suggestive") and publication demographic
 /// ("shounen, seinen")
@@ -65,13 +50,6 @@ pub struct Genres {
 impl Genres {
     pub fn new(title: String, rating: Rating) -> Self {
         Self { title, rating }
-    }
-}
-
-/// Implementing this trait so that making a list of genres is easier
-impl From<Genres> for Span<'_> {
-    fn from(value: Genres) -> Self {
-        Span::styled(format!(" {} ", value.title), value.rating.style())
     }
 }
 
@@ -105,17 +83,6 @@ pub enum MangaStatus {
     Cancelled,
     Completed,
     Hiatus,
-}
-
-impl From<MangaStatus> for Span<'_> {
-    fn from(value: MangaStatus) -> Self {
-        match value {
-            MangaStatus::Hiatus => Span::raw(" 🟡 hiatus"),
-            MangaStatus::Ongoing => Span::raw(" 🟢 ongoing"),
-            MangaStatus::Cancelled => Span::raw(" 🟠 cancelled"),
-            MangaStatus::Completed => Span::raw(" 🔵 completed"),
-        }
-    }
 }
 
 /// NOTE this is very mangadex-specifc since its the only provider that provides a lot of languages
@@ -229,7 +196,7 @@ impl Languages {
 
     pub fn get_preferred_lang() -> &'static Languages {
         let _ = PREFERRED_LANGUAGE.get_or_init(Self::default);
-        crate::view::widgets::settings::active_chapter_language_ref()
+        crate::runtime_settings::active_chapter_language_ref()
     }
 
     pub fn as_human_readable(self) -> String {
@@ -1087,26 +1054,6 @@ pub trait MangaPageProvider:
 
 pub trait ReaderPageProvider: SearchMangaPanel + SearchChapterById + ProviderIdentity + Send + Sync + 'static {}
 
-pub trait EventHandler {
-    fn handle_events(&mut self, events: Events);
-}
-
-pub trait FiltersHandler: EventHandler {
-    type InnerState: Send + Clone;
-
-    fn toggle(&mut self);
-    fn is_open(&self) -> bool;
-    fn is_typing(&self) -> bool;
-    fn get_state(&self) -> &Self::InnerState;
-}
-
-/// This trait represent the widget used to show the user the filters available for the
-/// `manga_provider`, why not just use the `StatefulWidgetFrame`?, maybe in the future the widget
-/// may require more methods/functionality
-pub trait FiltersWidget: StatefulWidgetFrame<State = Self::FilterState> {
-    type FilterState;
-}
-
 #[derive(Debug, Default, PartialEq, Clone)]
 pub struct GetMangasResponse {
     pub mangas: Vec<SearchManga>,
@@ -1118,10 +1065,6 @@ pub struct GetMangasResponse {
 pub trait SearchPageProvider: DecodeBytesToImage + SearchMangaById + ProviderIdentity + Clone + Send + Sync + 'static {
     /// The filter state that will be used in api calls, needs to be `Send` in order to do so
     type InnerState: Send + Clone;
-    /// Struct which handles the key events of the user
-    type FiltersHandler: FiltersHandler<InnerState = Self::InnerState>;
-    /// The widget used to show the filters to the user
-    type Widget: FiltersWidget<FilterState = Self::FiltersHandler>;
 
     fn search_mangas(
         &self,
@@ -1197,57 +1140,6 @@ pub mod mock {
 
     #[derive(Debug, Clone)]
     pub struct MockFilterState {}
-
-    #[derive(Debug, Clone)]
-    pub struct MockFiltersHandler {
-        is_open: bool,
-        pub state: MockFilterState,
-    }
-
-    impl MockFiltersHandler {
-        pub fn new(state: MockFilterState) -> Self {
-            Self {
-                is_open: false,
-                state,
-            }
-        }
-    }
-
-    #[derive(Debug, Clone)]
-    pub struct MockWidgetFilter {}
-
-    impl EventHandler for MockFiltersHandler {
-        fn handle_events(&mut self, _events: Events) {}
-    }
-
-    impl FiltersHandler for MockFiltersHandler {
-        type InnerState = MockFilterState;
-
-        fn toggle(&mut self) {
-            self.is_open = !self.is_open;
-        }
-
-        fn is_open(&self) -> bool {
-            self.is_open
-        }
-
-        fn is_typing(&self) -> bool {
-            self.is_open
-        }
-
-        fn get_state(&self) -> &Self::InnerState {
-            &self.state
-        }
-    }
-
-    impl StatefulWidgetFrame for MockWidgetFilter {
-        type State = MockFiltersHandler;
-
-        fn render(&mut self, _area: ratatui::prelude::Rect, _frame: &mut ratatui::Frame<'_>, _state: &mut Self::State) {}
-    }
-    impl FiltersWidget for MockWidgetFilter {
-        type FilterState = MockFiltersHandler;
-    }
 
     impl HomePageMangaProvider for MockMangaPageProvider {
         async fn get_popular_mangas(&self) -> Result<Vec<PopularManga>, Box<dyn std::error::Error>> {
@@ -1329,9 +1221,7 @@ pub mod mock {
     }
 
     impl SearchPageProvider for MockMangaPageProvider {
-        type FiltersHandler = MockFiltersHandler;
         type InnerState = MockFilterState;
-        type Widget = MockWidgetFilter;
 
         async fn search_mangas(
             &self,

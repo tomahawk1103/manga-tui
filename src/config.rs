@@ -18,8 +18,8 @@ use strum_macros::{Display, EnumIter};
 use toml::Table;
 
 use crate::backend::manga_provider::{Languages, MangaProviders};
-use crate::cli::Credentials;
-use crate::theme::ThemeVariant;
+use crate::backend::tracker::Credentials;
+use crate::runtime_settings::ThemeVariant;
 
 static CONFIG_FILE_NAME: &str = "config.toml";
 
@@ -761,13 +761,13 @@ pub enum ImageResizeFilter {
 }
 
 impl ImageResizeFilter {
-    /// Converts to the `image::imageops::FilterType` used by `ratatui-image`.
-    pub fn to_filter_type(self) -> ratatui_image::FilterType {
+    /// Converts to `image::imageops::FilterType`.
+    pub fn to_filter_type(self) -> image::imageops::FilterType {
         match self {
-            Self::Lanczos3 => ratatui_image::FilterType::Lanczos3,
-            Self::CatmullRom => ratatui_image::FilterType::CatmullRom,
-            Self::Triangle => ratatui_image::FilterType::Triangle,
-            Self::Nearest => ratatui_image::FilterType::Nearest,
+            Self::Lanczos3 => image::imageops::FilterType::Lanczos3,
+            Self::CatmullRom => image::imageops::FilterType::CatmullRom,
+            Self::Triangle => image::imageops::FilterType::Triangle,
+            Self::Nearest => image::imageops::FilterType::Nearest,
         }
     }
 }
@@ -890,12 +890,12 @@ impl MangaTuiConfig {
     /// Returns a copy of this configuration with any live in-app Settings overrides applied.
     pub fn effective(&self) -> Self {
         let mut copy = self.clone();
-        copy.default_manga_provider = crate::view::widgets::settings::active_default_provider();
-        copy.download_type = crate::view::widgets::settings::active_download_type();
-        copy.default_language = crate::view::widgets::settings::active_chapter_language();
-        copy.ui_language = crate::view::widgets::settings::active_ui_language();
-        copy.theme = crate::theme::current_theme();
-        copy.image_protocol = crate::view::widgets::settings::active_image_protocol();
+        copy.default_manga_provider = crate::runtime_settings::active_default_provider();
+        copy.download_type = crate::runtime_settings::active_download_type();
+        copy.default_language = crate::runtime_settings::active_chapter_language();
+        copy.ui_language = crate::runtime_settings::active_ui_language();
+        copy.theme = crate::runtime_settings::current_theme();
+        copy.image_protocol = crate::runtime_settings::active_image_protocol();
         copy
     }
 }
@@ -920,7 +920,7 @@ pub fn build_config_file() -> Result<(), Box<dyn Error>> {
         },
     };
 
-    crate::view::widgets::settings::init_runtime_settings(&config);
+    crate::runtime_settings::init_runtime_settings(&config);
     CONFIG.get_or_init(|| config);
 
     Ok(())

@@ -21,7 +21,9 @@ use self::search::{InputMode, SearchPage};
 use super::widgets::Component;
 use crate::backend::AppDirectories;
 use crate::backend::database::{Database, DownloadedMangaWithProvider};
-use crate::backend::download_queue::{DownloadQueueCommand, DownloadQueueProgress, DownloadQueueWorker, EnqueueDownloadBatch};
+use crate::backend::download_queue::{
+    DownloadQueueCommand, DownloadQueueEventSink, DownloadQueueProgress, DownloadQueueWorker, EnqueueDownloadBatch,
+};
 use crate::backend::error_log::write_to_error_log;
 use crate::backend::manga_downloader::LocalDownloadsIndex;
 use crate::backend::manga_provider::{
@@ -30,11 +32,11 @@ use crate::backend::manga_provider::{
 use crate::backend::tracker::MangaTracker;
 use crate::backend::tui::{Action, Events, NewChapterNotificationGroup};
 use crate::config::MangaTuiConfig;
-use crate::global::INSTRUCTIONS_STYLE;
 use crate::i18n::tr;
-use crate::theme::{current_theme, cycle_theme, theme};
+use crate::theme::{INSTRUCTIONS_STYLE, current_theme, cycle_theme, theme};
 use crate::view::pages::search::SearchScope;
 use crate::view::pages::*;
+use crate::view::provider_filters::TuiSearchProvider;
 use crate::view::tasks::manga::{AutoDownloadItem, download_new_chapters, download_new_favorite_chapters};
 use crate::view::widgets::{
     AppUpdateModal, AppUpdateModalState, AppUpdateStage, CloudModal, CloudModalOutcome, CloudModalState, DownloadQueueModal,
@@ -158,7 +160,7 @@ pub struct MangaToRead {
 /// page handling when to quit and switching between pages based on user inputs
 pub struct App<T, S>
 where
-    T: MangaProvider,
+    T: MangaProvider + TuiSearchProvider,
     S: MangaTracker,
 {
     pub global_action_tx: UnboundedSender<Action>,
@@ -205,7 +207,7 @@ where
 
 impl<T, S> Component for App<T, S>
 where
-    T: MangaProvider,
+    T: MangaProvider + TuiSearchProvider,
     S: MangaTracker,
 {
     type Actions = Action;
@@ -495,7 +497,7 @@ where
 
 impl<T, S> App<T, S>
 where
-    T: MangaProvider,
+    T: MangaProvider + TuiSearchProvider,
     S: MangaTracker,
 {
     pub fn new(
@@ -552,7 +554,11 @@ where
             favorite_status_toast: None,
             download_queue_tx: {
                 let (queue_tx, queue_rx) = tokio::sync::mpsc::unbounded_channel();
-                let worker = DownloadQueueWorker::new(Arc::clone(&provider), global_event_tx.clone(), queue_rx);
+                let tx = global_event_tx.clone();
+                let sink: DownloadQueueEventSink = Arc::new(move |e| {
+                    tx.send(Events::from(e)).ok();
+                });
+                let worker = DownloadQueueWorker::new(Arc::clone(&provider), sink, queue_rx);
                 if let Ok(handle) = tokio::runtime::Handle::try_current() {
                     handle.spawn(worker.run());
                 }
@@ -2256,13 +2262,13 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
     use crate::backend::manga_provider::{Languages, SortedVolumes, Volumes};
     use crate::backend::tracker::MangaTracker;
     use crate::global::test_utils::TrackerTest;
+    use crate::view::provider_filters::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
     use crate::view::widgets::press_key;
 
-    fn tick<T: MangaProvider, S: MangaTracker>(app: &mut App<T, S>) {
+    fn tick<T: MangaProvider + TuiSearchProvider, S: MangaTracker>(app: &mut App<T, S>) {
         let max_amoun_ticks = 10;
         let mut count = 0;
 

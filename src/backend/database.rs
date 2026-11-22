@@ -68,7 +68,6 @@ use strum_macros::{Display, EnumIter};
 
 use super::AppDirectories;
 use super::manga_provider::{Languages, MangaProviders};
-use crate::view::widgets::feed::FeedTabs;
 
 /// Represents the type of manga history list.
 ///
@@ -86,17 +85,6 @@ impl ToSql for MangaHistoryType {
         let as_string = self.to_string();
 
         Ok(ToSqlOutput::from(as_string))
-    }
-}
-
-impl From<FeedTabs> for MangaHistoryType {
-    fn from(value: FeedTabs) -> Self {
-        match value {
-            FeedTabs::Timeline => Self::ReadingHistory,
-            FeedTabs::ContinueReading => Self::ReadingHistory,
-            FeedTabs::Library => Self::PlanToRead,
-            FeedTabs::Downloads => Self::ReadingHistory,
-        }
     }
 }
 

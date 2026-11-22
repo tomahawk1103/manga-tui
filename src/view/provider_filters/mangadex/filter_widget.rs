@@ -1,4 +1,3 @@
-use filter_provider::{FILTERS, FilterListItem, ListItemId, MangaFilters, MangadexFilterProvider, TagListItem, TagListItemState};
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Rect};
@@ -6,12 +5,14 @@ use ratatui::style::{Color, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{HighlightSpacing, List, ListItem, ListState, Paragraph, StatefulWidget, Tabs, Widget, Wrap};
 
-use super::StatefulWidgetFrame;
-use super::filters::*;
-use crate::backend::manga_provider::FiltersWidget;
+use super::filter_provider::{
+    FILTERS, FilterListItem, ListItemId, MangaFilters, MangadexFilterProvider, TagListItem, TagListItemState,
+};
 use crate::i18n::tr;
 use crate::theme::theme;
 use crate::utils::render_search_bar;
+use crate::view::provider_filters::FiltersWidget;
+use crate::view::widgets::StatefulWidgetFrame;
 
 #[derive(Clone)]
 pub struct MangadexFilterWidget {
@@ -28,19 +29,17 @@ impl From<MangaFilters> for Line<'_> {
     }
 }
 
-impl From<FilterListItem> for ListItem<'_> {
-    fn from(value: FilterListItem) -> Self {
-        let t = theme();
-        let line = if value.is_selected {
-            Line::from(vec![
-                Span::styled(" ✓ ", Style::default().fg(t.status_success).bold()),
-                Span::styled(value.name, Style::default().fg(t.accent_highlight).bold()),
-            ])
-        } else {
-            Line::from(vec![Span::raw("   "), Span::styled(value.name, Style::default().fg(t.text_secondary))])
-        };
-        ListItem::new(line)
-    }
+fn filter_list_item_to_list_item(value: FilterListItem) -> ListItem<'static> {
+    let t = theme();
+    let line = if value.is_selected {
+        Line::from(vec![
+            Span::styled(" ✓ ", Style::default().fg(t.status_success).bold()),
+            Span::styled(value.name, Style::default().fg(t.accent_highlight).bold()),
+        ])
+    } else {
+        Line::from(vec![Span::raw("   "), Span::styled(value.name, Style::default().fg(t.text_secondary))])
+    };
+    ListItem::new(line)
 }
 
 impl From<ListItemId> for ListItem<'_> {
@@ -125,7 +124,7 @@ impl StatefulWidgetFrame for MangadexFilterWidget {
             match filter {
                 MangaFilters::PublicationStatus => {
                     render_filter_list(
-                        state.publication_status.items.clone(),
+                        state.publication_status.items.iter().cloned().map(filter_list_item_to_list_item),
                         current_filter_area,
                         buf,
                         &mut state.publication_status.state,
@@ -133,19 +132,24 @@ impl StatefulWidgetFrame for MangadexFilterWidget {
                 },
                 MangaFilters::ContentRating => {
                     render_filter_list(
-                        state.content_rating.items.clone(),
+                        state.content_rating.items.iter().cloned().map(filter_list_item_to_list_item),
                         current_filter_area,
                         buf,
                         &mut state.content_rating.state,
                     );
                 },
                 MangaFilters::SortBy => {
-                    render_filter_list(state.sort_by_state.items.clone(), current_filter_area, buf, &mut state.sort_by_state.state);
+                    render_filter_list(
+                        state.sort_by_state.items.iter().cloned().map(filter_list_item_to_list_item),
+                        current_filter_area,
+                        buf,
+                        &mut state.sort_by_state.state,
+                    );
                 },
                 MangaFilters::Tags => self.render_tags_list(current_filter_area, frame, state),
                 MangaFilters::MagazineDemographic => {
                     render_filter_list(
-                        state.magazine_demographic.items.clone(),
+                        state.magazine_demographic.items.iter().cloned().map(filter_list_item_to_list_item),
                         current_filter_area,
                         buf,
                         &mut state.magazine_demographic.state,
@@ -234,7 +238,12 @@ impl StatefulWidgetFrame for MangadexFilterWidget {
                     render_search_bar(state.is_typing, input_help, &state.artist_state.search_bar, frame, input_area);
                 },
                 MangaFilters::Languages => {
-                    render_filter_list(state.lang_state.items.clone(), current_filter_area, buf, &mut state.lang_state.state);
+                    render_filter_list(
+                        state.lang_state.items.iter().cloned().map(filter_list_item_to_list_item),
+                        current_filter_area,
+                        buf,
+                        &mut state.lang_state.state,
+                    );
                 },
             }
         }

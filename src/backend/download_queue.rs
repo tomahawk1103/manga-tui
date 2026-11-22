@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender};
+use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::backend::AppDirectories;
 use crate::backend::database::{Database, SetChapterDownloaded};
@@ -13,7 +13,6 @@ use crate::backend::manga_downloader::pdf_downloader::PdfDownloader;
 use crate::backend::manga_downloader::raw_images::RawImagesDownloader;
 use crate::backend::manga_downloader::{ChapterToDownloadSanitized, MangaDownloader};
 use crate::backend::manga_provider::{Chapter, Languages, MangaProvider, MangaProviders};
-use crate::backend::tui::Events;
 use crate::config::{DownloadType, MangaTuiConfig};
 
 #[derive(Clone, Debug, PartialEq)]
@@ -50,6 +49,18 @@ pub struct DownloadQueueProgress {
     pub remaining_items: usize,
 }
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum DownloadQueueEvent {
+    Progress(DownloadQueueProgress),
+    ChapterFinished {
+        manga_id: String,
+        chapter_id: String,
+    },
+    Finished(usize),
+}
+
+pub type DownloadQueueEventSink = Arc<dyn Fn(DownloadQueueEvent) + Send + Sync>;
+
 #[derive(Debug)]
 pub enum DownloadQueueCommand {
     Enqueue(EnqueueDownloadBatch),
@@ -58,7 +69,7 @@ pub enum DownloadQueueCommand {
 
 pub struct DownloadQueueWorker<T: MangaProvider> {
     client: Arc<T>,
-    global_event_tx: UnboundedSender<Events>,
+    event_sink: DownloadQueueEventSink,
     command_rx: UnboundedReceiver<DownloadQueueCommand>,
     queue: VecDeque<EnqueueChapterItem>,
     completed_in_batch: usize,
@@ -67,14 +78,10 @@ pub struct DownloadQueueWorker<T: MangaProvider> {
 }
 
 impl<T: MangaProvider + 'static> DownloadQueueWorker<T> {
-    pub fn new(
-        client: Arc<T>,
-        global_event_tx: UnboundedSender<Events>,
-        command_rx: UnboundedReceiver<DownloadQueueCommand>,
-    ) -> Self {
+    pub fn new(client: Arc<T>, event_sink: DownloadQueueEventSink, command_rx: UnboundedReceiver<DownloadQueueCommand>) -> Self {
         Self {
             client,
-            global_event_tx,
+            event_sink,
             command_rx,
             queue: VecDeque::new(),
             completed_in_batch: 0,
@@ -118,7 +125,7 @@ impl<T: MangaProvider + 'static> DownloadQueueWorker<T> {
                 self.send_progress(true, &item.manga_title, &item.chapter.chapter_number, 0.0);
 
                 let config = MangaTuiConfig::get().effective();
-                let event_tx_clone = self.global_event_tx.clone();
+                let event_sink_clone = Arc::clone(&self.event_sink);
                 let manga_title_clone = item.manga_title.clone();
                 let chapter_num_clone = item.chapter.chapter_number.clone();
                 let completed = self.completed_in_batch;
@@ -134,18 +141,16 @@ impl<T: MangaProvider + 'static> DownloadQueueWorker<T> {
                             &item.manga_id,
                             config.image_quality,
                             move |percent, _| {
-                                event_tx_clone
-                                    .send(Events::DownloadQueueProgress(DownloadQueueProgress {
-                                        is_downloading: true,
-                                        current_manga_title: manga_title_clone.clone(),
-                                        current_chapter_number: chapter_num_clone.clone(),
-                                        current_page_percentage: percent,
-                                        completed_in_batch: completed,
-                                        failed_in_batch: failed,
-                                        total_in_batch: total,
-                                        remaining_items: remaining + 1,
-                                    }))
-                                    .ok();
+                                (event_sink_clone)(DownloadQueueEvent::Progress(DownloadQueueProgress {
+                                    is_downloading: true,
+                                    current_manga_title: manga_title_clone.clone(),
+                                    current_chapter_number: chapter_num_clone.clone(),
+                                    current_page_percentage: percent,
+                                    completed_in_batch: completed,
+                                    failed_in_batch: failed,
+                                    total_in_batch: total,
+                                    remaining_items: remaining + 1,
+                                }));
                             },
                         )
                         .await
@@ -153,18 +158,16 @@ impl<T: MangaProvider + 'static> DownloadQueueWorker<T> {
                     } else {
                         self.client
                             .get_chapter_pages(&item.chapter.id, &item.manga_id, config.image_quality, move |percent, _| {
-                                event_tx_clone
-                                    .send(Events::DownloadQueueProgress(DownloadQueueProgress {
-                                        is_downloading: true,
-                                        current_manga_title: manga_title_clone.clone(),
-                                        current_chapter_number: chapter_num_clone.clone(),
-                                        current_page_percentage: percent,
-                                        completed_in_batch: completed,
-                                        failed_in_batch: failed,
-                                        total_in_batch: total,
-                                        remaining_items: remaining + 1,
-                                    }))
-                                    .ok();
+                                (event_sink_clone)(DownloadQueueEvent::Progress(DownloadQueueProgress {
+                                    is_downloading: true,
+                                    current_manga_title: manga_title_clone.clone(),
+                                    current_chapter_number: chapter_num_clone.clone(),
+                                    current_page_percentage: percent,
+                                    completed_in_batch: completed,
+                                    failed_in_batch: failed,
+                                    total_in_batch: total,
+                                    remaining_items: remaining + 1,
+                                }));
                             })
                             .await
                             .map_err(|e| e.to_string())
@@ -260,12 +263,10 @@ impl<T: MangaProvider + 'static> DownloadQueueWorker<T> {
                             }
 
                             self.completed_in_batch += 1;
-                            self.global_event_tx
-                                .send(Events::DownloadQueueChapterFinished {
-                                    manga_id: item.manga_id,
-                                    chapter_id,
-                                })
-                                .ok();
+                            (self.event_sink)(DownloadQueueEvent::ChapterFinished {
+                                manga_id: item.manga_id,
+                                chapter_id,
+                            });
                         }
                     },
                     Err(e) => {
@@ -283,7 +284,7 @@ impl<T: MangaProvider + 'static> DownloadQueueWorker<T> {
                     self.failed_in_batch = 0;
                     self.total_in_batch = 0;
                     self.send_progress(false, "", "", 0.0);
-                    self.global_event_tx.send(Events::DownloadQueueFinished(total)).ok();
+                    (self.event_sink)(DownloadQueueEvent::Finished(total));
                 } else {
                     self.send_progress(false, "", "", 0.0);
                 }
@@ -323,17 +324,15 @@ impl<T: MangaProvider + 'static> DownloadQueueWorker<T> {
     }
 
     fn send_progress(&self, is_downloading: bool, title: &str, ch_num: &str, percent: f64) {
-        self.global_event_tx
-            .send(Events::DownloadQueueProgress(DownloadQueueProgress {
-                is_downloading,
-                current_manga_title: title.to_string(),
-                current_chapter_number: ch_num.to_string(),
-                current_page_percentage: percent,
-                completed_in_batch: self.completed_in_batch,
-                failed_in_batch: self.failed_in_batch,
-                total_in_batch: self.total_in_batch,
-                remaining_items: self.queue.len(),
-            }))
-            .ok();
+        (self.event_sink)(DownloadQueueEvent::Progress(DownloadQueueProgress {
+            is_downloading,
+            current_manga_title: title.to_string(),
+            current_chapter_number: ch_num.to_string(),
+            current_page_percentage: percent,
+            completed_in_batch: self.completed_in_batch,
+            failed_in_batch: self.failed_in_batch,
+            total_in_batch: self.total_in_batch,
+            remaining_items: self.queue.len(),
+        }));
     }
 }

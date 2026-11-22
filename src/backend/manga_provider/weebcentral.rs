@@ -2,8 +2,7 @@ use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
 
-use filter_state::{WeebcentralFilterState, WeebcentralFiltersProvider};
-use filter_widget::WeebcentralFilterWidget;
+use filter_state::WeebcentralFilterState;
 use http::header::{ACCEPT, ACCEPT_ENCODING, ACCEPT_LANGUAGE, CACHE_CONTROL, CONNECTION, REFERER};
 use http::{HeaderMap, HeaderValue, StatusCode};
 use manga_tui::SearchTerm;
@@ -27,7 +26,6 @@ use crate::config::ImageQuality;
 use crate::global::get_random_user_agent;
 
 pub mod filter_state;
-pub mod filter_widget;
 mod response;
 
 pub static WEEBCENTRAL_BASE_URL: &str = "https://weebcentral.com/";
@@ -601,9 +599,7 @@ impl SearchChapterById for WeebcentralProvider {
 impl ReaderPageProvider for WeebcentralProvider {}
 
 impl SearchPageProvider for WeebcentralProvider {
-    type FiltersHandler = WeebcentralFiltersProvider;
     type InnerState = WeebcentralFilterState;
-    type Widget = WeebcentralFilterWidget;
 
     async fn search_mangas(
         &self,

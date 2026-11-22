@@ -53,8 +53,7 @@ use super::{
 use crate::backend::cache::{CacheDuration, Cacher, InsertEntry};
 use crate::backend::html_parser::HtmlElement;
 use crate::backend::html_parser::scraper::Scraper;
-use crate::backend::manga_provider::mangapill::filter_state::{MangaPillFilterState, MangaPillFiltersProvider};
-use crate::backend::manga_provider::mangapill::filter_widget::MangaPillFilterWidget;
+use crate::backend::manga_provider::mangapill::filter_state::MangaPillFilterState;
 use crate::backend::manga_provider::mangapill::response::{
     ChapterPageDataError, ChapterPageDataParser, ChapterPagesScraper, ChaptersError, LatestMangaError, MangaPageDataParser,
     MangaPageError, MangaPillChaptersParser, PopularMangaParseError, SearchPageError, SearchPageMangasParser,
@@ -63,7 +62,6 @@ use crate::backend::manga_provider::{ChapterToRead, Genres, SearchManga};
 use crate::global::get_random_user_agent;
 
 pub mod filter_state;
-pub mod filter_widget;
 mod response;
 
 /// Base URL for the MangaPill website
@@ -981,9 +979,7 @@ impl ReaderPageProvider for MangaPillProvider {}
 /// - `InnerState`: `MangaPillFilterState` - Filter state (currently empty for MangaPill)
 /// - `Widget`: `MangaPillFilterWidget` - UI widget for displaying filters
 impl SearchPageProvider for MangaPillProvider {
-    type FiltersHandler = MangaPillFiltersProvider;
     type InnerState = MangaPillFilterState;
-    type Widget = MangaPillFilterWidget;
 
     async fn search_mangas(
         &self,

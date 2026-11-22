@@ -76,6 +76,22 @@ pub enum Events {
     CloudOAuthFinished(Result<crate::backend::cloud::CloudConnectionState, String>),
 }
 
+impl From<super::download_queue::DownloadQueueEvent> for Events {
+    fn from(event: super::download_queue::DownloadQueueEvent) -> Self {
+        match event {
+            super::download_queue::DownloadQueueEvent::Progress(progress) => Self::DownloadQueueProgress(progress),
+            super::download_queue::DownloadQueueEvent::ChapterFinished {
+                manga_id,
+                chapter_id,
+            } => Self::DownloadQueueChapterFinished {
+                manga_id,
+                chapter_id,
+            },
+            super::download_queue::DownloadQueueEvent::Finished(total) => Self::DownloadQueueFinished(total),
+        }
+    }
+}
+
 static MEASURED_FONT_SIZE: std::sync::OnceLock<(u16, u16)> = std::sync::OnceLock::new();
 
 pub fn resolve_protocol_override(
@@ -425,7 +441,7 @@ pub fn get_picker() -> Option<Picker> {
 }
 
 ///Start app's main loop
-pub async fn run_app<T: MangaProvider>(
+pub async fn run_app<T: MangaProvider + crate::view::provider_filters::TuiSearchProvider>(
     mut terminal: Terminal<impl Backend>,
     api_client: T,
     manga_tracker: Option<impl MangaTracker>,

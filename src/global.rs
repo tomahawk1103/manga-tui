@@ -1,18 +1,11 @@
 use std::sync::LazyLock;
 
-use once_cell::sync::{Lazy, OnceCell};
+use once_cell::sync::OnceCell;
 use rand::Rng;
-use ratatui::style::{Style, Stylize};
 
 use crate::backend::manga_provider::Languages;
 
 pub static PREFERRED_LANGUAGE: OnceCell<Languages> = OnceCell::new();
-
-pub static INSTRUCTIONS_STYLE: Lazy<Style> = Lazy::new(|| Style::default().bold().underlined().yellow());
-
-pub static ERROR_STYLE: Lazy<Style> = Lazy::new(|| Style::default().bold().underlined().red().on_black());
-
-pub static CURRENT_LIST_ITEM_STYLE: Lazy<Style> = Lazy::new(|| Style::default().on_blue());
 
 pub static APP_USER_AGENT: LazyLock<String> = LazyLock::new(|| {
     format!(

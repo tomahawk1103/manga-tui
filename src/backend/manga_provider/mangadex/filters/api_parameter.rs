@@ -6,8 +6,19 @@ use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter};
 
-use super::filter_provider::{TagListItem, TagListItemState};
 use crate::backend::manga_provider::Languages;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct FilterListItem {
+    pub is_selected: bool,
+    pub name: String,
+}
+
+impl FilterListItem {
+    pub fn toggle(&mut self) {
+        self.is_selected = !self.is_selected;
+    }
+}
 
 pub trait IntoParam: Debug {
     fn into_param(self) -> String;
@@ -85,26 +96,6 @@ pub struct TagData {
 impl TagData {
     pub fn new(id: String, state: TagSelection, name: String) -> Self {
         Self { id, state, name }
-    }
-}
-
-impl From<&TagListItem> for TagData {
-    fn from(value: &TagListItem) -> Self {
-        Self {
-            id: value.id.clone(),
-            state: if value.state == TagListItemState::Included { TagSelection::Included } else { TagSelection::Excluded },
-            name: value.name.to_string(),
-        }
-    }
-}
-
-impl From<&TagData> for TagListItem {
-    fn from(value: &TagData) -> Self {
-        Self {
-            id: value.id.to_string(),
-            name: value.name.to_string(),
-            state: TagListItemState::default(),
-        }
     }
 }
 

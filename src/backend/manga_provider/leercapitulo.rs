@@ -3,8 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use filter_state::{LeercapituloFilterState, LeercapituloFiltersProvider};
-use filter_widget::LeercapituloFilterWidget;
+use filter_state::LeercapituloFilterState;
 use http::header::{ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, REFERER, USER_AGENT};
 use http::{HeaderMap, HeaderValue, StatusCode};
 use manga_tui::SearchTerm;
@@ -24,7 +23,6 @@ use crate::backend::manga_provider::ChapterToRead;
 use crate::config::ImageQuality;
 
 pub mod filter_state;
-pub mod filter_widget;
 pub mod response;
 
 /// LeerCapitulo: `https://www.leercapitulo.co`
@@ -409,9 +407,7 @@ impl MangaPageProvider for LeercapituloProvider {
 }
 
 impl SearchPageProvider for LeercapituloProvider {
-    type FiltersHandler = LeercapituloFiltersProvider;
     type InnerState = LeercapituloFilterState;
-    type Widget = LeercapituloFilterWidget;
 
     async fn search_mangas(
         &self,

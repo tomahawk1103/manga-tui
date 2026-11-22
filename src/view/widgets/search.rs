@@ -9,9 +9,8 @@ use tui_widget_list::PreRender;
 use crate::backend::manga_provider::{Genres, MangaProviders, MangaStatus, SearchManga};
 use crate::backend::multi_provider::GroupedSearchManga;
 use crate::common::{ImageState, clear_image_canvas, render_stateful_image_cleared};
-use crate::global::CURRENT_LIST_ITEM_STYLE;
 use crate::i18n::tr;
-use crate::theme::theme;
+use crate::theme::{CURRENT_LIST_ITEM_STYLE, theme};
 
 pub(crate) fn provider_pill_colors(provider: MangaProviders) -> (Color, Color) {
     match provider {
@@ -253,7 +252,7 @@ impl<'a> MangaPreview<'a> {
             let mut tag_spans: Vec<Span<'static>> =
                 vec![Span::styled(format!("{} ", tr("🏷 Géneros:", "🏷 Genres:")), Style::default().fg(t.accent_primary).bold())];
             for genre in self.genres {
-                tag_spans.push(genre.clone().into());
+                tag_spans.push(crate::utils::genre_span(genre.clone()));
                 tag_spans.push(Span::raw(" "));
             }
             Paragraph::new(Line::from(tag_spans)).wrap(Wrap { trim: true }).render(tags_area, buf);

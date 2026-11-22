@@ -1,7 +1,8 @@
-use clap::crate_name;
 use keyring::Entry;
 
 use super::SecretStorage;
+
+const SERVICE_NAME: &str = "manga-tui";
 
 /// The [`keyring`](https://crates.io/crates/keyring) secret storage provider which uses each operating
 /// sistem's secret service to store sensitive data
@@ -15,7 +16,7 @@ pub struct KeyringStorage {
 impl KeyringStorage {
     pub fn new() -> Self {
         Self {
-            service_name: crate_name!(),
+            service_name: SERVICE_NAME,
         }
     }
 }

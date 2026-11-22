@@ -1,12 +1,35 @@
 use chrono::NaiveDate;
 use ratatui::Frame;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Margin, Rect};
-use ratatui::style::{Modifier, Style, Stylize};
+use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Paragraph, Widget, Wrap};
 use tui_input::Input;
 
+use crate::backend::manga_provider::{Genres, MangaStatus, Rating};
 use crate::i18n::tr;
+
+pub fn rating_style(r: &Rating) -> Style {
+    match r {
+        Rating::Moderate => Style::new().black().bg(Color::Yellow),
+        Rating::Doujinshi => Style::new().black().bg(Color::Blue),
+        Rating::Normal => Style::new(),
+        Rating::Nsfw => Style::new().black().bg(Color::Red),
+    }
+}
+
+pub fn genre_span(g: Genres) -> Span<'static> {
+    Span::styled(format!(" {} ", g.title), rating_style(&g.rating))
+}
+
+pub fn status_span(s: MangaStatus) -> Span<'static> {
+    match s {
+        MangaStatus::Hiatus => Span::raw(" 🟡 hiatus"),
+        MangaStatus::Ongoing => Span::raw(" 🟢 ongoing"),
+        MangaStatus::Cancelled => Span::raw(" 🟠 cancelled"),
+        MangaStatus::Completed => Span::raw(" 🔵 completed"),
+    }
+}
 
 /// Convert a `NaiveDate` to a user friendly date, like: "2 days ago" or "hace 2 días"
 pub fn display_dates_since_publication(date: NaiveDate) -> String {

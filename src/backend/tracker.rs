@@ -6,6 +6,16 @@ use serde::{Deserialize, Serialize};
 
 pub mod anilist;
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
+pub struct Credentials {
+    pub access_token: String,
+    pub client_id: String,
+}
+
+pub trait AnilistTokenChecker {
+    fn verify_token(&self, token: String) -> impl Future<Output = Result<bool, Box<dyn Error>>> + Send;
+}
+
 #[derive(Debug, Deserialize, Serialize, Default, PartialEq, Eq)]
 pub struct MangaToTrack {
     pub id: String,

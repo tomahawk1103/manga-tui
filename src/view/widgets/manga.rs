@@ -11,9 +11,8 @@ use tokio::sync::mpsc::UnboundedSender;
 use tui_widget_list::PreRender;
 
 use crate::backend::manga_provider::Chapter;
-use crate::global::ERROR_STYLE;
 use crate::i18n::tr;
-use crate::theme::theme;
+use crate::theme::{ERROR_STYLE, theme};
 use crate::utils::display_dates_since_publication;
 use crate::view::pages::manga::MangaPageEvents;
 

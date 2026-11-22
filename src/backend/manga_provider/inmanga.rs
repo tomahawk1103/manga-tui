@@ -3,8 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use filter_state::{InmangaFilterState, InmangaFiltersProvider};
-use filter_widget::InmangaFilterWidget;
+use filter_state::InmangaFilterState;
 use http::header::{ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, REFERER, USER_AGENT};
 use http::{HeaderMap, HeaderValue, StatusCode};
 use manga_tui::SearchTerm;
@@ -24,7 +23,6 @@ use crate::backend::manga_provider::ChapterToRead;
 use crate::config::ImageQuality;
 
 pub mod filter_state;
-pub mod filter_widget;
 pub mod response;
 
 /// InManga: `https://inmanga.com/`
@@ -419,9 +417,7 @@ impl SearchChapterById for InmangaProvider {
 impl ReaderPageProvider for InmangaProvider {}
 
 impl SearchPageProvider for InmangaProvider {
-    type FiltersHandler = InmangaFiltersProvider;
     type InnerState = InmangaFilterState;
-    type Widget = InmangaFilterWidget;
 
     async fn search_mangas(
         &self,

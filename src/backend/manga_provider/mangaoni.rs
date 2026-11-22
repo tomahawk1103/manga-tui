@@ -3,8 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use filter_state::{MangaoniFilterState, MangaoniFiltersProvider};
-use filter_widget::MangaoniFilterWidget;
+use filter_state::MangaoniFilterState;
 use http::header::{ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, CONTENT_TYPE, REFERER, USER_AGENT};
 use http::{HeaderMap, HeaderValue, StatusCode};
 use manga_tui::SearchTerm;
@@ -24,7 +23,6 @@ use crate::backend::manga_provider::ChapterToRead;
 use crate::config::ImageQuality;
 
 pub mod filter_state;
-pub mod filter_widget;
 pub mod response;
 
 /// MangaOni: `https://manga-oni.com`
@@ -428,9 +426,7 @@ impl MangaPageProvider for MangaoniProvider {
 }
 
 impl SearchPageProvider for MangaoniProvider {
-    type FiltersHandler = MangaoniFiltersProvider;
     type InnerState = MangaoniFilterState;
-    type Widget = MangaoniFilterWidget;
 
     async fn search_mangas(
         &self,

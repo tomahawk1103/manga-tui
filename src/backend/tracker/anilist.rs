@@ -13,8 +13,7 @@ use reqwest::{Body, Client, StatusCode, Url};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
-use crate::backend::tracker::{MangaToTrack, MangaTracker, MarkAsRead};
-use crate::cli::AnilistTokenChecker;
+use crate::backend::tracker::{AnilistTokenChecker, MangaToTrack, MangaTracker, MarkAsRead};
 use crate::global::APP_USER_AGENT;
 
 #[derive(Debug, Deserialize, Serialize)]

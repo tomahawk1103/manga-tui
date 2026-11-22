@@ -12,14 +12,15 @@ use tokio::sync::mpsc::{self, UnboundedReceiver, UnboundedSender};
 use tui_input::Input;
 use tui_input::backend::crossterm::EventHandler;
 
-use super::super::{API_URL_BASE, COVER_IMG_URL_BASE};
 use crate::backend::cache::in_memory::InMemoryCache;
-use crate::backend::manga_provider::mangadex::MangadexClient;
+use crate::backend::manga_provider::Languages;
 use crate::backend::manga_provider::mangadex::api_responses::authors::AuthorsResponse;
 use crate::backend::manga_provider::mangadex::api_responses::tags::TagsResponse;
+pub use crate::backend::manga_provider::mangadex::filters::api_parameter::FilterListItem;
 use crate::backend::manga_provider::mangadex::filters::api_parameter::*;
-use crate::backend::manga_provider::{EventHandler as FiltersEventHandler, FiltersHandler, Languages};
+use crate::backend::manga_provider::mangadex::{API_URL_BASE, COVER_IMG_URL_BASE, MangadexClient};
 use crate::backend::tui::Events;
+use crate::view::provider_filters::{EventHandler as FiltersEventHandler, FiltersHandler};
 
 #[derive(Debug, PartialEq)]
 pub enum FilterEvents {
@@ -55,18 +56,6 @@ pub const FILTERS: [MangaFilters; 8] = [
     MangaFilters::Authors,
     MangaFilters::Artists,
 ];
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct FilterListItem {
-    pub is_selected: bool,
-    pub name: String,
-}
-
-impl FilterListItem {
-    pub fn toggle(&mut self) {
-        self.is_selected = !self.is_selected;
-    }
-}
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct ContentRatingState;
@@ -484,6 +473,26 @@ pub struct TagListItem {
     pub id: String,
     pub name: String,
     pub state: TagListItemState,
+}
+
+impl From<&TagListItem> for TagData {
+    fn from(value: &TagListItem) -> Self {
+        Self {
+            id: value.id.clone(),
+            state: if value.state == TagListItemState::Included { TagSelection::Included } else { TagSelection::Excluded },
+            name: value.name.to_string(),
+        }
+    }
+}
+
+impl From<&TagData> for TagListItem {
+    fn from(value: &TagData) -> Self {
+        Self {
+            id: value.id.to_string(),
+            name: value.name.to_string(),
+            state: TagListItemState::default(),
+        }
+    }
 }
 
 impl TagListItem {
@@ -1134,8 +1143,8 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
-    use crate::backend::manga_provider::mangadex::authors::Data;
-    use crate::backend::manga_provider::mangadex::tags::TagsData;
+    use crate::backend::manga_provider::mangadex::api_responses::authors::Data;
+    use crate::backend::manga_provider::mangadex::api_responses::tags::TagsData;
 
     #[test]
     fn language_from_filter_list_item() {

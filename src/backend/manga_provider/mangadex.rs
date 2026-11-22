@@ -6,9 +6,7 @@ use std::time::Duration as StdDuration;
 use api_responses::*;
 use bytes::Bytes;
 use chrono::Months;
-use filter_widget::MangadexFilterWidget;
 use filters::api_parameter::{Filters, IntoParam};
-use filters::filter_provider::MangadexFilterProvider;
 use http::header::{ACCEPT, ACCEPT_ENCODING, CACHE_CONTROL};
 use http::{HeaderMap, HeaderValue, StatusCode};
 use manga_tui::SearchTerm;
@@ -25,10 +23,8 @@ use crate::backend::database::ChapterBookmarked;
 use crate::backend::manga_provider::filters::FiltersCache;
 use crate::config::ImageQuality;
 use crate::global::APP_USER_AGENT;
-use crate::view::widgets::StatefulWidgetFrame;
 
 pub mod api_responses;
-pub mod filter_widget;
 pub mod filters;
 
 pub static API_URL_BASE: &str = "https://api.mangadex.org";
@@ -163,14 +159,14 @@ impl MangadexClient {
     }
 
     /// Request the tags / genres available on mangadex used in `FilterWidget`
-    async fn get_tags(&self) -> Result<Response, reqwest::Error> {
+    pub async fn get_tags(&self) -> Result<Response, reqwest::Error> {
         let endpoint = self.endpoint("manga/tag");
 
         self.client.get(endpoint).send().await
     }
 
     /// Used in `FilterWidget` to search an author and artist
-    async fn get_authors(&self, name_to_search: SearchTerm) -> Result<Response, reqwest::Error> {
+    pub async fn get_authors(&self, name_to_search: SearchTerm) -> Result<Response, reqwest::Error> {
         let endpoint = self.endpoint(&format!("author?name={name_to_search}"));
 
         self.client.get(endpoint).send().await
@@ -962,9 +958,7 @@ impl FetchChapterBookmarked for MangadexClient {
 impl ReaderPageProvider for MangadexClient {}
 
 impl SearchPageProvider for MangadexClient {
-    type FiltersHandler = MangadexFilterProvider;
     type InnerState = Filters;
-    type Widget = MangadexFilterWidget;
 
     async fn search_mangas(
         &self,

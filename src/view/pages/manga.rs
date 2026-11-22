@@ -589,7 +589,7 @@ where
             let mut genre_spans: Vec<Span<'_>> =
                 vec![Span::styled(format!("🏷 {} ", tr("Géneros:", "Genres:")), Style::default().fg(t.accent_primary).bold())];
             for g in &self.manga.genres {
-                genre_spans.push(g.clone().into());
+                genre_spans.push(crate::utils::genre_span(g.clone()));
                 genre_spans.push(Span::raw(" "));
             }
             Paragraph::new(Line::from(genre_spans)).wrap(Wrap { trim: true }).render(genres_area, buf);

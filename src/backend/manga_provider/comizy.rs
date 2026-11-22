@@ -3,8 +3,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use bytes::Bytes;
-use filter_state::{ComizyFilterState, ComizyFiltersProvider};
-use filter_widget::ComizyFilterWidget;
+use filter_state::ComizyFilterState;
 use http::header::{ACCEPT, ACCEPT_LANGUAGE, CACHE_CONTROL, REFERER, USER_AGENT};
 use http::{HeaderMap, HeaderValue, StatusCode};
 use manga_tui::SearchTerm;
@@ -24,7 +23,6 @@ use crate::backend::manga_provider::ChapterToRead;
 use crate::config::ImageQuality;
 
 pub mod filter_state;
-pub mod filter_widget;
 pub mod response;
 
 /// Comizy: `https://comizy.io`
@@ -462,9 +460,7 @@ impl MangaPageProvider for ComizyProvider {
 }
 
 impl SearchPageProvider for ComizyProvider {
-    type FiltersHandler = ComizyFiltersProvider;
     type InnerState = ComizyFilterState;
-    type Widget = ComizyFilterWidget;
 
     async fn search_mangas(
         &self,

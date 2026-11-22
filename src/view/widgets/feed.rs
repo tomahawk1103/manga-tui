@@ -8,12 +8,11 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, List, ListItem, Paragraph, StatefulWidget, Widget, WidgetRef, Wrap};
 use tui_widget_list::{ListBuilder, ListView};
 
-use crate::backend::database::MangaHistoryResponse;
+use crate::backend::database::{MangaHistoryResponse, MangaHistoryType};
 use crate::backend::manga_provider::{Languages, LatestChapter, MangaProviders};
 use crate::backend::offline::{OfflineManga, format_size_bytes};
-use crate::global::CURRENT_LIST_ITEM_STYLE;
 use crate::i18n::tr;
-use crate::theme::theme;
+use crate::theme::{CURRENT_LIST_ITEM_STYLE, theme};
 use crate::utils::display_dates_since_publication;
 use crate::view::widgets::ModalBuilder;
 
@@ -162,6 +161,17 @@ impl FeedTabs {
             Self::ContinueReading => Self::Library,
             Self::Library => Self::Downloads,
             Self::Downloads => Self::Timeline,
+        }
+    }
+}
+
+impl From<FeedTabs> for MangaHistoryType {
+    fn from(value: FeedTabs) -> Self {
+        match value {
+            FeedTabs::Timeline => Self::ReadingHistory,
+            FeedTabs::ContinueReading => Self::ReadingHistory,
+            FeedTabs::Library => Self::PlanToRead,
+            FeedTabs::Downloads => Self::ReadingHistory,
         }
     }
 }

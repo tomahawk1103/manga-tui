@@ -21,17 +21,14 @@ use tui_widget_list::ListState;
 
 use crate::backend::database::{Database, MangaPlanToReadSave};
 use crate::backend::error_log::{ErrorType, write_to_error_log};
-use crate::backend::manga_provider::{
-    EventHandler as FilterEventHandler, FiltersHandler, GetMangasResponse, Manga, MangaProviders, Pagination, SearchManga,
-    SearchPageProvider,
-};
+use crate::backend::manga_provider::{GetMangasResponse, Manga, MangaProviders, Pagination, SearchManga, SearchPageProvider};
 use crate::backend::tracker::{MangaTracker, track_manga_plan_to_read};
 use crate::backend::tui::Events;
 use crate::common::ImageState;
-use crate::global::ERROR_STYLE;
 use crate::i18n::tr;
-use crate::theme::theme;
+use crate::theme::{ERROR_STYLE, theme};
 use crate::utils::{centered_rect, render_search_bar};
+use crate::view::provider_filters::{EventHandler as FilterEventHandler, FiltersHandler, TuiSearchProvider};
 use crate::view::widgets::search::*;
 use crate::view::widgets::{Component, StatefulWidgetFrame};
 
@@ -486,7 +483,7 @@ pub enum InputMode {
 
 pub struct SearchPage<T, S>
 where
-    T: SearchPageProvider,
+    T: SearchPageProvider + TuiSearchProvider,
     S: MangaTracker,
 {
     /// This tx "talks" to the app
@@ -553,7 +550,7 @@ impl MangasFoundList {
 
 impl<T, S> Component for SearchPage<T, S>
 where
-    T: SearchPageProvider,
+    T: SearchPageProvider + TuiSearchProvider,
     S: MangaTracker,
 {
     type Actions = SearchPageActions;
@@ -681,7 +678,7 @@ where
 
 impl<T, S> SearchPage<T, S>
 where
-    T: SearchPageProvider,
+    T: SearchPageProvider + TuiSearchProvider,
     S: MangaTracker,
 {
     pub fn new(
@@ -2356,8 +2353,8 @@ mod test {
     #[tokio::test]
     async fn test_all_providers_pagination_w_and_b() {
         use super::*;
-        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::global::test_utils::TrackerTest;
+        use crate::view::provider_filters::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::view::widgets::press_key;
 
         let mut search_page: SearchPage<MockMangaPageProvider, TrackerTest> = SearchPage::new(
@@ -2428,8 +2425,8 @@ mod test {
     #[tokio::test]
     async fn test_search_history_cycling() {
         use super::*;
-        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::global::test_utils::TrackerTest;
+        use crate::view::provider_filters::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::view::widgets::press_key;
 
         let mut search_page: SearchPage<MockMangaPageProvider, TrackerTest> = SearchPage::new(
@@ -2482,8 +2479,8 @@ mod test {
     async fn test_language_filter_toggle_and_filtering() {
         use super::*;
         use crate::backend::manga_provider::MangaProviders;
-        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::global::test_utils::TrackerTest;
+        use crate::view::provider_filters::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::view::widgets::press_key;
 
         let mut search_page: SearchPage<MockMangaPageProvider, TrackerTest> = SearchPage::new(
@@ -2671,8 +2668,8 @@ mod test {
     #[tokio::test]
     async fn test_discovery_navigation_keys_and_tick() {
         use super::*;
-        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::global::test_utils::TrackerTest;
+        use crate::view::provider_filters::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::view::widgets::press_key;
 
         let mut search_page: SearchPage<MockMangaPageProvider, TrackerTest> = SearchPage::new(
@@ -2752,8 +2749,8 @@ mod test {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 
         use super::*;
-        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::global::test_utils::TrackerTest;
+        use crate::view::provider_filters::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
 
         let mut search_page: SearchPage<MockMangaPageProvider, TrackerTest> = SearchPage::new(
             None,
@@ -2814,8 +2811,8 @@ mod test {
 
         use super::*;
         use crate::backend::manga_provider::MangaProviders;
-        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::global::test_utils::TrackerTest;
+        use crate::view::provider_filters::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::view::widgets::press_key;
 
         let mut search_page: SearchPage<MockMangaPageProvider, TrackerTest> = SearchPage::new(
@@ -2904,8 +2901,8 @@ mod test {
     #[tokio::test]
     async fn test_personal_discovery_unique_recent_searches_and_refresh_clamps_row() {
         use super::*;
-        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::global::test_utils::TrackerTest;
+        use crate::view::provider_filters::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
 
         let history = vec![
             "Boku no kokoro".to_string(),
@@ -2951,8 +2948,8 @@ mod test {
 
         use super::*;
         use crate::backend::manga_provider::MangaProviders;
-        use crate::backend::manga_provider::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
         use crate::global::test_utils::TrackerTest;
+        use crate::view::provider_filters::mock::{MockFilterState, MockFiltersHandler, MockMangaPageProvider, MockWidgetFilter};
 
         let mut search_page: SearchPage<MockMangaPageProvider, TrackerTest> = SearchPage::new(
             None,

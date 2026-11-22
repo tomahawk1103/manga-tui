@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::error::Error;
-use std::future::Future;
 use std::io::BufRead;
 use std::process::exit;
 
@@ -14,6 +13,7 @@ use crate::backend::manga_provider::{Languages, MangaProviders};
 use crate::backend::secrets::SecretStorage;
 use crate::backend::secrets::keyring::KeyringStorage;
 use crate::backend::tracker::anilist::{self, BASE_ANILIST_API_URL};
+pub use crate::backend::tracker::{AnilistTokenChecker, Credentials};
 use crate::backend::{APP_DATA_DIR, AppDirectories};
 use crate::config::{MangaTuiConfig, get_config_directory_path, read_config_file};
 use crate::global::PREFERRED_LANGUAGE;
@@ -136,12 +136,6 @@ impl From<AnilistCredentials> for String {
     fn from(value: AnilistCredentials) -> Self {
         value.to_string()
     }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
-pub struct Credentials {
-    pub access_token: String,
-    pub client_id: String,
 }
 
 pub fn check_anilist_credentials_are_stored(secret_provider: impl SecretStorage) -> Result<Option<Credentials>, Box<dyn Error>> {
@@ -386,10 +380,6 @@ impl CliArgs {
             },
         }
     }
-}
-
-pub trait AnilistTokenChecker {
-    fn verify_token(&self, token: String) -> impl Future<Output = Result<bool, Box<dyn Error>>> + Send;
 }
 
 async fn run_cli_update(check_only: bool, assume_yes: bool) -> Result<(), String> {
