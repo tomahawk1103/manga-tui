@@ -17,14 +17,13 @@ pub const ANIME_FRAME_COUNT: usize = 16;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum AnimeSceneKind {
-    /// Sakura Cyber-Idol Girl: Twin-tail cyan/pink anime character with big expressive sparkling eyes, breathing, blinking, hair
-    /// swaying, and sakura petals
+    /// Frieren · Blue Moonweed Field: Frieren with silver twin-tails, elf ears, red mirror-lotus earrings, white/gold capelet, and
+    /// glowing blue petals
     #[default]
     CyberpunkSakura = 0,
-    /// Crimson Kitsune Ronin: White-haired fox-spirit anime character with glowing crimson eyes, fox ears, katana aura, and
-    /// floating embers
+    /// Frieren · Zoltraak Magic Circle: Frieren casting her signature cyan/golden mana spell with her crimson jewel crescent staff
     CrimsonMoonTorii = 1,
-    /// Astral Spirit Mage: Silver/lavender anime heroine with golden starry eyes, glowing magic halo, and emerald fireflies
+    /// Frieren · Cozy Grimoire & Winter Scarf: Frieren wrapped in her striped winter scarf with warm golden magic light
     SpiritForestAurora = 2,
 }
 
@@ -47,17 +46,19 @@ impl AnimeSceneKind {
 
     pub fn title(self) -> &'static str {
         match self {
-            Self::CyberpunkSakura => tr("Aoi · Chica Anime Cyber-Sakura (HD)", "Aoi · Cyber-Sakura Anime Girl (HD)"),
-            Self::CrimsonMoonTorii => tr("Kitsune · Espíritu Carmesí (HD)", "Kitsune · Crimson Fox Spirit (HD)"),
-            Self::SpiritForestAurora => tr("Lumine · Maga Astral del Bosque (HD)", "Lumine · Astral Forest Mage (HD)"),
+            Self::CyberpunkSakura => tr("Frieren · Campo de Flores de Luna Azul (HD)", "Frieren · Blue Moonweed Field (HD)"),
+            Self::CrimsonMoonTorii => tr("Frieren · Magia Zoltraak y Báculo (HD)", "Frieren · Zoltraak Magic & Staff (HD)"),
+            Self::SpiritForestAurora => {
+                tr("Frieren · Grimorio y Bufanda de Invierno (HD)", "Frieren · Grimoire & Winter Scarf (HD)")
+            },
         }
     }
 
     pub fn badge(self) -> &'static str {
         match self {
-            Self::CyberpunkSakura => "🌸 AOI · ANIME HD",
-            Self::CrimsonMoonTorii => "🦊 KITSUNE · HD",
-            Self::SpiritForestAurora => "✨ LUMINE · HD",
+            Self::CyberpunkSakura => "🧝‍♀️ FRIEREN · MOONWEED",
+            Self::CrimsonMoonTorii => "🪄 FRIEREN · ZOLTRAAK",
+            Self::SpiritForestAurora => "📖 FRIEREN · GRIMOIRE",
         }
     }
 }
@@ -108,95 +109,55 @@ fn sd_segment(px: f32, py: f32, ax: f32, ay: f32, bx: f32, by: f32) -> f32 {
     ((pax - bax * h).powi(2) + (pay - bay * h).powi(2)).sqrt()
 }
 
-struct CharacterPalette {
+struct FrierenSceneTheme {
     bg_top: [u8; 4],
     bg_bottom: [u8; 4],
     halo_color: [u8; 4],
-    hair_back: [u8; 4],
-    hair_main: [u8; 4],
-    hair_shadow: [u8; 4],
-    hair_highlight: [u8; 4],
-    skin_base: [u8; 4],
-    skin_shadow: [u8; 4],
-    blush: [u8; 4],
-    eye_top: [u8; 4],
-    eye_bottom: [u8; 4],
-    eye_core: [u8; 4],
-    outfit_main: [u8; 4],
-    outfit_accent: [u8; 4],
-    particle_color: [u8; 4],
-    has_fox_ears: bool,
-    has_twin_tails: bool,
+    particle_primary: [u8; 4],
+    particle_secondary: [u8; 4],
+    show_staff: bool,
+    show_winter_scarf: bool,
+    smug_smile: bool,
 }
 
-impl CharacterPalette {
+impl FrierenSceneTheme {
     fn for_scene(scene: AnimeSceneKind) -> Self {
         match scene {
             AnimeSceneKind::CyberpunkSakura => Self {
-                bg_top: [14, 12, 36, 255],
-                bg_bottom: [62, 22, 78, 255],
-                halo_color: [0, 230, 255, 255],
-                hair_back: [26, 55, 115, 255],
-                hair_main: [48, 130, 225, 255],
-                hair_shadow: [28, 72, 148, 255],
-                hair_highlight: [165, 240, 255, 255],
-                skin_base: [255, 232, 220, 255],
-                skin_shadow: [232, 188, 175, 255],
-                blush: [255, 115, 155, 255],
-                eye_top: [18, 85, 195, 255],
-                eye_bottom: [75, 240, 255, 255],
-                eye_core: [15, 24, 68, 255],
-                outfit_main: [22, 24, 48, 255],
-                outfit_accent: [255, 65, 165, 255],
-                particle_color: [255, 175, 220, 255],
-                has_fox_ears: false,
-                has_twin_tails: true,
+                bg_top: [10, 18, 44, 255],
+                bg_bottom: [24, 62, 118, 255],
+                halo_color: [90, 210, 255, 255],
+                particle_primary: [110, 220, 255, 255],
+                particle_secondary: [200, 245, 255, 255],
+                show_staff: true,
+                show_winter_scarf: false,
+                smug_smile: false,
             },
             AnimeSceneKind::CrimsonMoonTorii => Self {
-                bg_top: [26, 8, 18, 255],
-                bg_bottom: [115, 18, 38, 255],
-                halo_color: [255, 85, 65, 255],
-                hair_back: [185, 175, 198, 255],
-                hair_main: [242, 236, 248, 255],
-                hair_shadow: [195, 182, 212, 255],
-                hair_highlight: [255, 255, 255, 255],
-                skin_base: [255, 236, 226, 255],
-                skin_shadow: [228, 186, 176, 255],
-                blush: [255, 105, 125, 255],
-                eye_top: [140, 12, 32, 255],
-                eye_bottom: [255, 95, 75, 255],
-                eye_core: [45, 6, 14, 255],
-                outfit_main: [32, 12, 20, 255],
-                outfit_accent: [235, 45, 65, 255],
-                particle_color: [255, 200, 110, 255],
-                has_fox_ears: true,
-                has_twin_tails: false,
+                bg_top: [16, 12, 38, 255],
+                bg_bottom: [48, 28, 86, 255],
+                halo_color: [120, 245, 255, 255],
+                particle_primary: [140, 250, 255, 255],
+                particle_secondary: [255, 220, 120, 255],
+                show_staff: true,
+                show_winter_scarf: false,
+                smug_smile: false,
             },
             AnimeSceneKind::SpiritForestAurora => Self {
-                bg_top: [8, 24, 38, 255],
-                bg_bottom: [16, 72, 68, 255],
-                halo_color: [110, 255, 200, 255],
-                hair_back: [88, 68, 145, 255],
-                hair_main: [165, 135, 235, 255],
-                hair_shadow: [112, 84, 180, 255],
-                hair_highlight: [235, 225, 255, 255],
-                skin_base: [255, 235, 224, 255],
-                skin_shadow: [228, 190, 180, 255],
-                blush: [255, 130, 165, 255],
-                eye_top: [16, 125, 110, 255],
-                eye_bottom: [140, 255, 195, 255],
-                eye_core: [10, 48, 42, 255],
-                outfit_main: [18, 38, 48, 255],
-                outfit_accent: [255, 215, 105, 255],
-                particle_color: [175, 255, 150, 255],
-                has_fox_ears: false,
-                has_twin_tails: false,
+                bg_top: [22, 16, 34, 255],
+                bg_bottom: [68, 42, 64, 255],
+                halo_color: [255, 215, 130, 255],
+                particle_primary: [255, 225, 145, 255],
+                particle_secondary: [140, 245, 215, 255],
+                show_staff: false,
+                show_winter_scarf: true,
+                smug_smile: true,
             },
         }
     }
 }
 
-/// Generates a high-resolution, anti-aliased anime character portrait frame (`DynamicImage`).
+/// Generates a high-resolution, anti-aliased portrait of Frieren (`Sousou no Frieren`).
 /// Rendered with smooth vector SDF curves so it looks like a crisp anime illustration in Sixel / Kitty / iTerm2.
 pub fn generate_anime_frame(scene: AnimeSceneKind, frame_idx: usize, width: u32, height: u32) -> DynamicImage {
     let w = width.max(64);
@@ -205,13 +166,12 @@ pub fn generate_anime_frame(scene: AnimeSceneKind, frame_idx: usize, width: u32,
 
     let phase = (frame_idx % ANIME_FRAME_COUNT) as f32 / ANIME_FRAME_COUNT as f32;
     let angle = phase * std::f32::consts::TAU;
-    let pal = CharacterPalette::for_scene(scene);
+    let st = FrierenSceneTheme::for_scene(scene);
 
-    // Subtle breathing, head tilt, hair wind sway, and natural eye blink curve
-    let breath_y = angle.sin() * 0.014;
-    let wind_x = (angle).cos() * 0.024;
-    let wind_wave = (angle * 2.0).sin() * 0.015;
-    // Blink briefly around frame 11..13
+    // Subtle breathing, hair wind sway, and natural eye blink curve
+    let breath_y = angle.sin() * 0.012;
+    let wind_x = angle.cos() * 0.022;
+    let wind_wave = (angle * 2.0).sin() * 0.012;
     let blink_open = match frame_idx % ANIME_FRAME_COUNT {
         11 | 13 => 0.45,
         12 => 0.08,
@@ -225,12 +185,10 @@ pub fn generate_anime_frame(scene: AnimeSceneKind, frame_idx: usize, width: u32,
         let ny = y as f32 / (h - 1) as f32;
         for x in 0..w {
             let nx = x as f32 / (w - 1) as f32;
-            // Aspect-corrected coordinate centered at (0.0, 0.0)
             let px = (nx - 0.5) * aspect;
             let py = ny - 0.5;
 
-            let color =
-                render_anime_character_sample(px, py, nx, ny, phase, angle, breath_y, wind_x, wind_wave, blink_open, aa, &pal);
+            let color = render_frieren_sample(px, py, nx, ny, phase, angle, breath_y, wind_x, wind_wave, blink_open, aa, &st);
             img.put_pixel(x, y, Rgba(color));
         }
     }
@@ -239,7 +197,7 @@ pub fn generate_anime_frame(scene: AnimeSceneKind, frame_idx: usize, width: u32,
 }
 
 #[allow(clippy::too_many_arguments)]
-fn render_anime_character_sample(
+fn render_frieren_sample(
     px: f32,
     py: f32,
     nx: f32,
@@ -251,269 +209,401 @@ fn render_anime_character_sample(
     wind_wave: f32,
     blink_open: f32,
     aa: f32,
-    pal: &CharacterPalette,
+    st: &FrierenSceneTheme,
 ) -> [u8; 4] {
-    // 1. Smooth atmospheric background gradient + glowing anime aura ring behind character
+    // Canonical Frieren color palette
+    let hair_main = [244, 245, 252, 255];
+    let hair_shadow = [194, 200, 224, 255];
+    let hair_deep = [155, 164, 196, 255];
+    let hair_highlight = [255, 255, 255, 255];
+    let ribbon_dark = [36, 32, 48, 255];
+    let gold_trim = [242, 198, 92, 255];
+    let gold_shadow = [188, 142, 48, 255];
+    let cape_white = [246, 246, 250, 255];
+    let cape_shadow = [212, 216, 230, 255];
+    let earring_red = [228, 38, 62, 255];
+    let earring_glow = [255, 130, 145, 255];
+    let skin_base = [255, 238, 228, 255];
+    let skin_shadow = [230, 194, 184, 255];
+    let blush_pink = [255, 135, 155, 255];
+    // Frieren's signature emerald-teal eyes with golden-green lower gradient
+    let eye_top = [16, 108, 98, 255];
+    let eye_bottom = [125, 235, 178, 255];
+    let eye_core = [10, 44, 42, 255];
+
+    // 1. Atmospheric background & Zoltraak magic circle / mana aura behind Frieren
     let mut col = [
-        lerp_u8(pal.bg_top[0], pal.bg_bottom[0], ny),
-        lerp_u8(pal.bg_top[1], pal.bg_bottom[1], ny),
-        lerp_u8(pal.bg_top[2], pal.bg_bottom[2], ny),
+        lerp_u8(st.bg_top[0], st.bg_bottom[0], ny),
+        lerp_u8(st.bg_top[1], st.bg_bottom[1], ny),
+        lerp_u8(st.bg_top[2], st.bg_bottom[2], ny),
         255,
     ];
 
-    let aura_dist = (px * px + (py + 0.04) * (py + 0.04)).sqrt();
-    let aura_glow = (1.0 - (aura_dist / 0.58).clamp(0.0, 1.0)).powi(2) * (0.35 + 0.08 * angle.sin());
-    col = blend_rgba(col, pal.halo_color, aura_glow);
+    let aura_dist = (px * px + (py + 0.03) * (py + 0.03)).sqrt();
+    let aura_glow = (1.0 - (aura_dist / 0.62).clamp(0.0, 1.0)).powi(2) * (0.36 + 0.08 * angle.sin());
+    col = blend_rgba(col, st.halo_color, aura_glow);
 
-    // Subtle magic circle / neon halo ring behind the head
-    let ring_r = 0.36 + 0.01 * (angle * 2.0).cos();
-    let ring_d = (aura_dist - ring_r).abs();
-    if ring_d < 0.018 {
-        let ring_alpha = (1.0 - ring_d / 0.018).powi(2) * 0.55;
-        col = blend_rgba(col, pal.halo_color, ring_alpha);
+    // Concentric Zoltraak arcane magic rings behind Frieren
+    for &(ring_r, thickness) in &[(0.37_f32, 0.014_f32), (0.44_f32, 0.009_f32)] {
+        let r_d = (aura_dist - (ring_r + 0.006 * (angle * 2.0).cos())).abs();
+        if r_d < thickness {
+            let ra = (1.0 - r_d / thickness).powi(2) * 0.52;
+            col = blend_rgba(col, st.halo_color, ra);
+        }
     }
 
-    // Coordinate in character space (moves gently with breathing)
     let cx = px;
     let cy = py - breath_y;
 
-    // 2. Back hair volume & flowing twin-tails / long locks swaying in the wind
-    let sway = wind_x * (cy + 0.35).max(0.0) * 1.8 + (cy * 9.0 - angle * 2.0).sin() * 0.018;
-    let back_hair_d = sd_ellipse(cx - sway * 0.7, cy - 0.05, 0.0, 0.0, 0.31, 0.44);
-    let back_hair_alpha = smoothstep(aa * 1.5, -aa * 1.5, back_hair_d);
-    if back_hair_alpha > 0.0 {
-        let shade = ((cy + 0.3) * 1.2).clamp(0.0, 1.0);
-        let bh_col = blend_rgba(pal.hair_main, pal.hair_back, 0.45 + 0.45 * shade);
-        col = blend_rgba(col, bh_col, back_hair_alpha);
-    }
+    // 2. Frieren's Signature Twin-Tails (High & Wide Flowing Silver-White Pigtails) + Dark Hair Ties
+    let sway = wind_x * (cy + 0.32).max(0.0) * 1.7 + (cy * 8.5 - angle * 2.0).sin() * 0.016;
 
-    if pal.has_twin_tails {
-        // Left and right flowing anime twin-tails
-        let tail_l = sd_ellipse(cx + 0.29 - sway * 1.1, cy - 0.06, 0.0, 0.0, 0.11, 0.38);
-        let tail_r = sd_ellipse(cx - 0.29 - sway * 1.1, cy - 0.06, 0.0, 0.0, 0.11, 0.38);
-        let tail_d = tail_l.min(tail_r);
-        let tail_a = smoothstep(aa * 1.5, -aa * 1.5, tail_d);
+    for side in [-1.0_f32, 1.0_f32] {
+        // Long sweeping twin-tail curving outward from the upper sides of her head
+        let tx = cx * side - (0.28 + (cy + 0.12).max(0.0) * 0.34) - sway * side * 0.9;
+        let ty = cy - 0.04;
+        let tail_rx = 0.115 * (1.0 - ((ty + 0.22) * 0.65).clamp(0.0, 0.55));
+        let tail_d = sd_ellipse(tx, ty, 0.0, 0.0, tail_rx.max(0.04), 0.42);
+        let tail_a = smoothstep(aa * 1.4, -aa * 1.4, tail_d);
         if tail_a > 0.0 {
-            let t_col = blend_rgba(pal.hair_main, pal.hair_shadow, ((cy + 0.25) * 1.4).clamp(0.0, 1.0));
+            let shade = ((ty + 0.28) * 1.3).clamp(0.0, 1.0);
+            let mut t_col = blend_rgba(hair_main, hair_shadow, 0.25 + 0.55 * shade);
+            // Twin-tail inner strand contour line
+            let strand_line = (tx * 18.0).sin().abs();
+            if strand_line < 0.18 {
+                t_col = blend_rgba(t_col, hair_deep, 0.25);
+            }
+            let edge = smoothstep(0.008, 0.0, tail_d.abs());
+            t_col = blend_rgba(t_col, hair_deep, edge * 0.65);
             col = blend_rgba(col, t_col, tail_a);
         }
-    }
 
-    // 3. Fox Spirit Ears (for Kitsune scene)
-    if pal.has_fox_ears {
-        for side in [-1.0_f32, 1.0_f32] {
-            let ex = cx * side;
-            let ear_outer = sd_segment(ex, cy, 0.12, -0.24, 0.26 + wind_wave * side, -0.46)
-                - 0.075 * (1.0 - ((-cy - 0.24) * 2.8).clamp(0.0, 0.85));
-            let ear_a = smoothstep(aa, -aa, ear_outer);
-            if ear_a > 0.0 {
-                col = blend_rgba(col, pal.hair_main, ear_a);
-                let ear_inner = sd_segment(ex, cy, 0.13, -0.25, 0.23 + wind_wave * side, -0.42) - 0.035;
-                let inner_a = smoothstep(aa, -aa, ear_inner);
-                col = blend_rgba(col, pal.blush, inner_a * 0.75);
-            }
+        // Frieren's black/dark-violet hair ribbon ties at the base of her twin-tails
+        let tie_x = cx * side - 0.245;
+        let tie_y = cy + 0.165;
+        let tie_d = sd_ellipse(tie_x, tie_y, 0.0, 0.0, 0.045, 0.032);
+        let tie_a = smoothstep(aa, -aa, tie_d);
+        if tie_a > 0.0 {
+            col = blend_rgba(col, ribbon_dark, tie_a);
         }
     }
 
-    // 4. Neck, Shoulders & Anime Collar / Scarf
-    let torso_d = sd_ellipse(cx, cy - 0.48, 0.0, 0.0, 0.34, 0.24);
-    let torso_a = smoothstep(aa, -aa, torso_d);
-    if torso_a > 0.0 {
-        col = blend_rgba(col, pal.outfit_main, torso_a);
-        // Glowing cyber/magic collar trim
-        let collar_v = (cx.abs() * 1.35 - (cy - 0.27)).abs() - 0.024;
-        let collar_a = smoothstep(aa, -aa, collar_v);
-        col = blend_rgba(col, pal.outfit_accent, collar_a);
+    // Back crown hair volume
+    let back_hair_d = sd_ellipse(cx - sway * 0.4, cy + 0.02, 0.0, 0.0, 0.26, 0.30);
+    let back_hair_a = smoothstep(aa, -aa, back_hair_d);
+    if back_hair_a > 0.0 {
+        col = blend_rgba(col, hair_shadow, back_hair_a);
     }
 
-    let neck_d = sd_ellipse(cx, cy - 0.22, 0.0, 0.0, 0.072, 0.11);
+    // 3. Frieren's Iconic Long Horizontal Pointed Elf Ears
+    for side in [-1.0_f32, 1.0_f32] {
+        let ex = cx * side;
+        let ey = cy - 0.015;
+        // Elf ear extends horizontally outward from (0.18, 0.015) to (0.41, -0.025)
+        let t_ear = ((ex - 0.17) / 0.24).clamp(0.0, 1.0);
+        let ear_half_h = 0.044 * (1.0 - t_ear.powf(1.45)) * (0.75 + 0.4 * (t_ear * 3.14).sin());
+        let ear_center_y = -0.025 * t_ear + wind_wave * 0.15 * t_ear;
+        let ear_d = if (0.16..=0.415).contains(&ex) { (ey - ear_center_y).abs() - ear_half_h } else { 1.0 };
+        let ear_a = smoothstep(aa, -aa, ear_d);
+        if ear_a > 0.0 {
+            let mut ear_col = blend_rgba(skin_base, skin_shadow, t_ear * 0.35);
+            // Inner ear blush fold line
+            let inner_fold = (ey - (ear_center_y + 0.006)).abs() - ear_half_h * 0.38;
+            if inner_fold < 0.0 {
+                ear_col = blend_rgba(ear_col, blush_pink, 0.38);
+            }
+            let outline = smoothstep(0.006, 0.0, ear_d.abs());
+            ear_col = blend_rgba(ear_col, [65, 38, 45, 255], outline * 0.72);
+            col = blend_rgba(col, ear_col, ear_a);
+        }
+
+        // 4. Frieren's Iconic Red & Gold Hanging Earrings (dangling below her elf ears)
+        let ear_attach_x = 0.235;
+        let ear_attach_y = 0.045;
+        let drop_x = ear_attach_x + sway * 0.35 * side;
+        let drop_y = 0.125;
+
+        // Thin gold chain
+        let chain_d = sd_segment(ex, cy, ear_attach_x, ear_attach_y, drop_x, drop_y) - 0.005;
+        col = blend_rgba(col, gold_trim, smoothstep(aa, -aa, chain_d));
+
+        // Gold upper cap + Crimson red teardrop gem
+        let gem_d = sd_ellipse(ex, cy, drop_x, drop_y + 0.015, 0.022, 0.032);
+        let gem_a = smoothstep(aa, -aa, gem_d);
+        if gem_a > 0.0 {
+            let mut g_col = earring_red;
+            // Glossy white/pink highlight on the red gem
+            let g_hl = sd_circle(ex, cy, drop_x - 0.007, drop_y + 0.006, 0.008);
+            g_col = blend_rgba(g_col, earring_glow, smoothstep(aa, -aa, g_hl));
+            col = blend_rgba(col, g_col, gem_a);
+        }
+        let cap_d = sd_circle(ex, cy, drop_x, drop_y - 0.012, 0.011);
+        col = blend_rgba(col, gold_trim, smoothstep(aa, -aa, cap_d));
+    }
+
+    // 5. Frieren's White & Gold Mage Capelet (or Cozy Winter Scarf in Scene 3)
+    let torso_d = sd_ellipse(cx, cy - 0.46, 0.0, 0.0, 0.36, 0.25);
+    let torso_a = smoothstep(aa, -aa, torso_d);
+    if torso_a > 0.0 {
+        let mut cape_col = blend_rgba(cape_white, cape_shadow, ((cy - 0.24) * 1.8).clamp(0.0, 1.0) * 0.45);
+
+        // Dark navy inner shirt V-neck + red ribbon tie
+        if cx.abs() < 0.085 && cy < 0.36 {
+            cape_col = ribbon_dark;
+            let brooch_d = sd_circle(cx, cy, 0.0, 0.32, 0.024);
+            if brooch_d < 0.0 {
+                cape_col = earring_red;
+            }
+        }
+
+        // Gold border stripes & shoulder epualettes on Frieren's white cape
+        let collar_ring = ((cx * cx * 1.4 + (cy - 0.23).powi(2)).sqrt() - 0.165).abs() - 0.016;
+        let lower_gold_trim = ((cx * cx * 0.9 + (cy - 0.20).powi(2)).sqrt() - 0.255).abs() - 0.014;
+        let gold_a = smoothstep(aa, -aa, collar_ring.min(lower_gold_trim));
+        cape_col = blend_rgba(cape_col, gold_trim, gold_a);
+
+        // Red gem clasp on the white cape collar
+        for side in [-1.0_f32, 1.0_f32] {
+            let clasp_d = sd_circle(cx * side, cy, 0.125, 0.31, 0.016);
+            cape_col = blend_rgba(cape_col, earring_red, smoothstep(aa, -aa, clasp_d));
+        }
+
+        col = blend_rgba(col, cape_col, torso_a);
+    }
+
+    // Neck with soft cel-shaded chin shadow
+    let neck_d = sd_ellipse(cx, cy - 0.21, 0.0, 0.0, 0.068, 0.10);
     let neck_a = smoothstep(aa, -aa, neck_d);
     if neck_a > 0.0 {
-        // Cel-shaded shadow under the chin
-        let chin_shadow = smoothstep(0.24, 0.16, cy);
-        let neck_col = blend_rgba(pal.skin_base, pal.skin_shadow, 0.35 + 0.55 * chin_shadow);
+        let chin_shadow = smoothstep(0.23, 0.15, cy);
+        let neck_col = blend_rgba(skin_base, skin_shadow, 0.32 + 0.55 * chin_shadow);
         col = blend_rgba(col, neck_col, neck_a);
     }
 
-    // 5. Anime Face (smooth V-jawline + rounded upper head)
+    // Cozy winter scarf option (Scene 3)
+    if st.show_winter_scarf {
+        let scarf_d = sd_ellipse(cx, cy - 0.25, 0.0, 0.0, 0.22, 0.075);
+        let scarf_a = smoothstep(aa, -aa, scarf_d);
+        if scarf_a > 0.0 {
+            let stripe = ((cx * 24.0).sin() > 0.35) as i32;
+            let s_col = if stripe == 1 { [185, 52, 68, 255] } else { [238, 228, 212, 255] };
+            col = blend_rgba(col, s_col, scarf_a);
+        }
+    }
+
+    // 6. Frieren's Face (calm, delicate elf jawline)
     let jaw_t = ((cy + 0.12) / 0.32).clamp(0.0, 1.0);
-    let head_half_w = 0.225 * (1.0 - 0.38 * jaw_t.powf(1.65));
-    let face_d = sd_ellipse(cx, cy + 0.03, 0.0, 0.0, head_half_w.max(0.04), 0.24);
+    let head_half_w = 0.222 * (1.0 - 0.39 * jaw_t.powf(1.65));
+    let face_d = sd_ellipse(cx, cy + 0.03, 0.0, 0.0, head_half_w.max(0.04), 0.238);
     let face_a = smoothstep(aa, -aa, face_d);
     if face_a > 0.0 {
-        // Cel-shaded anime skin with soft edge lighting
         let rim = smoothstep(0.14, 0.22, cx.abs() + cy * 0.15);
-        let mut skin = blend_rgba(pal.skin_base, pal.skin_shadow, rim * 0.35);
+        let mut skin = blend_rgba(skin_base, skin_shadow, rim * 0.32);
 
-        // Soft anime cheek blush + cute blush tally lines
+        // Subtle anime cheek blush
         for side in [-1.0_f32, 1.0_f32] {
-            let bx = cx * side - 0.115;
+            let bx = cx * side - 0.112;
             let by = cy - 0.045;
-            let blush_d = (bx * bx / (0.055 * 0.055) + by * by / (0.028 * 0.028)).sqrt();
+            let blush_d = (bx * bx / (0.052 * 0.052) + by * by / (0.026 * 0.026)).sqrt();
             if blush_d < 1.0 {
-                let ba = (1.0 - blush_d).powi(2) * 0.48;
-                skin = blend_rgba(skin, pal.blush, ba);
+                let ba = (1.0 - blush_d).powi(2) * 0.42;
+                skin = blend_rgba(skin, blush_pink, ba);
             }
         }
 
         col = blend_rgba(col, skin, face_a);
-        // Crisp anime jawline outline
-        let outline_a = smoothstep(0.009, 0.0, face_d.abs()) * smoothstep(-0.08, 0.15, cy);
-        col = blend_rgba(col, [42, 24, 32, 255], outline_a * 0.72);
+        let outline_a = smoothstep(0.008, 0.0, face_d.abs()) * smoothstep(-0.08, 0.15, cy);
+        col = blend_rgba(col, [52, 34, 42, 255], outline_a * 0.72);
     }
 
-    // 6. Big Expressive Sparkling Anime Eyes (Left & Right)
+    // 7. Frieren's Expressive Emerald-Green Eyes (calm, slightly sleepy upper lids with rich teal-gold gradient)
     for side in [-1.0_f32, 1.0_f32] {
-        let ex = cx * side - 0.098;
-        let ey = cy + 0.015;
-        let eye_rx = 0.054;
-        let eye_ry = (0.062 * blink_open).max(0.005);
+        let ex = cx * side - 0.096;
+        let ey = cy + 0.012;
+        let eye_rx = 0.055;
+        let eye_ry = (0.054 * blink_open).max(0.005);
 
         if blink_open <= 0.15 {
-            // Closed happy/blinking eyelash arc
-            let lash_curve = (ey - (ex * ex * 2.5)).abs() - 0.008;
+            let lash_curve = (ey - (ex * ex * 2.2)).abs() - 0.008;
             if ex.abs() < eye_rx {
-                let la = smoothstep(aa, -aa, lash_curve);
-                col = blend_rgba(col, [24, 14, 28, 255], la);
+                col = blend_rgba(col, [28, 22, 36, 255], smoothstep(aa, -aa, lash_curve));
             }
         } else {
-            // Sclera (white of the eye)
             let sclera_d = sd_ellipse(ex, ey, 0.0, 0.0, eye_rx, eye_ry);
             let sclera_a = smoothstep(aa, -aa, sclera_d);
             if sclera_a > 0.0 {
-                let sclera_col = blend_rgba([252, 250, 255, 255], [210, 215, 235, 255], smoothstep(-eye_ry, 0.0, -ey) * 0.35);
+                let sclera_col = blend_rgba([252, 252, 255, 255], [212, 220, 236, 255], smoothstep(-eye_ry, 0.0, -ey) * 0.35);
                 col = blend_rgba(col, sclera_col, sclera_a);
 
-                // Large detailed anime iris with rich vertical gradient
-                let iris_x = ex + wind_x * 0.18 * side;
-                let iris_d = sd_ellipse(iris_x, ey, 0.0, 0.0, 0.042, eye_ry * 0.92);
+                // Emerald-teal iris
+                let iris_x = ex + wind_x * 0.16 * side;
+                let iris_d = sd_ellipse(iris_x, ey, 0.0, 0.0, 0.042, eye_ry * 0.94);
                 let iris_a = smoothstep(aa, -aa, iris_d);
                 if iris_a > 0.0 {
                     let it = ((ey / eye_ry) * 0.5 + 0.5).clamp(0.0, 1.0);
                     let mut iris_col = [
-                        lerp_u8(pal.eye_top[0], pal.eye_bottom[0], it),
-                        lerp_u8(pal.eye_top[1], pal.eye_bottom[1], it),
-                        lerp_u8(pal.eye_top[2], pal.eye_bottom[2], it),
+                        lerp_u8(eye_top[0], eye_bottom[0], it),
+                        lerp_u8(eye_top[1], eye_bottom[1], it),
+                        lerp_u8(eye_top[2], eye_bottom[2], it),
                         255,
                     ];
 
-                    // Dark pupil core
-                    let pupil_d = sd_ellipse(iris_x, ey, 0.0, 0.0, 0.019, eye_ry * 0.45);
-                    let pupil_a = smoothstep(aa, -aa, pupil_d);
-                    iris_col = blend_rgba(iris_col, pal.eye_core, pupil_a * 0.92);
+                    // Golden-green lower iris ring highlight (characteristic of Frieren's eyes)
+                    let pupil_d = sd_ellipse(iris_x, ey, 0.0, 0.0, 0.018, eye_ry * 0.44);
+                    iris_col = blend_rgba(iris_col, eye_core, smoothstep(aa, -aa, pupil_d) * 0.92);
 
-                    // Lower glowing crescent inside iris
                     let crescent_d = (iris_d + 0.012).abs();
-                    if ey > 0.005 && crescent_d < 0.012 {
-                        iris_col = blend_rgba(iris_col, [255, 255, 255, 255], (1.0 - crescent_d / 0.012) * 0.55);
+                    if ey > 0.004 && crescent_d < 0.012 {
+                        iris_col = blend_rgba(iris_col, [225, 255, 195, 255], (1.0 - crescent_d / 0.012) * 0.65);
                     }
 
-                    // Dark outer iris limbal ring
                     let limbal = smoothstep(-0.008, 0.0, iris_d);
-                    iris_col = blend_rgba(iris_col, pal.eye_core, limbal * 0.65);
-
+                    iris_col = blend_rgba(iris_col, eye_core, limbal * 0.72);
                     col = blend_rgba(col, iris_col, iris_a);
 
-                    // Crisp white anime catchlights (main top-left sparkle + secondary bottom-right dot)
-                    let hl1_d = sd_circle(ex * side, ey, -0.018, -0.022 * blink_open, 0.014);
-                    let hl2_d = sd_circle(ex * side, ey, 0.016, 0.018 * blink_open, 0.007);
-                    let hl_a = smoothstep(aa, -aa, hl1_d.min(hl2_d));
-                    col = blend_rgba(col, [255, 255, 255, 255], hl_a);
+                    // Sparkling white catchlights
+                    let hl1_d = sd_circle(ex * side, ey, -0.018, -0.020 * blink_open, 0.014);
+                    let hl2_d = sd_circle(ex * side, ey, 0.016, 0.016 * blink_open, 0.007);
+                    col = blend_rgba(col, [255, 255, 255, 255], smoothstep(aa, -aa, hl1_d.min(hl2_d)));
                 }
             }
 
-            // Thick upper anime eyelash wing
-            let lash_y = -eye_ry * (1.0 - (ex / eye_rx).powi(2)).max(0.0).sqrt();
-            if ex.abs() <= eye_rx * 1.15 && ey <= 0.01 {
+            // Frieren's signature flat/calm upper tsurime-tareme eyelash line
+            let lash_y = -eye_ry * (1.0 - (ex / eye_rx).powi(2)).max(0.0).sqrt() * 0.88;
+            if ex.abs() <= eye_rx * 1.16 && ey <= 0.01 {
                 let lash_d = (ey - lash_y).abs() - 0.011;
-                let lash_a = smoothstep(aa, -aa, lash_d);
-                col = blend_rgba(col, [18, 12, 26, 255], lash_a);
+                col = blend_rgba(col, [26, 20, 34, 255], smoothstep(aa, -aa, lash_d));
             }
         }
 
-        // Delicate anime eyebrow
-        let brow_y = -0.072 + (ex * 0.25);
-        if ex.abs() < 0.058 {
+        // Silver-grey delicate eyebrows
+        let brow_y = -0.068 + (ex * 0.14);
+        if ex.abs() < 0.056 {
             let brow_d = (ey - brow_y).abs() - 0.0045;
-            let brow_a = smoothstep(aa, -aa, brow_d);
-            col = blend_rgba(col, pal.hair_shadow, brow_a * 0.85);
+            col = blend_rgba(col, hair_deep, smoothstep(aa, -aa, brow_d) * 0.9);
         }
     }
 
-    // 7. Delicate anime nose & gentle smile
-    let nose_d = sd_circle(cx, cy, 0.0, 0.055, 0.005);
-    col = blend_rgba(col, pal.skin_shadow, smoothstep(aa, -aa, nose_d) * 0.85);
+    // 8. Delicate nose & Frieren's serene / smug `=w=` cat-smile
+    let nose_d = sd_circle(cx, cy, 0.0, 0.054, 0.0048);
+    col = blend_rgba(col, skin_shadow, smoothstep(aa, -aa, nose_d) * 0.85);
 
-    let smile_curve = cy - (0.115 + cx * cx * 1.8);
-    if cx.abs() < 0.036 {
-        let mouth_d = smile_curve.abs() - 0.0045;
-        let mouth_a = smoothstep(aa, -aa, mouth_d);
-        col = blend_rgba(col, [185, 82, 98, 255], mouth_a * 0.9);
+    if st.smug_smile {
+        // Frieren's famous smug `<(=w=)>` cat mouth in Scene 3
+        let w_curve = cy - (0.112 + ((cx.abs() - 0.018).powi(2) * 8.5));
+        if cx.abs() < 0.042 {
+            let mouth_d = w_curve.abs() - 0.0045;
+            col = blend_rgba(col, [175, 78, 92, 255], smoothstep(aa, -aa, mouth_d) * 0.92);
+        }
+    } else {
+        let smile_curve = cy - (0.114 + cx * cx * 1.3);
+        if cx.abs() < 0.032 {
+            let mouth_d = smile_curve.abs() - 0.0042;
+            col = blend_rgba(col, [175, 78, 92, 255], smoothstep(aa, -aa, mouth_d) * 0.9);
+        }
     }
 
-    // 8. Front Hair Bangs & Side Locks (with swaying strands and glossy angel-ring highlight)
-    // Crown hair dome
-    let crown_d = sd_ellipse(cx, cy + 0.16, 0.0, 0.0, 0.25, 0.16);
-    let mut front_hair_d = if cy < -0.09 { crown_d } else { 1.0 };
+    // 9. Frieren's Center-Parted Silver-White Bangs & Long Side Locks
+    let crown_d = sd_ellipse(cx, cy + 0.165, 0.0, 0.0, 0.245, 0.155);
+    let mut front_hair_d = if cy < -0.095 { crown_d } else { 1.0 };
 
-    // Layered anime bangs across forehead
-    let bang_centers = [-0.17_f32, -0.085, 0.0, 0.085, 0.17];
-    let bang_lengths = [0.22_f32, 0.17, 0.185, 0.165, 0.22];
-    for (&bx_center, &b_len) in bang_centers.iter().zip(bang_lengths.iter()) {
-        let strand_sway = wind_x * 0.45 * ((cy + 0.22).max(0.0));
-        let bx = cx - (bx_center + strand_sway);
-        let by = cy + 0.18;
+    // Frieren's bangs part near the center and sweep gently left and right over her eyebrows
+    let bang_specs: [(f32, f32, f32); 6] = [
+        (-0.18, 0.23, 0.050),
+        (-0.105, 0.19, 0.048),
+        (-0.042, 0.165, 0.038),
+        (0.042, 0.165, 0.038),
+        (0.105, 0.19, 0.048),
+        (0.18, 0.23, 0.050),
+    ];
+    for &(bx_center, b_len, b_width) in &bang_specs {
+        let strand_sway = wind_x * 0.42 * (cy + 0.22).max(0.0);
+        let arch = (cy + 0.18).max(0.0) * bx_center.signum() * 0.12;
+        let bx = cx - (bx_center + arch + strand_sway);
+        let by = cy + 0.185;
         if by >= 0.0 && by <= b_len + 0.05 {
             let t = (by / b_len).clamp(0.0, 1.0);
-            let half_w = 0.054 * (1.0 - t.powf(1.7));
-            let d = bx.abs() - half_w;
-            front_hair_d = front_hair_d.min(d);
+            let half_w = b_width * (1.0 - t.powf(1.65));
+            front_hair_d = front_hair_d.min(bx.abs() - half_w);
         }
     }
 
-    // Long framing side locks past the cheeks
+    // Long silver side locks framing her cheeks
     for side in [-1.0_f32, 1.0_f32] {
-        let lock_sway = wind_x * 0.85 * (cy + 0.15).max(0.0);
-        let lx = cx - (side * 0.215 + lock_sway);
+        let lock_sway = wind_x * 0.80 * (cy + 0.15).max(0.0);
+        let lx = cx - (side * 0.212 + lock_sway);
         let ly = cy + 0.10;
-        if (-0.12..0.38).contains(&ly) {
-            let t = ((ly + 0.12) / 0.50).clamp(0.0, 1.0);
-            let half_w = 0.048 * (1.0 - 0.75 * t.powf(1.5));
+        if (-0.12..0.40).contains(&ly) {
+            let t = ((ly + 0.12) / 0.52).clamp(0.0, 1.0);
+            let half_w = 0.046 * (1.0 - 0.72 * t.powf(1.5));
             front_hair_d = front_hair_d.min(lx.abs() - half_w);
         }
     }
 
     let front_hair_a = smoothstep(aa, -aa, front_hair_d);
     if front_hair_a > 0.0 {
-        let grad = ((cy + 0.28) * 1.9).clamp(0.0, 1.0);
-        let mut h_col = blend_rgba(pal.hair_main, pal.hair_shadow, grad * 0.55);
+        let grad = ((cy + 0.28) * 1.8).clamp(0.0, 1.0);
+        let mut h_col = blend_rgba(hair_main, hair_shadow, grad * 0.48);
 
-        // Signature anime "angel ring" glossy hair highlight band across the bangs
-        let ring_y = -0.145 + cx * cx * 0.9 + (cx * 28.0).sin() * 0.008;
+        // Soft glossy white angel-ring highlight across her silver bangs
+        let ring_y = -0.145 + cx * cx * 0.85 + (cx * 26.0).sin() * 0.007;
         let hl_dist = (cy - ring_y).abs();
-        if hl_dist < 0.018 {
-            let hl_alpha = (1.0 - hl_dist / 0.018).powi(2) * 0.75;
-            h_col = blend_rgba(h_col, pal.hair_highlight, hl_alpha);
+        if hl_dist < 0.020 {
+            let hl_alpha = (1.0 - hl_dist / 0.020).powi(2) * 0.85;
+            h_col = blend_rgba(h_col, hair_highlight, hl_alpha);
         }
 
-        // Crisp dark hair tip outline
         let edge_a = smoothstep(0.007, 0.0, front_hair_d.abs());
-        h_col = blend_rgba(h_col, pal.hair_shadow, edge_a * 0.7);
-
+        h_col = blend_rgba(h_col, hair_deep, edge_a * 0.72);
         col = blend_rgba(col, h_col, front_hair_a);
     }
 
-    // 9. Foreground floating anime particles (Sakura petals / Spirit embers / Starlight sparkles)
-    for i in 0..10 {
+    // 10. Frieren's Golden Crescent Staff with Crimson Gem (on the right side)
+    if st.show_staff {
+        let staff_x = 0.46 + wind_x * 0.25;
+        let staff_y = -0.06 + breath_y * 0.5;
+        // Wooden staff shaft
+        let shaft_d = sd_segment(px, py, staff_x, staff_y + 0.08, staff_x - 0.05, 0.55) - 0.016;
+        col = blend_rgba(col, [110, 62, 38, 255], smoothstep(aa, -aa, shaft_d));
+
+        // Golden crescent head of Frieren's staff
+        let outer_c = sd_circle(px, py, staff_x, staff_y, 0.082);
+        let inner_c = sd_circle(px, py, staff_x - 0.024, staff_y - 0.012, 0.062);
+        let crescent_d = outer_c.max(-inner_c);
+        let cresc_a = smoothstep(aa, -aa, crescent_d);
+        if cresc_a > 0.0 {
+            let g_col = blend_rgba(gold_trim, gold_shadow, ((py - staff_y) * 5.0).clamp(0.0, 1.0));
+            col = blend_rgba(col, g_col, cresc_a);
+        }
+
+        // Glowing crimson orb nestled inside the golden crescent
+        let gem_d = sd_circle(px, py, staff_x - 0.012, staff_y - 0.005, 0.030);
+        let gem_a = smoothstep(aa, -aa, gem_d);
+        if gem_a > 0.0 {
+            let pulse = 0.5 + 0.5 * (angle * 2.0).sin();
+            let orb_col = blend_rgba(earring_red, [255, 160, 175, 255], pulse * 0.45);
+            col = blend_rgba(col, orb_col, gem_a);
+        }
+        // Magic mana glow around the staff gem
+        let staff_glow_d = sd_circle(px, py, staff_x - 0.012, staff_y - 0.005, 0.12);
+        if staff_glow_d < 0.0 {
+            let ga = (-staff_glow_d / 0.12).powi(2) * 0.38;
+            col = blend_rgba(col, st.halo_color, ga);
+        }
+    }
+
+    // 11. Floating Blue Moonweed Petals & Zoltraak Mana Butterflies
+    for i in 0..11 {
         let seed = i as f32 * 1.73;
-        let p_nx = (seed * 0.67 + phase * 0.45 + (angle + seed).sin() * 0.05).rem_euclid(1.0);
+        let p_nx = (seed * 0.67 + phase * 0.42 + (angle + seed).sin() * 0.05).rem_euclid(1.0);
         let p_ny = (seed * 0.41 + phase).rem_euclid(1.0);
         let dx = (nx - p_nx) * 1.4;
         let dy = ny - p_ny;
         let dist = (dx * dx + dy * dy).sqrt();
-        if dist < 0.022 {
-            let pa = (1.0 - dist / 0.022).powi(2) * 0.88;
-            col = blend_rgba(col, pal.particle_color, pa);
+        if dist < 0.024 {
+            let pa = (1.0 - dist / 0.024).powi(2) * 0.90;
+            let p_col = if i % 2 == 0 { st.particle_primary } else { st.particle_secondary };
+            col = blend_rgba(col, p_col, pa);
         }
     }
 
@@ -556,7 +646,7 @@ impl AnimePlayerState {
     fn ensure_raw_frame(&mut self, frame_idx: usize) -> &DynamicImage {
         let idx = frame_idx % ANIME_FRAME_COUNT;
         if self.frames_raw[idx].is_none() {
-            // High-definition 320x220 anti-aliased vector anime character portrait
+            // High-definition 320x220 anti-aliased vector portrait of Frieren
             self.frames_raw[idx] = Some(generate_anime_frame(self.scene, idx, 320, 220));
         }
         self.frames_raw[idx].as_ref().unwrap()
@@ -689,7 +779,7 @@ impl<'a> AnimeVisualModal<'a> {
 
         let title_left = Line::from(vec![
             Span::styled(
-                tr(" 🎬 Personaje Anime en Vivo ", " 🎬 Live Anime Character "),
+                tr(" 🎬 Sousou no Frieren ", " 🎬 Frieren: Beyond Journey's End "),
                 Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD),
             ),
             Span::styled(format!("· {} ", self.state.scene.title()), Style::default().fg(t.text_primary).bold()),
@@ -715,7 +805,7 @@ impl<'a> AnimeVisualModal<'a> {
         let instructions = Line::from(vec![
             Span::raw(" "),
             t.key_chip("←/→ / v"),
-            Span::styled(tr(" Cambiar personaje  ", " Switch character  "), Style::default().fg(t.text_muted)),
+            Span::styled(tr(" Cambiar escena de Frieren  ", " Switch Frieren scene  "), Style::default().fg(t.text_muted)),
             t.key_chip("Espacio"),
             Span::styled(tr(" Pausar/Reanudar  ", " Pause/Resume  "), Style::default().fg(t.text_muted)),
             t.action_chip_primary("V / Esc / q"),
@@ -824,6 +914,6 @@ mod tests {
 
         assert!(rendered.contains('╭'), "modal should use rounded borders");
         assert!(rendered.contains('▀'), "halfblock fallback should render truecolor pixel blocks");
-        assert!(rendered.contains("Aoi"), "modal title should display current character title");
+        assert!(rendered.contains("Frieren"), "modal title should display Frieren");
     }
 }
