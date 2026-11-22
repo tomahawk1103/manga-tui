@@ -635,16 +635,57 @@ pub async fn fetch_jikan_query_aliases(query: &str) -> Vec<String> {
         return cached.clone();
     }
 
-    let url = format!("https://api.jikan.moe/v4/manga?q={}&limit=5&sfw=true", urlencoding_simple(trimmed));
     let client = match reqwest::Client::builder()
-        .timeout(Duration::from_millis(2400))
-        .user_agent(concat!("manga-tui/", env!("CARGO_PKG_VERSION")))
+        .timeout(Duration::from_millis(2000))
+        .user_agent(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+        )
         .build()
     {
         Ok(c) => c,
         Err(_) => return Vec::new(),
     };
 
+    let mut discovered_for_query = Vec::new();
+
+    // 1. Primary: Official MyAnimeList instant prefix search JSON (responds in ~0.3s, works even when api.jikan.moe is blocked)
+    let mal_prefix_url =
+        format!("https://myanimelist.net/search/prefix.json?type=manga&keyword={}&v=1", urlencoding_simple(trimmed));
+    if let Ok(resp) = client.get(&mal_prefix_url).send().await
+        && resp.status().is_success()
+        && let Ok(json) = resp.json::<serde_json::Value>().await
+        && let Some(cats) = json.get("categories").and_then(|c| c.as_array())
+    {
+        for cat in cats {
+            if let Some(items) = cat.get("items").and_then(|i| i.as_array()) {
+                for (idx, item) in items.iter().take(4).enumerate() {
+                    if let Some(name) = item.get("name").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+                        if idx == 0 {
+                            register_title_aliases(name, &[trimmed.to_string()]);
+                        }
+                        if !discovered_for_query.iter().any(|d: &String| d.eq_ignore_ascii_case(name)) {
+                            discovered_for_query.push(name.to_string());
+                        }
+                        for sub in extract_subtitle_variants(name) {
+                            if !discovered_for_query.iter().any(|d: &String| d.eq_ignore_ascii_case(&sub)) {
+                                discovered_for_query.push(sub);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !discovered_for_query.is_empty() {
+        if let Ok(mut cache) = JIKAN_SEARCH_CACHE.lock() {
+            cache.insert(norm, discovered_for_query.clone());
+        }
+        return discovered_for_query;
+    }
+
+    // 2. Fallback: Jikan v4 /v4/manga?q=...
+    let url = format!("https://api.jikan.moe/v4/manga?q={}&limit=5&sfw=true", urlencoding_simple(trimmed));
     let resp = match client.get(&url).send().await {
         Ok(r) if r.status().is_success() => r,
         _ => return Vec::new(),
@@ -653,8 +694,6 @@ pub async fn fetch_jikan_query_aliases(query: &str) -> Vec<String> {
         Ok(v) => v,
         Err(_) => return Vec::new(),
     };
-
-    let mut discovered_for_query = Vec::new();
     if let Some(entries) = json.get("data").and_then(|d| d.as_array()) {
         for entry in entries {
             let Some(primary) = entry.get("title").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) else {

@@ -75,6 +75,14 @@ pub enum DiscoveryRankingKind {
 }
 
 impl DiscoveryRankingKind {
+    fn build_mal_direct_url(self, page: u32) -> String {
+        let limit = page.saturating_sub(1) * 50;
+        match self {
+            Self::MostRead => format!("https://myanimelist.net/topmanga.php?type=bypopularity&limit={limit}"),
+            Self::TopRated => format!("https://myanimelist.net/topmanga.php?limit={limit}"),
+        }
+    }
+
     fn build_url(self, page: u32) -> String {
         match self {
             Self::MostRead => format!("https://api.jikan.moe/v4/top/manga?filter=bypopularity&page={page}&limit=25"),
@@ -315,8 +323,8 @@ fn jikan_http_client() -> Option<&'static reqwest::Client> {
     CLIENT
         .get_or_init(|| {
             reqwest::Client::builder()
-                .timeout(Duration::from_secs(9))
-                .user_agent(concat!("manga-tui/", env!("CARGO_PKG_VERSION")))
+                .timeout(Duration::from_secs(6))
+                .user_agent("Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36")
                 .build()
                 .ok()
         })
@@ -333,6 +341,74 @@ fn jikan_page_cache()
     static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<(DiscoveryRankingKind, u32), (Vec<DiscoveryItem>, bool)>>> =
         OnceLock::new();
     CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
+}
+
+fn parse_mal_topmanga_html(html: &str, mode_popular: bool) -> Option<(Vec<DiscoveryItem>, bool)> {
+    use scraper::{Html, Selector};
+
+    let doc = Html::parse_document(html);
+    let row_sel = Selector::parse("tr.ranking-list").ok()?;
+    let title_sel = Selector::parse("h3.manga_h3 a").ok()?;
+    let score_sel = Selector::parse("td.score span.score-label").ok()?;
+    let info_sel = Selector::parse("div.information").ok()?;
+    let next_sel = Selector::parse("a.link-blue-box.next").ok()?;
+
+    let mut out = Vec::new();
+    for (idx, row) in doc.select(&row_sel).enumerate() {
+        let Some(title_el) = row.select(&title_sel).next() else {
+            continue;
+        };
+        let title = title_el.text().collect::<String>().trim().to_string();
+        if title.is_empty() {
+            continue;
+        }
+
+        let score_raw = row
+            .select(&score_sel)
+            .next()
+            .map(|el| el.text().collect::<String>().trim().to_string())
+            .unwrap_or_default();
+        let badge = if let Ok(s) = score_raw.parse::<f64>() { format!("★ {s:.2}") } else { format!("#{}", idx + 1) };
+
+        let info_text = row.select(&info_sel).next().map(|el| el.text().collect::<String>()).unwrap_or_default();
+
+        let mut media_type = String::from("Manga");
+        let mut members_count: u64 = 0;
+        for (line_idx, raw_line) in info_text.lines().map(str::trim).filter(|l| !l.is_empty()).enumerate() {
+            if line_idx == 0 {
+                let kind_part = raw_line.split('(').next().unwrap_or(raw_line).trim();
+                if !kind_part.is_empty() {
+                    media_type = kind_part.to_string();
+                }
+            }
+            if raw_line.contains("members") || raw_line.contains("member") {
+                let digits: String = raw_line.chars().filter(|c| c.is_ascii_digit()).collect();
+                if let Ok(parsed) = digits.parse::<u64>() {
+                    members_count = parsed;
+                }
+            }
+        }
+
+        let tag = if mode_popular {
+            if members_count >= 1_000 { format!("{}K {}", members_count / 1_000, tr("lectores", "readers")) } else { media_type }
+        } else {
+            media_type
+        };
+
+        let alt_titles: Vec<String> = crate::backend::multi_provider::expand_search_queries(&title, &[])
+            .into_iter()
+            .filter(|q| !q.eq_ignore_ascii_case(&title))
+            .collect();
+
+        out.push(DiscoveryItem::new(title, badge, tag).with_alt_titles(alt_titles));
+    }
+
+    if out.is_empty() {
+        None
+    } else {
+        let has_next = doc.select(&next_sel).next().is_some() || out.len() >= 45;
+        Some((out, has_next))
+    }
 }
 
 fn parse_jikan_page(json: &serde_json::Value, mode_popular: bool) -> Option<(Vec<DiscoveryItem>, bool)> {
@@ -426,9 +502,41 @@ async fn fetch_jikan_page(kind: DiscoveryRankingKind, page: u32) -> Option<(Vec<
     }
 
     let client = jikan_http_client()?;
-    let url = kind.build_url(page);
 
-    for attempt in 0..3u32 {
+    // 1. Primary: Official MyAnimeList ranking endpoint (50 items/page, works even when api.jikan.moe is blocked by ISP)
+    let mal_url = kind.build_mal_direct_url(page);
+    for attempt in 0..2u32 {
+        {
+            let mut last_req = jikan_pacer().lock().await;
+            let min_gap = Duration::from_millis(260);
+            let elapsed = last_req.elapsed();
+            if elapsed < min_gap {
+                tokio::time::sleep(min_gap - elapsed).await;
+            }
+            *last_req = tokio::time::Instant::now();
+        }
+
+        if let Ok(resp) = client.get(&mal_url).send().await {
+            if resp.status().is_success() {
+                if let Ok(html) = resp.text().await
+                    && let Some(parsed) = parse_mal_topmanga_html(&html, kind.is_popular_mode())
+                {
+                    if let Ok(mut cache) = jikan_page_cache().lock() {
+                        cache.insert((kind, page), parsed.clone());
+                    }
+                    return Some(parsed);
+                }
+            } else if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS || resp.status().is_server_error() {
+                tokio::time::sleep(Duration::from_millis(500 * u64::from(attempt + 1))).await;
+                continue;
+            }
+        }
+        break;
+    }
+
+    // 2. Fallback: Jikan API v4 (25 items/page)
+    let jikan_url = kind.build_url(page);
+    for attempt in 0..2u32 {
         {
             let mut last_req = jikan_pacer().lock().await;
             let min_gap = Duration::from_millis(380);
@@ -439,7 +547,7 @@ async fn fetch_jikan_page(kind: DiscoveryRankingKind, page: u32) -> Option<(Vec<
             *last_req = tokio::time::Instant::now();
         }
 
-        if let Ok(resp) = client.get(&url).send().await {
+        if let Ok(resp) = client.get(&jikan_url).send().await {
             if resp.status().is_success() {
                 if let Ok(json) = resp.json::<serde_json::Value>().await
                     && let Some(parsed) = parse_jikan_page(&json, kind.is_popular_mode())
@@ -458,8 +566,7 @@ async fn fetch_jikan_page(kind: DiscoveryRankingKind, page: u32) -> Option<(Vec<
                 return None;
             }
         } else {
-            let backoff = Duration::from_millis(500 * u64::from(attempt + 1));
-            tokio::time::sleep(backoff).await;
+            break;
         }
     }
 
@@ -2852,6 +2959,56 @@ mod test {
         );
         assert_eq!(grouped.len(), 1, "Romaji and English MAL titles should merge into 1 multi-provider group");
         assert_eq!(grouped[0].variants.len(), 3);
+    }
+
+    #[test]
+    fn test_parse_mal_topmanga_html_extracts_direct_rankings_and_aliases() {
+        use super::*;
+        let html = r#"
+        <table>
+            <tr class="ranking-list">
+                <td class="rank ac"><span class="top-anime-rank-text">1</span></td>
+                <td class="title al">
+                    <div class="detail">
+                        <h3 class="manga_h3"><a href="https://myanimelist.net/manga/2/Berserk">Berserk</a></h3>
+                        <div class="information">
+                            Manga (? vols)<br>
+                            Aug 1989 - <br>
+                            815,327 members
+                        </div>
+                    </div>
+                </td>
+                <td class="score"><span class="score-label">9.46</span></td>
+            </tr>
+            <tr class="ranking-list">
+                <td class="rank ac"><span class="top-anime-rank-text">2</span></td>
+                <td class="title al">
+                    <div class="detail">
+                        <h3 class="manga_h3"><a href="https://myanimelist.net/manga/23390/Shingeki_no_Kyojin">Shingeki no Kyojin</a></h3>
+                        <div class="information">
+                            Manga (34 vols)<br>
+                            Sep 2009 - Apr 2021<br>
+                            652,100 members
+                        </div>
+                    </div>
+                </td>
+                <td class="score"><span class="score-label">8.55</span></td>
+            </tr>
+        </table>
+        <a class="link-blue-box next" href="?limit=50">Next 50</a>
+        "#;
+
+        let (pop_items, has_next) = parse_mal_topmanga_html(html, true).expect("direct MAL HTML should parse");
+        assert!(has_next);
+        assert_eq!(pop_items.len(), 2);
+        assert_eq!(pop_items[0].title, "Berserk");
+        assert_eq!(pop_items[0].badge, "★ 9.46");
+        assert!(matches!(pop_items[0].tag.as_str(), "815K lectores" | "815K readers"));
+        assert_eq!(pop_items[1].title, "Shingeki no Kyojin");
+        assert!(pop_items[1].alt_titles.iter().any(|a| a.eq_ignore_ascii_case("attack on titan")));
+
+        let (rated_items, _) = parse_mal_topmanga_html(html, false).expect("rated MAL HTML should parse");
+        assert_eq!(rated_items[0].tag, "Manga");
     }
 
     #[test]
