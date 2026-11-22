@@ -828,8 +828,8 @@ where
                 )]));
             let anime_inner = anime_block.inner(anime_area);
             anime_block.render(anime_area, buf);
-            // Render the live animated scene using Truecolor Halfblocks inside the hero card so it never collides with cover Sixels
-            self.anime_player.render_canvas(anime_inner, buf, None);
+            // Render the live animated character in HD using the terminal's graphics protocol (Sixel / Kitty / iTerm2)
+            self.anime_player.render_hero_canvas(anime_inner, buf, self.picker.as_mut());
         } else {
             self.anime_banner_area = Rect::default();
         }
