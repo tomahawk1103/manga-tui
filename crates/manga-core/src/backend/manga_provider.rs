@@ -385,7 +385,7 @@ impl ChapterOrderBy {
     }
 }
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Pagination {
     pub current_page: u32,
     pub items_per_page: u32,

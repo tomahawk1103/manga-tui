@@ -49,6 +49,7 @@ pub struct DiscoveryItem {
     pub title: String,
     pub badge: String,
     pub tag: String,
+    pub alt_titles: Vec<String>,
 }
 
 impl DiscoveryItem {
@@ -57,11 +58,17 @@ impl DiscoveryItem {
             title: title.into(),
             badge: badge.into(),
             tag: tag.into(),
+            alt_titles: Vec::new(),
         }
+    }
+
+    pub fn with_alt_titles(mut self, alt_titles: Vec<String>) -> Self {
+        self.alt_titles = alt_titles;
+        self
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum DiscoveryRankingKind {
     MostRead,
     TopRated,
@@ -91,7 +98,9 @@ pub struct DiscoveryFeed {
 }
 
 impl DiscoveryFeed {
-    const MAX_AUTO_PAGES: u32 = 10;
+    pub const INITIAL_PREFETCH_PAGES: u32 = 4;
+    pub const MAX_AUTO_PAGES: u32 = 40;
+    pub const PREFETCH_LOOKAHEAD_ROWS: usize = 15;
 
     fn new(fallback_items: Vec<DiscoveryItem>) -> Self {
         Self {
@@ -132,7 +141,7 @@ impl DiscoveryFeed {
             self.current_page = page;
             self.has_next_page = has_next && page < Self::MAX_AUTO_PAGES;
             self.is_live = true;
-            self.is_fetching = false;
+            self.is_fetching = initial_batch_continues;
         } else {
             self.is_fetching = false;
         }
@@ -143,7 +152,7 @@ impl DiscoveryFeed {
             && self.has_next_page
             && !self.is_fetching
             && self.current_page < Self::MAX_AUTO_PAGES
-            && selected_row.saturating_add(6) >= self.items.len()
+            && selected_row.saturating_add(Self::PREFETCH_LOOKAHEAD_ROWS) >= self.items.len()
     }
 }
 
@@ -306,12 +315,24 @@ fn jikan_http_client() -> Option<&'static reqwest::Client> {
     CLIENT
         .get_or_init(|| {
             reqwest::Client::builder()
-                .timeout(Duration::from_secs(7))
+                .timeout(Duration::from_secs(9))
                 .user_agent(concat!("manga-tui/", env!("CARGO_PKG_VERSION")))
                 .build()
                 .ok()
         })
         .as_ref()
+}
+
+fn jikan_pacer() -> &'static tokio::sync::Mutex<tokio::time::Instant> {
+    static PACER: OnceLock<tokio::sync::Mutex<tokio::time::Instant>> = OnceLock::new();
+    PACER.get_or_init(|| tokio::sync::Mutex::new(tokio::time::Instant::now() - Duration::from_secs(2)))
+}
+
+fn jikan_page_cache()
+-> &'static std::sync::Mutex<std::collections::HashMap<(DiscoveryRankingKind, u32), (Vec<DiscoveryItem>, bool)>> {
+    static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<(DiscoveryRankingKind, u32), (Vec<DiscoveryItem>, bool)>>> =
+        OnceLock::new();
+    CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
 fn parse_jikan_page(json: &serde_json::Value, mode_popular: bool) -> Option<(Vec<DiscoveryItem>, bool)> {
@@ -328,6 +349,52 @@ fn parse_jikan_page(json: &serde_json::Value, mode_popular: bool) -> Option<(Vec
         if title.is_empty() {
             continue;
         }
+        let mut alt_titles: Vec<String> = Vec::new();
+        if let Some(eng) = entry
+            .get("title_english")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case(&title))
+        {
+            alt_titles.push(eng.to_string());
+        }
+        if let Some(titles_arr) = entry.get("titles").and_then(|v| v.as_array()) {
+            for t_obj in titles_arr {
+                let kind = t_obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                if matches!(kind, "Default" | "English" | "Synonym" | "Spanish")
+                    && let Some(t_val) = t_obj.get("title").and_then(|v| v.as_str()).map(str::trim)
+                    && !t_val.is_empty()
+                    && t_val.is_ascii()
+                    && !t_val.eq_ignore_ascii_case(&title)
+                    && !alt_titles.iter().any(|a| a.eq_ignore_ascii_case(t_val))
+                {
+                    alt_titles.push(t_val.to_string());
+                }
+            }
+        }
+        if let Some(syns) = entry.get("title_synonyms").and_then(|v| v.as_array()) {
+            for syn in syns {
+                if let Some(s) = syn.as_str().map(str::trim)
+                    && !s.is_empty()
+                    && s.is_ascii()
+                    && !s.eq_ignore_ascii_case(&title)
+                    && !alt_titles.iter().any(|a| a.eq_ignore_ascii_case(s))
+                {
+                    alt_titles.push(s.to_string());
+                }
+            }
+        }
+        let mut subtitle_extras = crate::backend::multi_provider::extract_subtitle_variants(&title);
+        for alt in &alt_titles {
+            subtitle_extras.extend(crate::backend::multi_provider::extract_subtitle_variants(alt));
+        }
+        for sub in subtitle_extras {
+            if !sub.eq_ignore_ascii_case(&title) && !alt_titles.iter().any(|a| a.eq_ignore_ascii_case(&sub)) {
+                alt_titles.push(sub);
+            }
+        }
+        crate::backend::multi_provider::register_title_aliases(&title, &alt_titles);
+
         let score = entry
             .get("score")
             .and_then(|v| v.as_f64())
@@ -345,21 +412,58 @@ fn parse_jikan_page(json: &serde_json::Value, mode_popular: bool) -> Option<(Vec
             entry.get("type").and_then(|v| v.as_str()).unwrap_or("Manga").to_string()
         };
 
-        out.push(DiscoveryItem::new(title, score, tag));
+        out.push(DiscoveryItem::new(title, score, tag).with_alt_titles(alt_titles));
     }
 
     if out.is_empty() { None } else { Some((out, has_next_page)) }
 }
 
 async fn fetch_jikan_page(kind: DiscoveryRankingKind, page: u32) -> Option<(Vec<DiscoveryItem>, bool)> {
+    if let Ok(cache) = jikan_page_cache().lock()
+        && let Some(cached) = cache.get(&(kind, page))
+    {
+        return Some(cached.clone());
+    }
+
     let client = jikan_http_client()?;
     let url = kind.build_url(page);
-    let resp = client.get(&url).send().await.ok()?;
-    if !resp.status().is_success() {
-        return None;
+
+    for attempt in 0..3u32 {
+        {
+            let mut last_req = jikan_pacer().lock().await;
+            let min_gap = Duration::from_millis(380);
+            let elapsed = last_req.elapsed();
+            if elapsed < min_gap {
+                tokio::time::sleep(min_gap - elapsed).await;
+            }
+            *last_req = tokio::time::Instant::now();
+        }
+
+        if let Ok(resp) = client.get(&url).send().await {
+            if resp.status().is_success() {
+                if let Ok(json) = resp.json::<serde_json::Value>().await
+                    && let Some(parsed) = parse_jikan_page(&json, kind.is_popular_mode())
+                {
+                    if let Ok(mut cache) = jikan_page_cache().lock() {
+                        cache.insert((kind, page), parsed.clone());
+                    }
+                    return Some(parsed);
+                }
+                return None;
+            } else if resp.status() == reqwest::StatusCode::TOO_MANY_REQUESTS || resp.status().is_server_error() {
+                let backoff = Duration::from_millis(700 * u64::from(attempt + 1));
+                tokio::time::sleep(backoff).await;
+                continue;
+            } else {
+                return None;
+            }
+        } else {
+            let backoff = Duration::from_millis(500 * u64::from(attempt + 1));
+            tokio::time::sleep(backoff).await;
+        }
     }
-    let json: serde_json::Value = resp.json().await.ok()?;
-    parse_jikan_page(&json, kind.is_popular_mode())
+
+    None
 }
 
 fn truncate_with_ellipsis(text: &str, max_chars: usize) -> String {
@@ -418,6 +522,7 @@ pub enum SearchPageActions {
     DiscoveryRight,
     SelectDiscoveryCol(usize),
     ReturnToDiscovery,
+    RefreshDiscovery,
     SwitchProvider,
 }
 
@@ -508,6 +613,7 @@ where
     pub search_history: Vec<String>,
     pub history_index: Option<usize>,
     pub stashed_input: String,
+    pub active_query_aliases: Vec<String>,
     manga_provider: Arc<T>,
     pub active_provider: MangaProviders,
     manga_tracker: Option<S>,
@@ -644,6 +750,12 @@ where
                 self.clean_up();
                 self.refresh_personal_discovery();
             },
+            SearchPageActions::RefreshDiscovery => {
+                if self.state == PageState::Normal {
+                    self.refresh_personal_discovery();
+                    self.force_sync_more_discovery();
+                }
+            },
             SearchPageActions::SwitchProvider => self.switch_selected_manga_provider(),
         }
     }
@@ -721,6 +833,7 @@ where
             search_history,
             history_index: None,
             stashed_input: String::new(),
+            active_query_aliases: Vec::new(),
             manga_provider: api_client,
             active_provider,
             manga_tracker,
@@ -906,6 +1019,8 @@ where
                     Span::styled(tr(" Explorar Top  ", " Browse Top  "), Style::default().fg(t.text_muted)),
                     t.action_chip_primary("Enter"),
                     Span::styled(tr(" Buscar manga  ", " Search manga  "), Style::default().fg(t.text_primary).bold()),
+                    t.highlight_key_chip("R"),
+                    Span::styled(tr(" +Resultados MAL  ", " +MAL Results  "), Style::default().fg(t.text_muted)),
                     t.highlight_key_chip("s"),
                     Span::styled(tr(" Escribir ", " Type "), Style::default().fg(t.text_muted)),
                 ]);
@@ -1299,66 +1414,76 @@ where
     fn activate_selected_discovery_item(&mut self) {
         let col = self.discovery_col.min(2);
         let row = self.discovery_row[col];
-        let maybe_title = match Self::col_kind(col) {
-            Some(kind) => self.feed_ref(kind).items.get(row).map(|i| i.title.clone()),
-            None => self.discovery_personal.get(row).map(|i| i.title.clone()),
+        let maybe_item = match Self::col_kind(col) {
+            Some(kind) => self.feed_ref(kind).items.get(row).cloned(),
+            None => self.discovery_personal.get(row).cloned(),
         };
-        if let Some(title) = maybe_title {
-            self.search_with_query_all_providers(&title);
+        if let Some(item) = maybe_item {
+            self.search_with_aliases_all_providers(&item.title, &item.alt_titles);
         }
     }
 
     fn spawn_global_discovery_fetch(&self) {
         let tx = self.local_event_tx.clone();
+        let target_pages = DiscoveryFeed::INITIAL_PREFETCH_PAGES;
         tokio::spawn(async move {
-            let (pop1, rated1) = tokio::join!(
-                fetch_jikan_page(DiscoveryRankingKind::MostRead, 1),
-                fetch_jikan_page(DiscoveryRankingKind::TopRated, 1),
-            );
-            let pop_has_next = pop1.as_ref().map(|(_, has_next)| *has_next).unwrap_or(false);
-            let rated_has_next = rated1.as_ref().map(|(_, has_next)| *has_next).unwrap_or(false);
+            let mut pop_has_next = true;
+            let mut rated_has_next = true;
 
-            tx.send(SearchPageEvents::LoadGlobalDiscoveryPage {
-                kind: DiscoveryRankingKind::MostRead,
-                page: 1,
-                data: pop1,
-                initial_batch_continues: pop_has_next,
-            })
-            .ok();
-            tx.send(SearchPageEvents::LoadGlobalDiscoveryPage {
-                kind: DiscoveryRankingKind::TopRated,
-                page: 1,
-                data: rated1,
-                initial_batch_continues: rated_has_next,
-            })
-            .ok();
-
-            if pop_has_next || rated_has_next {
-                tokio::time::sleep(std::time::Duration::from_millis(450)).await;
-                let (pop2, rated2) = tokio::join!(
-                    async { if pop_has_next { fetch_jikan_page(DiscoveryRankingKind::MostRead, 2).await } else { None } },
-                    async { if rated_has_next { fetch_jikan_page(DiscoveryRankingKind::TopRated, 2).await } else { None } }
-                );
+            for page in 1..=target_pages {
+                if !pop_has_next && !rated_has_next {
+                    break;
+                }
                 if pop_has_next {
+                    let data = fetch_jikan_page(DiscoveryRankingKind::MostRead, page).await;
+                    pop_has_next = data.as_ref().map(|(_, has_next)| *has_next).unwrap_or(false);
+                    let continues = pop_has_next && page < target_pages;
                     tx.send(SearchPageEvents::LoadGlobalDiscoveryPage {
                         kind: DiscoveryRankingKind::MostRead,
-                        page: 2,
-                        data: pop2,
-                        initial_batch_continues: false,
+                        page,
+                        data,
+                        initial_batch_continues: continues,
                     })
                     .ok();
                 }
                 if rated_has_next {
+                    let data = fetch_jikan_page(DiscoveryRankingKind::TopRated, page).await;
+                    rated_has_next = data.as_ref().map(|(_, has_next)| *has_next).unwrap_or(false);
+                    let continues = rated_has_next && page < target_pages;
                     tx.send(SearchPageEvents::LoadGlobalDiscoveryPage {
                         kind: DiscoveryRankingKind::TopRated,
-                        page: 2,
-                        data: rated2,
-                        initial_batch_continues: false,
+                        page,
+                        data,
+                        initial_batch_continues: continues,
                     })
                     .ok();
                 }
             }
         });
+    }
+
+    fn force_sync_more_discovery(&mut self) {
+        for kind in [DiscoveryRankingKind::MostRead, DiscoveryRankingKind::TopRated] {
+            let next_page = {
+                let feed = self.feed_mut(kind);
+                if feed.is_fetching || (!feed.has_next_page && feed.is_live) || feed.current_page >= DiscoveryFeed::MAX_AUTO_PAGES {
+                    continue;
+                }
+                feed.is_fetching = true;
+                if feed.is_live { feed.current_page + 1 } else { 1 }
+            };
+            let tx = self.local_event_tx.clone();
+            tokio::spawn(async move {
+                let data = fetch_jikan_page(kind, next_page).await;
+                tx.send(SearchPageEvents::LoadGlobalDiscoveryPage {
+                    kind,
+                    page: next_page,
+                    data,
+                    initial_batch_continues: false,
+                })
+                .ok();
+            });
+        }
     }
 
     fn maybe_fetch_next_discovery_page(&mut self) {
@@ -1368,11 +1493,19 @@ where
         let row = self.discovery_row[self.discovery_col.min(2)];
         let next_page = {
             let feed = self.feed_mut(kind);
-            if !feed.should_fetch_next(row) {
-                return;
+            if !feed.is_live {
+                if feed.is_fetching || !feed.has_next_page || row < 5 {
+                    return;
+                }
+                feed.is_fetching = true;
+                1
+            } else {
+                if !feed.should_fetch_next(row) {
+                    return;
+                }
+                feed.is_fetching = true;
+                feed.current_page + 1
             }
-            feed.is_fetching = true;
-            feed.current_page + 1
         };
         let tx = self.local_event_tx.clone();
         tokio::spawn(async move {
@@ -1637,6 +1770,11 @@ where
                 KeyCode::Char('r') | KeyCode::Enter => {
                     self.local_action_tx.send(SearchPageActions::SearchMangaPage).ok();
                 },
+                KeyCode::Char('R') => {
+                    if self.state == PageState::Normal {
+                        self.local_action_tx.send(SearchPageActions::RefreshDiscovery).ok();
+                    }
+                },
 
                 _ => {},
             },
@@ -1884,7 +2022,12 @@ where
     }
 
     pub fn search_with_query_all_providers(&mut self, query: &str) {
+        self.search_with_aliases_all_providers(query, &[]);
+    }
+
+    pub fn search_with_aliases_all_providers(&mut self, query: &str, aliases: &[String]) {
         self.search_bar = Input::default().with_value(query.to_string());
+        self.active_query_aliases = aliases.to_vec();
         self.search_scope = SearchScope::AllProviders;
         self.reset_search();
         self.search_mangas();
@@ -1911,6 +2054,7 @@ where
         let page = self.mangas_found_list.pagination.clone();
         let tx = self.local_event_tx.clone();
         let search_term = SearchTerm::trimmed_lowercased(self.search_bar.value());
+        let extra_aliases = std::mem::take(&mut self.active_query_aliases);
         let filters = self.filter_state.get_state().clone();
         let client = Arc::clone(&self.manga_provider);
         let active_provider = self.active_provider;
@@ -1921,7 +2065,7 @@ where
             match scope {
                 SearchScope::AllProviders => {
                     let results = if let Some(term) = search_term {
-                        crate::backend::multi_provider::search_all_providers_with_lang(term.get(), lang).await
+                        crate::backend::multi_provider::search_all_providers_with_aliases(term.get(), &extra_aliases, lang).await
                     } else {
                         vec![]
                     };
@@ -2635,19 +2779,79 @@ mod test {
         assert!(!feed.is_fetching);
         assert!(feed.has_next_page);
 
-        // Threshold check: 6 rows before bottom triggers next page
-        assert!(!feed.should_fetch_next(42)); // 42 + 6 = 48 < 49
-        assert!(feed.should_fetch_next(43)); // 43 + 6 = 49 >= 49
+        // Threshold check: 15 rows before bottom triggers next page
+        assert!(!feed.should_fetch_next(33)); // 33 + 15 = 48 < 49
+        assert!(feed.should_fetch_next(34)); // 34 + 15 = 49 >= 49
         assert!(feed.should_fetch_next(48));
 
-        // Verify MAX_AUTO_PAGES cap stops auto pagination at page 10
-        for page in 3..=10 {
+        // Verify MAX_AUTO_PAGES cap stops auto pagination at page 40
+        for page in 3..=DiscoveryFeed::MAX_AUTO_PAGES {
             let item = DiscoveryItem::new(format!("Page {page} Item"), "★ 8.50", "Manga");
             feed.apply_page(page, Some((vec![item], true)), false);
         }
-        assert_eq!(feed.current_page, 10);
+        assert_eq!(feed.current_page, DiscoveryFeed::MAX_AUTO_PAGES);
         assert!(!feed.has_next_page);
         assert!(!feed.should_fetch_next(feed.items.len().saturating_sub(1)));
+    }
+
+    #[test]
+    fn test_parse_jikan_page_extracts_english_and_synonym_aliases_and_unifies_groups() {
+        use super::*;
+        let json = serde_json::json!({
+            "pagination": { "has_next_page": true },
+            "data": [
+                {
+                    "title": "Sousou no Frieren",
+                    "title_english": "Frieren: Beyond Journey's End",
+                    "title_synonyms": ["Frieren at the Funeral"],
+                    "titles": [
+                        { "type": "Default", "title": "Sousou no Frieren" },
+                        { "type": "English", "title": "Frieren: Beyond Journey's End" }
+                    ],
+                    "score": 9.38,
+                    "members": 420_000,
+                    "type": "Manga"
+                }
+            ]
+        });
+
+        let (items, has_next) = parse_jikan_page(&json, true).expect("Jikan entry with aliases should parse");
+        assert!(has_next);
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].title, "Sousou no Frieren");
+        assert!(items[0].alt_titles.contains(&"Frieren: Beyond Journey's End".to_string()));
+        assert!(items[0].alt_titles.contains(&"Frieren at the Funeral".to_string()));
+        assert!(items[0].alt_titles.contains(&"Frieren".to_string()));
+
+        // Verify Spanish/Romaji and English provider results now unify into a single group
+        let provider_results = vec![
+            SearchManga {
+                id: "inm_frieren".into(),
+                title: "Sousou no Frieren".into(),
+                provider: Some(MangaProviders::Inmanga),
+                ..Default::default()
+            },
+            SearchManga {
+                id: "wc_frieren".into(),
+                title: "Frieren: Beyond Journey's End".into(),
+                provider: Some(MangaProviders::Weebcentral),
+                ..Default::default()
+            },
+            SearchManga {
+                id: "mp_frieren".into(),
+                title: "Frieren".into(),
+                provider: Some(MangaProviders::Mangapill),
+                ..Default::default()
+            },
+        ];
+
+        let grouped = crate::backend::multi_provider::group_search_results(
+            provider_results,
+            "Sousou no Frieren",
+            crate::backend::multi_provider::MultiSearchLanguage::All,
+        );
+        assert_eq!(grouped.len(), 1, "Romaji and English MAL titles should merge into 1 multi-provider group");
+        assert_eq!(grouped[0].variants.len(), 3);
     }
 
     #[test]

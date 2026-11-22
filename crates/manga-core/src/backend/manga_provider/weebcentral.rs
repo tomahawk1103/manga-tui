@@ -607,7 +607,7 @@ impl SearchPageProvider for WeebcentralProvider {
         filters: Self::InnerState,
         pagination: super::Pagination,
     ) -> Result<GetMangasResponse, Box<dyn Error>> {
-        let limit = 24;
+        let limit = pagination.items_per_page.max(24);
         let offset = limit * (pagination.current_page.saturating_sub(1));
 
         let search = match search_term {

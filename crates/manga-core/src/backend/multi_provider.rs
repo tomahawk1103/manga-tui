@@ -396,6 +396,365 @@ pub fn normalize_title_for_grouping(title: &str) -> String {
     canonical.join(" ")
 }
 
+/// Built-in bilingual (Romaji / English / Spanish) canonical alias groups for popular MyAnimeList series.
+/// The first entry in each slice is used as the canonical group key.
+const CANONICAL_TITLE_ALIAS_GROUPS: &[&[&str]] = &[
+    &["shingeki no kyojin", "attack on titan", "ataque a los titanes"],
+    &["kimetsu no yaiba", "demon slayer", "demon slayer kimetsu no yaiba", "guardianes de la noche"],
+    &["boku no hero academia", "my hero academia"],
+    &["sousou no frieren", "frieren", "frieren beyond journeys end"],
+    &["kusuriya no hitorigoto", "the apothecary diaries", "apothecary diaries"],
+    &["kaguya sama love is war", "kaguya sama wa kokurasetai", "kaguya sama wa kokurasetai tensai tachi no renai zunousen"],
+    &["oyasumi punpun", "goodnight punpun", "buenas noches punpun"],
+    &["steel ball run", "jojo no kimyou na bouken part 7 steel ball run", "jojos bizarre adventure part 7 steel ball run"],
+    &["dungeon meshi", "delicious in dungeon", "tragones y mazmorras"],
+    &["tensei shitara slime datta ken", "that time i got reincarnated as a slime"],
+    &["mushoku tensei", "mushoku tensei isekai ittara honki dasu", "mushoku tensei jobless reincarnation", "jobless reincarnation"],
+    &["yakusoku no neverland", "the promised neverland"],
+    &["enen no shouboutai", "fire force"],
+    &["fumetsu no anata e", "to your eternity"],
+    &["koe no katachi", "a silent voice"],
+    &["3 gatsu no lion", "sangatsu no lion", "march comes in like a lion"],
+    &["nanatsu no taizai", "the seven deadly sins"],
+    &["tate no yuusha no nariagari", "the rising of the shield hero"],
+    &["solo leveling", "ore dake level up na ken", "only i level up"],
+    &["omniscient reader", "omniscient readers viewpoint"],
+    &["tbate", "the beginning after the end"],
+    &["blue box", "ao no hako"],
+    &["witch hat atelier", "tongari boushi no atelier"],
+    &["tengoku daimakyou", "heavenly delusion"],
+    &["boku no kokoro no yabai yatsu", "the dangers in my heart"],
+    &["sono bisque doll wa koi wo suru", "my dress up darling"],
+    &["komi san wa comyushou desu", "komi cant communicate"],
+    &["kaze no tani no nausicaa", "nausicaa of the valley of the wind"],
+    &["houseki no kuni", "land of the lustrous"],
+    &["akatsuki no yona", "yona of the dawn"],
+    &["the climber", "kokou no hito"],
+    &["chikan otoko", "molester man"],
+    &["yotsuba to", "yotsubato"],
+    &["20th century boys", "nijusseiki shounen"],
+    &["fullmetal alchemist", "hagane no renkinjutsushi"],
+    &["death note", "desu noto"],
+    &["hunter x hunter", "hunter hunter"],
+    &["haikyu", "haikyuu"],
+    &["tokyo ghoul", "toukyou kushu"],
+    &["chainsaw man", "chensoman"],
+    &["jujutsu kaisen", "sorcery fight"],
+    &["spy x family", "spy family"],
+    &["one punch man", "onepunch man", "wanpanman"],
+];
+
+static MAL_RUNTIME_CANONICAL_KEYS: std::sync::LazyLock<Mutex<HashMap<String, String>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static MAL_RUNTIME_QUERY_ALIASES: std::sync::LazyLock<Mutex<HashMap<String, Vec<String>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+static JIKAN_SEARCH_CACHE: std::sync::LazyLock<Mutex<HashMap<String, Vec<String>>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Extracts a clean base title before a subtitle separator (`:` or ` - `) when present,
+/// as well as the trailing subtitle when prefixed by `Part X:`.
+pub fn extract_subtitle_variants(title: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let trimmed = title.trim();
+    if let Some((before, after)) = trimmed.split_once(':') {
+        let b = before.trim();
+        let a = after.trim();
+        if b.chars().count() >= 4 && !b.eq_ignore_ascii_case(trimmed) {
+            out.push(b.to_string());
+        }
+        if a.chars().count() >= 4 && !a.eq_ignore_ascii_case(trimmed) {
+            out.push(a.to_string());
+        }
+    }
+    if let Some((before, _)) = trimmed.split_once(" - ") {
+        let b = before.trim();
+        if b.chars().count() >= 4 && !b.eq_ignore_ascii_case(trimmed) && !out.iter().any(|s| s.eq_ignore_ascii_case(b)) {
+            out.push(b.to_string());
+        }
+    }
+    out
+}
+
+/// Registers runtime title aliases (e.g. from MyAnimeList / Jikan `title`, `title_english`, and `synonyms`)
+/// so multi-provider search and grouping treat them as equivalent.
+pub fn register_title_aliases(primary_title: &str, alt_titles: &[String]) {
+    let primary_trimmed = primary_title.trim();
+    if primary_trimmed.is_empty() {
+        return;
+    }
+
+    let mut all_display: Vec<String> = Vec::with_capacity(1 + alt_titles.len() + 2);
+    all_display.push(primary_trimmed.to_string());
+    for sub in extract_subtitle_variants(primary_trimmed) {
+        if !all_display.iter().any(|s| s.eq_ignore_ascii_case(&sub)) {
+            all_display.push(sub);
+        }
+    }
+    for alt in alt_titles {
+        let t = alt.trim();
+        if !t.is_empty() && !all_display.iter().any(|s| s.eq_ignore_ascii_case(t)) {
+            all_display.push(t.to_string());
+        }
+        for sub in extract_subtitle_variants(t) {
+            if !all_display.iter().any(|s| s.eq_ignore_ascii_case(&sub)) {
+                all_display.push(sub);
+            }
+        }
+    }
+
+    let mut norm_keys: Vec<String> = Vec::with_capacity(all_display.len());
+    for disp in &all_display {
+        let n = normalize_title_for_grouping(disp);
+        if !n.is_empty() && !norm_keys.contains(&n) {
+            norm_keys.push(n);
+        }
+    }
+    if norm_keys.is_empty() {
+        return;
+    }
+
+    // Prefer an existing static canonical key if any of the normalized titles match our built-in table
+    let canonical = norm_keys
+        .iter()
+        .find_map(|k| {
+            CANONICAL_TITLE_ALIAS_GROUPS
+                .iter()
+                .find(|group| group.contains(&k.as_str()))
+                .map(|group| group[0].to_string())
+        })
+        .unwrap_or_else(|| norm_keys[0].clone());
+
+    if let Ok(mut map) = MAL_RUNTIME_CANONICAL_KEYS.lock() {
+        for k in &norm_keys {
+            map.entry(k.clone()).or_insert_with(|| canonical.clone());
+        }
+    }
+
+    if all_display.len() > 1
+        && let Ok(mut qmap) = MAL_RUNTIME_QUERY_ALIASES.lock()
+    {
+        for k in &norm_keys {
+            let entry = qmap.entry(k.clone()).or_default();
+            for disp in &all_display {
+                if !entry.iter().any(|e| e.eq_ignore_ascii_case(disp)) {
+                    entry.push(disp.clone());
+                }
+            }
+        }
+    }
+}
+
+/// Returns the canonical grouping key for a title, unifying known Romaji/English/Spanish synonyms.
+pub fn canonical_group_key(title: &str) -> String {
+    let norm = normalize_title_for_grouping(title);
+    if norm.is_empty() {
+        return norm;
+    }
+    for group in CANONICAL_TITLE_ALIAS_GROUPS {
+        if group.contains(&norm.as_str()) {
+            return group[0].to_string();
+        }
+    }
+    if let Ok(map) = MAL_RUNTIME_CANONICAL_KEYS.lock()
+        && let Some(mapped) = map.get(&norm)
+    {
+        return mapped.clone();
+    }
+    norm
+}
+
+/// Expands a search query into a prioritized list of distinct search queries (primary + Romaji/English/subtitle aliases).
+pub fn expand_search_queries(query: &str, extra_aliases: &[String]) -> Vec<String> {
+    let trimmed = query.trim();
+    if trimmed.is_empty() {
+        return Vec::new();
+    }
+    if !extra_aliases.is_empty() {
+        register_title_aliases(trimmed, extra_aliases);
+    }
+
+    let mut queries: Vec<String> = Vec::new();
+    let mut seen_norm: HashSet<String> = HashSet::new();
+
+    let mut push_unique = |candidate: &str| {
+        let c = candidate.trim();
+        if c.len() < 2 {
+            return;
+        }
+        let n = normalize_title_for_grouping(c);
+        if !n.is_empty() && seen_norm.insert(n) {
+            queries.push(c.to_string());
+        }
+    };
+
+    push_unique(trimmed);
+    for alt in extra_aliases {
+        push_unique(alt);
+    }
+
+    let norm = normalize_title_for_grouping(trimmed);
+    if let Ok(qmap) = MAL_RUNTIME_QUERY_ALIASES.lock()
+        && let Some(runtime_list) = qmap.get(&norm)
+    {
+        for alias in runtime_list {
+            push_unique(alias);
+        }
+    }
+
+    for group in CANONICAL_TITLE_ALIAS_GROUPS {
+        if group.iter().any(|&alias| alias == norm || norm.starts_with(alias)) {
+            for &alias in *group {
+                push_unique(alias);
+            }
+        }
+    }
+
+    for sub in extract_subtitle_variants(trimmed) {
+        push_unique(&sub);
+    }
+
+    queries.truncate(3);
+    queries
+}
+
+/// Queries MyAnimeList (Jikan v4 `/v4/manga?q=...`) with a fast timeout and in-memory cache
+/// to discover official Romaji/English/Synonym title aliases for `query`.
+pub async fn fetch_jikan_query_aliases(query: &str) -> Vec<String> {
+    let trimmed = query.trim();
+    if trimmed.len() < 3 {
+        return Vec::new();
+    }
+    let norm = normalize_title_for_grouping(trimmed);
+    if norm.is_empty() {
+        return Vec::new();
+    }
+
+    if let Ok(cache) = JIKAN_SEARCH_CACHE.lock()
+        && let Some(cached) = cache.get(&norm)
+    {
+        return cached.clone();
+    }
+
+    let url = format!("https://api.jikan.moe/v4/manga?q={}&limit=5&sfw=true", urlencoding_simple(trimmed));
+    let client = match reqwest::Client::builder()
+        .timeout(Duration::from_millis(2400))
+        .user_agent(concat!("manga-tui/", env!("CARGO_PKG_VERSION")))
+        .build()
+    {
+        Ok(c) => c,
+        Err(_) => return Vec::new(),
+    };
+
+    let resp = match client.get(&url).send().await {
+        Ok(r) if r.status().is_success() => r,
+        _ => return Vec::new(),
+    };
+    let json: serde_json::Value = match resp.json().await {
+        Ok(v) => v,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut discovered_for_query = Vec::new();
+    if let Some(entries) = json.get("data").and_then(|d| d.as_array()) {
+        for entry in entries {
+            let Some(primary) = entry.get("title").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) else {
+                continue;
+            };
+            let mut alts = Vec::new();
+            if let Some(eng) = entry
+                .get("title_english")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case(primary))
+            {
+                alts.push(eng.to_string());
+            }
+            if let Some(titles_arr) = entry.get("titles").and_then(|v| v.as_array()) {
+                for t_obj in titles_arr {
+                    let kind = t_obj.get("type").and_then(|v| v.as_str()).unwrap_or("");
+                    if matches!(kind, "Default" | "English" | "Synonym" | "Spanish")
+                        && let Some(t_val) = t_obj.get("title").and_then(|v| v.as_str()).map(str::trim)
+                        && !t_val.is_empty()
+                        && t_val.is_ascii()
+                        && !t_val.eq_ignore_ascii_case(primary)
+                        && !alts.iter().any(|a| a.eq_ignore_ascii_case(t_val))
+                    {
+                        alts.push(t_val.to_string());
+                    }
+                }
+            }
+            if let Some(syns) = entry.get("title_synonyms").and_then(|v| v.as_array()) {
+                for syn in syns {
+                    if let Some(s) = syn.as_str().map(str::trim)
+                        && !s.is_empty()
+                        && s.is_ascii()
+                        && !s.eq_ignore_ascii_case(primary)
+                        && !alts.iter().any(|a| a.eq_ignore_ascii_case(s))
+                    {
+                        alts.push(s.to_string());
+                    }
+                }
+            }
+
+            register_title_aliases(primary, &alts);
+
+            let primary_norm = normalize_title_for_grouping(primary);
+            let matches_query = calculate_relevance_score(&primary_norm, &norm) <= 2
+                || alts
+                    .iter()
+                    .any(|a| calculate_relevance_score(&normalize_title_for_grouping(a), &norm) <= 2);
+
+            if matches_query {
+                if !discovered_for_query.iter().any(|d: &String| d.eq_ignore_ascii_case(primary)) {
+                    discovered_for_query.push(primary.to_string());
+                }
+                for a in alts {
+                    if !discovered_for_query.iter().any(|d| d.eq_ignore_ascii_case(&a)) {
+                        discovered_for_query.push(a);
+                    }
+                }
+            }
+        }
+    }
+
+    if let Ok(mut cache) = JIKAN_SEARCH_CACHE.lock() {
+        cache.insert(norm, discovered_for_query.clone());
+    }
+    discovered_for_query
+}
+
+fn urlencoding_simple(input: &str) -> String {
+    let mut out = String::with_capacity(input.len() + 8);
+    for b in input.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => out.push(b as char),
+            b' ' => out.push('+'),
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
+fn best_relevance_score_for_query(title: &str, query: &str) -> u8 {
+    let title_norm = normalize_title_for_grouping(title);
+    let title_canon = canonical_group_key(title);
+    let query_norm = normalize_title_for_grouping(query);
+    let query_canon = canonical_group_key(query);
+
+    if !title_canon.is_empty() && title_canon == query_canon {
+        return 0;
+    }
+
+    let mut best = calculate_relevance_score(&title_norm, &query_norm).min(calculate_relevance_score(&title_canon, &query_canon));
+    for expanded in expand_search_queries(query, &[]) {
+        let exp_norm = normalize_title_for_grouping(&expanded);
+        if !exp_norm.is_empty() {
+            best = best.min(calculate_relevance_score(&title_norm, &exp_norm));
+        }
+    }
+    best
+}
+
 pub fn provider_priority_rank(provider: Option<MangaProviders>, lang: MultiSearchLanguage) -> u8 {
     match lang {
         MultiSearchLanguage::English => match provider {
@@ -507,7 +866,7 @@ pub fn group_search_results(results: Vec<SearchManga>, query: &str, lang: MultiS
     let mut buckets: Vec<Vec<SearchManga>> = Vec::new();
 
     for manga in results {
-        let key = normalize_title_for_grouping(&manga.title);
+        let key = canonical_group_key(&manga.title);
         if let Some(&bucket_idx) = group_indices.get(&key) {
             let bucket = &mut buckets[bucket_idx];
             if let Some(prov) = manga.provider {
@@ -565,10 +924,8 @@ pub fn group_search_results(results: Vec<SearchManga>, query: &str, lang: MultiS
 
     if !query_norm.is_empty() {
         groups.sort_by(|a, b| {
-            let norm_a = normalize_title_for_grouping(&a.selected_manga().title);
-            let norm_b = normalize_title_for_grouping(&b.selected_manga().title);
-            let rel_a = calculate_relevance_score(&norm_a, &query_norm);
-            let rel_b = calculate_relevance_score(&norm_b, &query_norm);
+            let rel_a = best_relevance_score_for_query(&a.selected_manga().title, query);
+            let rel_b = best_relevance_score_for_query(&b.selected_manga().title, query);
             rel_a.cmp(&rel_b).then_with(|| b.variants.len().cmp(&a.variants.len()))
         });
     }
@@ -615,15 +972,16 @@ fn handle_search_outcome<T>(
     }
 }
 
-/// Search concurrently across manga providers matching the specified language filter.
-/// Providers whose circuit breaker is open are automatically skipped during their cooldown window.
-pub async fn search_all_providers_with_lang(query: &str, lang: MultiSearchLanguage) -> Vec<SearchManga> {
+const MULTI_SEARCH_ITEMS_PER_PROVIDER: u32 = 32;
+
+async fn search_single_query_all_providers(query: &str, lang: MultiSearchLanguage) -> Vec<SearchManga> {
     let query_trimmed = query.trim();
     if query_trimmed.is_empty() {
         return Vec::new();
     }
     let pool = &*POOL;
     let timeout_duration = Duration::from_secs(8);
+    let page = Pagination::from_first_page(MULTI_SEARCH_ITEMS_PER_PROVIDER);
 
     let query_spanish = lang == MultiSearchLanguage::All || lang == MultiSearchLanguage::Spanish;
     let query_english = lang == MultiSearchLanguage::All || lang == MultiSearchLanguage::English;
@@ -634,12 +992,9 @@ pub async fn search_all_providers_with_lang(query: &str, lang: MultiSearchLangua
             if !query_spanish || !pool.health.is_available(MangaProviders::Inmanga) {
                 return None;
             }
-            let term = SearchTerm::trimmed_lowercased(query);
-            let res = tokio::time::timeout(
-                timeout_duration,
-                pool.inmanga.search_mangas(term, InmangaFilterState::default(), Pagination::default()),
-            )
-            .await;
+            let term = SearchTerm::trimmed_lowercased(query_trimmed);
+            let res =
+                tokio::time::timeout(timeout_duration, pool.inmanga.search_mangas(term, InmangaFilterState::default(), page)).await;
             handle_search_outcome(pool, MangaProviders::Inmanga, res)
         },
         // MangaOni
@@ -647,12 +1002,10 @@ pub async fn search_all_providers_with_lang(query: &str, lang: MultiSearchLangua
             if !query_spanish || !pool.health.is_available(MangaProviders::Mangaoni) {
                 return None;
             }
-            let term = SearchTerm::trimmed_lowercased(query);
-            let res = tokio::time::timeout(
-                timeout_duration,
-                pool.mangaoni.search_mangas(term, MangaoniFilterState::default(), Pagination::default()),
-            )
-            .await;
+            let term = SearchTerm::trimmed_lowercased(query_trimmed);
+            let res =
+                tokio::time::timeout(timeout_duration, pool.mangaoni.search_mangas(term, MangaoniFilterState::default(), page))
+                    .await;
             handle_search_outcome(pool, MangaProviders::Mangaoni, res)
         },
         // LeerCapítulo
@@ -660,11 +1013,10 @@ pub async fn search_all_providers_with_lang(query: &str, lang: MultiSearchLangua
             if !query_spanish || !pool.health.is_available(MangaProviders::Leercapitulo) {
                 return None;
             }
-            let term = SearchTerm::trimmed_lowercased(query);
+            let term = SearchTerm::trimmed_lowercased(query_trimmed);
             let res = tokio::time::timeout(
                 timeout_duration,
-                pool.leercapitulo
-                    .search_mangas(term, LeercapituloFilterState::default(), Pagination::default()),
+                pool.leercapitulo.search_mangas(term, LeercapituloFilterState::default(), page),
             )
             .await;
             handle_search_outcome(pool, MangaProviders::Leercapitulo, res)
@@ -674,12 +1026,11 @@ pub async fn search_all_providers_with_lang(query: &str, lang: MultiSearchLangua
             if !pool.health.is_available(MangaProviders::Mangadex) {
                 return None;
             }
-            let term = SearchTerm::trimmed_lowercased(query);
+            let term = SearchTerm::trimmed_lowercased(query_trimmed);
             let mut filters = Filters::default();
             filters.set_sort_by(SortBy::BestMatch);
             filters.set_content_rating(vec![ContentRating::Safe, ContentRating::Suggestive]);
-            let res =
-                tokio::time::timeout(timeout_duration, pool.mangadex.search_mangas(term, filters, Pagination::default())).await;
+            let res = tokio::time::timeout(timeout_duration, pool.mangadex.search_mangas(term, filters, page)).await;
             handle_search_outcome(pool, MangaProviders::Mangadex, res)
         },
         // WeebCentral
@@ -687,11 +1038,10 @@ pub async fn search_all_providers_with_lang(query: &str, lang: MultiSearchLangua
             if !query_english || !pool.health.is_available(MangaProviders::Weebcentral) {
                 return None;
             }
-            let term = SearchTerm::trimmed_lowercased(query);
+            let term = SearchTerm::trimmed_lowercased(query_trimmed);
             let res = tokio::time::timeout(
                 timeout_duration,
-                pool.weebcentral
-                    .search_mangas(term, WeebcentralFilterState::default(), Pagination::default()),
+                pool.weebcentral.search_mangas(term, WeebcentralFilterState::default(), page),
             )
             .await;
             handle_search_outcome(pool, MangaProviders::Weebcentral, res)
@@ -701,12 +1051,10 @@ pub async fn search_all_providers_with_lang(query: &str, lang: MultiSearchLangua
             if !query_english || !pool.health.is_available(MangaProviders::Mangapill) {
                 return None;
             }
-            let term = SearchTerm::trimmed_lowercased(query);
-            let res = tokio::time::timeout(
-                timeout_duration,
-                pool.mangapill.search_mangas(term, MangaPillFilterState::default(), Pagination::default()),
-            )
-            .await;
+            let term = SearchTerm::trimmed_lowercased(query_trimmed);
+            let res =
+                tokio::time::timeout(timeout_duration, pool.mangapill.search_mangas(term, MangaPillFilterState::default(), page))
+                    .await;
             handle_search_outcome(pool, MangaProviders::Mangapill, res)
         },
         // Comizy
@@ -714,12 +1062,9 @@ pub async fn search_all_providers_with_lang(query: &str, lang: MultiSearchLangua
             if !query_english || !pool.health.is_available(MangaProviders::Comizy) {
                 return None;
             }
-            let term = SearchTerm::trimmed_lowercased(query);
-            let res = tokio::time::timeout(
-                timeout_duration,
-                pool.comizy.search_mangas(term, ComizyFilterState::default(), Pagination::default()),
-            )
-            .await;
+            let term = SearchTerm::trimmed_lowercased(query_trimmed);
+            let res =
+                tokio::time::timeout(timeout_duration, pool.comizy.search_mangas(term, ComizyFilterState::default(), page)).await;
             handle_search_outcome(pool, MangaProviders::Comizy, res)
         },
     );
@@ -770,15 +1115,75 @@ pub async fn search_all_providers_with_lang(query: &str, lang: MultiSearchLangua
         }
     }
 
-    // Sort by query relevance (exact match first -> prefix -> word match -> substring)
-    let query_lower = query_trimmed.to_lowercase();
+    combined
+}
+
+/// Search concurrently across manga providers matching the specified language filter,
+/// expanding the query with known and live MyAnimeList (Jikan) Romaji/English/Spanish aliases
+/// so providers that index a series under a different language title are still discovered.
+pub async fn search_all_providers_with_aliases(
+    query: &str,
+    extra_aliases: &[String],
+    lang: MultiSearchLanguage,
+) -> Vec<SearchManga> {
+    let query_trimmed = query.trim();
+    if query_trimmed.is_empty() {
+        return Vec::new();
+    }
+
+    let initial_queries = expand_search_queries(query_trimmed, extra_aliases);
+    let q0 = initial_queries.first().map(String::as_str).unwrap_or(query_trimmed);
+    let q1 = initial_queries.get(1).map(String::as_str);
+    let q2 = initial_queries.get(2).map(String::as_str);
+
+    // Run initial alias queries across all providers while concurrently asking Jikan for any unknown MAL aliases
+    let should_lookup_jikan = extra_aliases.is_empty() && initial_queries.len() < 2;
+    let (res0, res1, res2, jikan_aliases) = tokio::join!(
+        search_single_query_all_providers(q0, lang),
+        async { if let Some(q) = q1 { search_single_query_all_providers(q, lang).await } else { Vec::new() } },
+        async { if let Some(q) = q2 { search_single_query_all_providers(q, lang).await } else { Vec::new() } },
+        async { if should_lookup_jikan { fetch_jikan_query_aliases(query_trimmed).await } else { Vec::new() } }
+    );
+
+    let mut combined = Vec::with_capacity(res0.len() + res1.len() + res2.len());
+    let mut seen_provider_ids: HashSet<(Option<MangaProviders>, String)> = HashSet::new();
+
+    for manga in res0.into_iter().chain(res1).chain(res2) {
+        if seen_provider_ids.insert((manga.provider, manga.id.clone())) {
+            combined.push(manga);
+        }
+    }
+
+    // If Jikan live lookup discovered a new English/Romaji alias not yet queried, fetch it too
+    if !jikan_aliases.is_empty() {
+        let already_queried: HashSet<String> = initial_queries.iter().map(|q| normalize_title_for_grouping(q)).collect();
+        let new_alias = jikan_aliases.into_iter().find(|alias| {
+            let n = normalize_title_for_grouping(alias);
+            !n.is_empty() && !already_queried.contains(&n)
+        });
+        if let Some(extra_q) = new_alias {
+            for manga in search_single_query_all_providers(&extra_q, lang).await {
+                if seen_provider_ids.insert((manga.provider, manga.id.clone())) {
+                    combined.push(manga);
+                }
+            }
+        }
+    }
+
+    // Sort by query relevance across all aliases (exact match first -> prefix -> word match -> substring)
     combined.sort_by(|a, b| {
-        let score_a = calculate_relevance_score(&a.title, &query_lower);
-        let score_b = calculate_relevance_score(&b.title, &query_lower);
+        let score_a = best_relevance_score_for_query(&a.title, query_trimmed);
+        let score_b = best_relevance_score_for_query(&b.title, query_trimmed);
         score_a.cmp(&score_b)
     });
 
     combined
+}
+
+/// Search concurrently across manga providers matching the specified language filter.
+/// Providers whose circuit breaker is open are automatically skipped during their cooldown window.
+pub async fn search_all_providers_with_lang(query: &str, lang: MultiSearchLanguage) -> Vec<SearchManga> {
+    search_all_providers_with_aliases(query, &[], lang).await
 }
 
 /// Search concurrently across all available manga providers

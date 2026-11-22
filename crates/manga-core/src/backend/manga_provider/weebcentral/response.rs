@@ -752,7 +752,7 @@ impl ParseHtml for SearchPageMangas {
         let more_result = doc.select(&more_mangas_button).next().is_some();
 
         Ok(Self {
-            mangas: mangas.into_iter().flatten().take(24).collect(),
+            mangas: mangas.into_iter().flatten().take(32).collect(),
             more_result,
         })
     }
