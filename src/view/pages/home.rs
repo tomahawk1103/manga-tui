@@ -20,8 +20,8 @@ use crate::backend::tui::Events;
 use crate::common::ImageState;
 use crate::i18n::tr;
 use crate::theme::{current_theme, theme};
-use crate::view::widgets::Component;
 use crate::view::widgets::home::{CarrouselItemPopularManga, CarrouselState, PopularMangaCarrousel, RecentlyAddedCarrousel};
+use crate::view::widgets::{AnimePlayerState, AnimeVisualModal, Component, handle_anime_modal_key};
 
 #[derive(PartialEq, Eq)]
 pub enum HomeState {
@@ -49,6 +49,8 @@ pub enum HomeActions {
     SelectNextRecentlyAddedManga,
     SelectPreviousRecentlyAddedManga,
     SupportProject,
+    NextAnimeScene,
+    ToggleAnimeModal,
 }
 
 /// "ANSI Shadow" glyphs used to compose the big `MANGA-TUI` hero logo.
@@ -208,9 +210,11 @@ where
     manga_provider: Arc<T>,
     pub active_provider: MangaProviders,
     top_bar_area: Rect,
+    anime_banner_area: Rect,
     popular_mangas_area: Rect,
     recently_added_area: Rect,
     stats: HomeStats,
+    pub anime_player: AnimePlayerState,
 }
 
 impl<T> Component for Home<T>
@@ -234,6 +238,10 @@ where
         self.render_hero(top_bar_area, buf, hero_mode);
         self.render_popular_mangas_carrousel(carrousel_popular_mangas_area, buf);
         self.render_recently_added_mangas_area(latest_updates_area, buf);
+
+        if self.anime_player.is_fullscreen_open {
+            AnimeVisualModal::new(&mut self.anime_player, self.picker.as_mut()).render(area, buf);
+        }
     }
 
     fn update(&mut self, action: Self::Actions) {
@@ -250,6 +258,8 @@ where
                 self.go_to_manga_page_recently_added();
             },
             HomeActions::SupportProject => self.support_project(),
+            HomeActions::NextAnimeScene => self.anime_player.next_scene(),
+            HomeActions::ToggleAnimeModal => self.anime_player.toggle_fullscreen(),
         }
     }
 
@@ -297,10 +307,16 @@ where
             manga_provider,
             active_provider,
             top_bar_area: Rect::default(),
+            anime_banner_area: Rect::default(),
             popular_mangas_area: Rect::default(),
             recently_added_area: Rect::default(),
             stats: load_home_stats(),
+            anime_player: AnimePlayerState::new(),
         }
+    }
+
+    pub fn is_overlay_open(&self) -> bool {
+        self.anime_player.is_fullscreen_open
     }
 
     pub fn set_picker(&mut self, picker: Option<Picker>) {
@@ -310,6 +326,7 @@ where
         self.carrousel_recently_added.can_display_images = can_display;
         self.popular_manga_carrousel_state.rebuild_protocols(self.picker.as_mut());
         self.recently_added_manga_state.rebuild_protocols(self.picker.as_mut());
+        self.anime_player.invalidate_protocols();
         if can_display {
             if !self.carrousel_popular_mangas.items.is_empty() && self.popular_manga_carrousel_state.is_empty() {
                 self.init_search_popular_mangas_cover();
@@ -451,6 +468,7 @@ where
     }
 
     pub fn tick(&mut self) {
+        self.anime_player.tick();
         self.carrousel_popular_mangas.tick();
         self.carrousel_recently_added.tick();
         while let Ok(local_event) = self.local_event_rx.try_recv() {
@@ -732,17 +750,20 @@ where
         Line::from(spans)
     }
 
-    fn render_hero(&self, area: Rect, buf: &mut Buffer, mode: HeroMode) {
+    fn render_hero(&mut self, area: Rect, buf: &mut Buffer, mode: HeroMode) {
         if area.width == 0 || area.height == 0 {
             return;
         }
         match mode {
             HeroMode::Full => self.render_full_hero(area, buf),
-            HeroMode::Compact => self.render_top_bar(area, buf),
+            HeroMode::Compact => {
+                self.anime_banner_area = Rect::default();
+                self.render_top_bar(area, buf);
+            },
         }
     }
 
-    fn render_full_hero(&self, area: Rect, buf: &mut Buffer) {
+    fn render_full_hero(&mut self, area: Rect, buf: &mut Buffer) {
         let t = theme();
         let (icon, greeting) = greeting_for_hour(chrono::Local::now().hour());
 
@@ -753,6 +774,10 @@ where
         ]);
 
         let title_right = Line::from(vec![
+            Span::styled("<v> ", Style::default().fg(t.accent_primary).bold()),
+            Span::styled(format!("{} ", self.anime_player.scene.badge()), Style::default().fg(t.text_muted)),
+            Span::styled("<V> ", Style::default().fg(t.accent_secondary).bold()),
+            Span::styled(tr("Cine Anime ", "Anime TV "), Style::default().fg(t.text_muted)),
             Span::styled("<T> ", Style::default().fg(t.accent_highlight).bold()),
             Span::styled(format!("{} ", current_theme().label()), Style::default().fg(t.text_muted)),
             Span::styled("<g> ", Style::default().fg(t.accent_highlight).bold()),
@@ -776,12 +801,38 @@ where
             return;
         }
 
-        let [logo_area, info_area] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1)])
-            .spacing(3)
-            .areas(inner);
+        // When the terminal is wide enough (>= 136 cols), show the live animated anime visual card on the right of the hero!
+        let (logo_area, info_area, maybe_anime_area) = if inner.width >= logo_width() + 58 {
+            let [l, i, a] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1), Constraint::Length(24)])
+                .spacing(2)
+                .areas(inner);
+            (l, i, Some(a))
+        } else {
+            let [l, i] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1)])
+                .spacing(3)
+                .areas(inner);
+            (l, i, None)
+        };
 
         let logo_lines: Vec<Line<'static>> = build_logo_lines().iter().map(|row| gradient_line(row, false)).collect();
         Paragraph::new(logo_lines).render(logo_area, buf);
+
+        if let Some(anime_area) = maybe_anime_area {
+            self.anime_banner_area = anime_area;
+            let anime_block = Block::bordered()
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(t.border_accent))
+                .title(Line::from(vec![Span::styled(
+                    format!(" {} ", self.anime_player.scene.badge()),
+                    Style::default().fg(t.accent_primary).bold(),
+                )]));
+            let anime_inner = anime_block.inner(anime_area);
+            anime_block.render(anime_area, buf);
+            // Render the live animated scene using Truecolor Halfblocks inside the hero card so it never collides with cover Sixels
+            self.anime_player.render_canvas(anime_inner, buf, None);
+        } else {
+            self.anime_banner_area = Rect::default();
+        }
 
         let [greeting_area, continue_area, tagline_area, cards_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(3)])
@@ -902,6 +953,15 @@ where
     }
 
     fn handle_mouse_events(&mut self, mouse_event: MouseEvent) {
+        if self.anime_player.is_fullscreen_open {
+            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
+                self.anime_player.next_scene();
+            } else if let MouseEventKind::Down(MouseButton::Right) = mouse_event.kind {
+                self.anime_player.is_fullscreen_open = false;
+            }
+            return;
+        }
+
         let pos = Position::new(mouse_event.column, mouse_event.row);
         let in_popular = self.popular_mangas_area.contains(pos);
 
@@ -921,7 +981,9 @@ where
                 }
             },
             MouseEventKind::Down(MouseButton::Left) => {
-                if self.top_bar_area.contains(pos) {
+                if self.anime_banner_area.contains(pos) {
+                    self.local_action_tx.send(HomeActions::ToggleAnimeModal).ok();
+                } else if self.top_bar_area.contains(pos) {
                     if let Some(tx) = &self.global_event_tx {
                         tx.send(Events::GoFeedPage).ok();
                     }
@@ -945,6 +1007,11 @@ where
     }
 
     pub fn handle_key_events(&mut self, key_event: KeyEvent) {
+        if self.anime_player.is_fullscreen_open {
+            handle_anime_modal_key(&mut self.anime_player, key_event);
+            return;
+        }
+
         match key_event.code {
             KeyCode::Char('w') => {
                 self.local_action_tx.send(HomeActions::SelectNextPopularManga).ok();
@@ -967,6 +1034,12 @@ where
             },
             KeyCode::Char('g') => {
                 self.local_action_tx.send(HomeActions::SupportProject).ok();
+            },
+            KeyCode::Char('v') => {
+                self.local_action_tx.send(HomeActions::NextAnimeScene).ok();
+            },
+            KeyCode::Char('V') => {
+                self.local_action_tx.send(HomeActions::ToggleAnimeModal).ok();
             },
             _ => {},
         }

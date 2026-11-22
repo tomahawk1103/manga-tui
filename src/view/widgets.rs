@@ -12,6 +12,7 @@ use crate::i18n::tr;
 use crate::theme::theme;
 use crate::utils::centered_rect;
 
+pub mod anime_player;
 pub mod cloud;
 pub mod feed;
 pub mod home;
@@ -21,6 +22,7 @@ pub mod search;
 pub mod settings;
 pub mod updater;
 
+pub use anime_player::{AnimePlayerState, AnimeSceneKind, AnimeVisualModal, handle_anime_modal_key};
 pub use cloud::{CloudModal, CloudModalOutcome, CloudModalState};
 pub use settings::{SettingsModal, SettingsModalState, SettingsOutcome};
 pub use updater::{AppUpdateModal, AppUpdateModalState, AppUpdateStage};
@@ -549,10 +551,15 @@ impl Widget for HelpModal {
         let left_lines = vec![
             Self::section_title(tr("Navegación Global", "Global Navigation")),
             Self::key_line("u / F1", tr("Ir a Inicio", "Go to Home")),
+            Self::key_line(
+                "v / V",
+                tr("Cambiar escena anime / Abrir Cine Visual (Inicio)", "Switch anime scene / Open Anime TV (Home)"),
+            ),
             Self::key_line("i / F2", tr("Ir a Buscar", "Go to Search")),
             Self::key_line("o / F3", tr("Ir a Seguimiento (Biblioteca)", "Go to Feed (Library)")),
             Self::key_line("c / F5", tr("Abrir menú de Ajustes", "Open Settings menu")),
             Self::key_line("C / F6", tr("Abrir Nube y Sincronización (Drive/iCloud)", "Open Cloud Sync (Drive/iCloud)")),
+            Self::key_line("S / F7", tr("Abrir Dashboard de Estadísticas de Lectura", "Open Reading Stats Dashboard")),
             Self::key_line(
                 "T",
                 tr("Alternar tema (Tokyo Night/Catppuccin/Clásico)", "Cycle theme (Tokyo Night/Catppuccin/Classic)"),
@@ -596,6 +603,7 @@ impl Widget for HelpModal {
                 "Tab / 1-4",
                 tr("Cambiar pestaña en Seguimiento (4: Descargas Offline)", "Switch tab in Feed (4: Offline Downloads)"),
             ),
+            Self::key_line("e / E", tr("Asignar estantería / Filtrar estanterías", "Assign shelf / Filter shelves")),
             Self::key_line("R", tr("Actualizar novedades (Seguimiento)", "Refresh updates (Feed)")),
             Self::key_line("d / X", tr("Descargar o quitar / Vaciar lista", "Download or remove / Clear list")),
             Self::key_line("j / k", tr("Pasar página en el lector", "Next / prev page in reader")),
@@ -606,6 +614,248 @@ impl Widget for HelpModal {
             Self::key_line("w / b", tr("Siguiente / anterior capítulo", "Next / prev chapter in reader")),
             Self::key_line("Esc / q", tr("Volver atrás / Salir del lector", "Go back / Exit reader")),
         ];
+
+        Paragraph::new(left_lines).wrap(Wrap { trim: false }).render(left_col, buf);
+        Paragraph::new(right_lines).wrap(Wrap { trim: false }).render(right_col, buf);
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct ReadingStatsModalState {
+    pub db_stats: crate::backend::database::ReadingDashboardStats,
+    pub shelves: Vec<(String, u32)>,
+    pub offline_mangas_count: usize,
+    pub offline_chapters_count: usize,
+    pub total_disk_bytes: u64,
+    pub cbz_count: usize,
+    pub pdf_count: usize,
+    pub epub_count: usize,
+    pub raw_count: usize,
+}
+
+impl ReadingStatsModalState {
+    pub fn load_current() -> Self {
+        let mut state = Self::default();
+        if let Ok(conn) = crate::backend::database::Database::get_connection() {
+            let db = crate::backend::database::Database::new(&conn);
+            if let Ok(stats) = db.get_reading_dashboard_stats() {
+                state.db_stats = stats;
+            }
+            if let Ok(shelves) = db.list_all_shelves() {
+                state.shelves = shelves;
+            }
+        }
+        let offline_mangas = crate::backend::offline::scan_offline_mangas();
+        state.offline_mangas_count = offline_mangas.len();
+        for m in &offline_mangas {
+            state.offline_chapters_count += m.chapters.len();
+            state.total_disk_bytes = state.total_disk_bytes.saturating_add(m.total_size_bytes);
+            for ch in &m.chapters {
+                match ch.format_label {
+                    "CBZ" => state.cbz_count += 1,
+                    "PDF" => state.pdf_count += 1,
+                    "EPUB" => state.epub_count += 1,
+                    _ => state.raw_count += 1,
+                }
+            }
+        }
+        state
+    }
+}
+
+#[derive(Debug)]
+pub struct ReadingStatsModal<'a> {
+    state: &'a ReadingStatsModalState,
+}
+
+impl<'a> ReadingStatsModal<'a> {
+    pub fn new(state: &'a ReadingStatsModalState) -> Self {
+        Self { state }
+    }
+}
+
+impl<'a> Widget for ReadingStatsModal<'a> {
+    fn render(self, area: Rect, buf: &mut ratatui::prelude::Buffer) {
+        let t = theme();
+        let modal_area = centered_rect(area, 82, 84);
+        Clear.render(modal_area, buf);
+
+        let block = t
+            .rounded_accent_block()
+            .title(Line::from(vec![Span::styled(
+                tr(" 📊 Dashboard de Estadísticas de Lectura (Local) ", " 📊 Reading Statistics Dashboard (Local) "),
+                Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD),
+            )]))
+            .title_bottom(
+                Line::from(vec![Span::styled(
+                    tr(" Pulsa <S>, <F7>, <q> o <Esc> para cerrar ", " Press <S>, <F7>, <q> or <Esc> to close "),
+                    Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD),
+                )])
+                .alignment(Alignment::Center),
+            );
+
+        let inner = block.inner(modal_area).inner(Margin {
+            horizontal: 2,
+            vertical: 1,
+        });
+        block.render(modal_area, buf);
+
+        if inner.height < 6 || inner.width < 24 {
+            return;
+        }
+
+        let s = &self.state.db_stats;
+        let hours = s.estimated_reading_minutes / 60;
+        let mins = s.estimated_reading_minutes % 60;
+        let time_str = if hours > 0 {
+            format!("{hours}h {mins:02}m")
+        } else {
+            format!("{mins} min")
+        };
+        let disk_str = crate::backend::offline::format_size_bytes(self.state.total_disk_bytes);
+
+        let [kpi_area, body_area] = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(5), Constraint::Min(6)])
+            .areas(inner);
+
+        let [kpi1, kpi2, kpi3, kpi4] = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+                Constraint::Percentage(25),
+            ])
+            .areas(kpi_area);
+
+        let render_kpi = |rect: Rect, title: &str, primary: String, sub: String, color: ratatui::style::Color, buf: &mut ratatui::prelude::Buffer| {
+            let b = t.rounded_block().title(Span::styled(format!(" {title} "), Style::default().fg(color).add_modifier(Modifier::BOLD)));
+            let r_in = b.inner(rect);
+            b.render(rect, buf);
+            if r_in.height >= 2 {
+                Paragraph::new(vec![
+                    Line::from(vec![Span::styled(primary, Style::default().fg(t.text_primary).add_modifier(Modifier::BOLD))]),
+                    Line::from(vec![Span::styled(sub, Style::default().fg(t.text_muted))]),
+                ])
+                .alignment(Alignment::Center)
+                .render(r_in, buf);
+            }
+        };
+
+        render_kpi(
+            kpi1,
+            tr("📖 Leídos", "📖 Read"),
+            format!("{} {}", s.total_chapters_read, tr("caps", "chs")),
+            format!("⏱ ~{time_str}"),
+            t.accent_primary,
+            buf,
+        );
+        render_kpi(
+            kpi2,
+            tr("🔥 Racha", "🔥 Streak"),
+            format!("{} {}", s.current_streak_days, tr("día(s)", "day(s)")),
+            format!("{}: {} · 7d: {}", tr("Activos", "Active"), s.active_days_count, s.read_last_7_days),
+            t.accent_highlight,
+            buf,
+        );
+        render_kpi(
+            kpi3,
+            tr("📚 Biblioteca", "📚 Library"),
+            format!("★ {} · 🔖 {}", s.favorites_count, s.bookmarks_count),
+            format!("{}: {} · Plan: {}", tr("Leyendo", "Reading"), s.reading_mangas, s.plan_to_read_mangas),
+            t.status_success,
+            buf,
+        );
+        render_kpi(
+            kpi4,
+            tr("💾 Disco Offline", "💾 Offline Disk"),
+            disk_str,
+            format!("{} mangas · {} caps", self.state.offline_mangas_count, self.state.offline_chapters_count),
+            t.accent_secondary,
+            buf,
+        );
+
+        let [left_col, right_col] = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
+            .areas(body_area);
+
+        let mut left_lines = vec![
+            Line::raw(""),
+            HelpModal::section_title(tr("🏆 Top 5 Mangas Más Leídos", "🏆 Top 5 Most Read Mangas")),
+        ];
+        if s.top_read_mangas.is_empty() {
+            left_lines.push(Line::from(vec![Span::styled(
+                tr("  Aún no has leído capítulos.", "  No chapters read yet."),
+                Style::default().fg(t.text_muted),
+            )]));
+        } else {
+            let max_read = s.top_read_mangas.iter().map(|(_, _, c)| *c).max().unwrap_or(1).max(1);
+            for (idx, (title, prov, count)) in s.top_read_mangas.iter().enumerate() {
+                let bar_len = ((*count as usize * 10) / max_read as usize).clamp(1, 10);
+                let bar = format!("{}{}", "█".repeat(bar_len), "░".repeat(10 - bar_len));
+                left_lines.push(Line::from(vec![
+                    Span::styled(format!(" {}. ", idx + 1), Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD)),
+                    Span::styled(bar, Style::default().fg(t.accent_primary)),
+                    Span::styled(format!(" {count:>3}c "), Style::default().fg(t.status_success).add_modifier(Modifier::BOLD)),
+                    Span::styled(title.as_str(), Style::default().fg(t.text_primary).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!(" [{}]", prov.short_name()), Style::default().fg(t.text_muted)),
+                ]));
+            }
+        }
+
+        left_lines.push(Line::raw(""));
+        left_lines.push(HelpModal::section_title(tr("🏷  Tus Estanterías Personalizadas", "🏷  Your Custom Shelves")));
+        if self.state.shelves.is_empty() {
+            left_lines.push(Line::from(vec![Span::styled(
+                tr("  Pulsa <e> en Seguimiento para asignar estanterías.", "  Press <e> in Feed to assign shelves."),
+                Style::default().fg(t.text_muted),
+            )]));
+        } else {
+            for (shelf_name, count) in &self.state.shelves {
+                left_lines.push(Line::from(vec![
+                    Span::styled("  • ", Style::default().fg(t.accent_secondary)),
+                    Span::styled(shelf_name.as_str(), Style::default().fg(t.text_primary).add_modifier(Modifier::BOLD)),
+                    Span::styled(format!(" — {count} manga(s)"), Style::default().fg(t.accent_highlight)),
+                ]));
+            }
+        }
+
+        let mut right_lines = vec![
+            Line::raw(""),
+            HelpModal::section_title(tr("🌐 Distribución por Proveedor", "🌐 Provider Breakdown")),
+        ];
+        if s.provider_breakdown.is_empty() {
+            right_lines.push(Line::from(vec![Span::styled(
+                tr("  Sin actividad registrada por proveedor.", "  No provider activity recorded yet."),
+                Style::default().fg(t.text_muted),
+            )]));
+        } else {
+            let max_prov_ch = s.provider_breakdown.iter().map(|(_, _, c)| *c).max().unwrap_or(1).max(1);
+            for (prov, m_count, ch_count) in &s.provider_breakdown {
+                let bar_len = ((*ch_count as usize * 10) / max_prov_ch as usize).clamp(1, 10);
+                let bar = format!("{}{}", "█".repeat(bar_len), "░".repeat(10 - bar_len));
+                right_lines.push(Line::from(vec![
+                    Span::styled(format!(" {:<13}", prov.short_name()), Style::default().fg(t.accent_secondary).add_modifier(Modifier::BOLD)),
+                    Span::styled(bar, Style::default().fg(t.accent_primary)),
+                    Span::styled(format!(" {ch_count} caps ({m_count} mangas)"), Style::default().fg(t.text_secondary)),
+                ]));
+            }
+        }
+
+        right_lines.push(Line::raw(""));
+        right_lines.push(HelpModal::section_title(tr("📦 Archivos Descargados por Formato", "📦 Downloaded Archives by Format")));
+        right_lines.push(Line::from(vec![
+            Span::styled("  CBZ: ", Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}   ", self.state.cbz_count), Style::default().fg(t.text_primary)),
+            Span::styled("PDF: ", Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}   ", self.state.pdf_count), Style::default().fg(t.text_primary)),
+            Span::styled("EPUB: ", Style::default().fg(t.status_success).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}   ", self.state.epub_count), Style::default().fg(t.text_primary)),
+            Span::styled("RAW: ", Style::default().fg(t.accent_secondary).add_modifier(Modifier::BOLD)),
+            Span::styled(format!("{}", self.state.raw_count), Style::default().fg(t.text_primary)),
+        ]));
 
         Paragraph::new(left_lines).wrap(Wrap { trim: false }).render(left_col, buf);
         Paragraph::new(right_lines).wrap(Wrap { trim: false }).render(right_col, buf);
