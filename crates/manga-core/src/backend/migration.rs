@@ -252,6 +252,7 @@ pub fn update_database_with_migrations(
         migrate_version_0_4_0(connection, logger)?,
         migrate_version_0_6_0(connection, logger)?,
         migrate_version_0_10_1(connection, logger)?,
+        migrate_version_0_11_0(connection, logger)?,
     ];
 
     Ok(migrations)
@@ -341,6 +342,40 @@ fn migrate_version_0_10_1(connection: &mut Connection, logger: &impl ILogger) ->
     let migration = Migration::new(&queries)
         .with_name("Add performance indexes on chapters, mangas, and favorite_mangas")
         .with_version("0.10.1")
+        .up(connection)?;
+
+    let migration_result = match migration {
+        Some(available_migration) => {
+            logger.inform("Updating database");
+            let migration_result = available_migration.update(connection)?;
+            logger.inform("Database updated");
+            Some(migration_result)
+        },
+        None => None,
+    };
+
+    Ok(migration_result)
+}
+
+/// Add `manga_collections` table and index for custom user shelves / categories
+fn migrate_version_0_11_0(connection: &mut Connection, logger: &impl ILogger) -> rusqlite::Result<Option<MigrationTable>> {
+    let queries = [
+        Query::Raw(
+            "CREATE TABLE IF NOT EXISTS manga_collections (
+                manga_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                title TEXT NOT NULL,
+                shelf_name TEXT NOT NULL,
+                created_at DATETIME DEFAULT (datetime('now')),
+                PRIMARY KEY (manga_id, provider)
+            )",
+        ),
+        Query::Raw("CREATE INDEX IF NOT EXISTS idx_manga_collections_shelf ON manga_collections(shelf_name, provider)"),
+    ];
+
+    let migration = Migration::new(&queries)
+        .with_name("Add manga_collections table and index for custom library shelves")
+        .with_version("0.11.0")
         .up(connection)?;
 
     let migration_result = match migration {
@@ -905,11 +940,19 @@ mod tests {
 
         let migrations = update_database_with_migrations(&mut conn, &DefaultLogger)?;
 
-        assert_eq!(3, migrations.len());
+        assert_eq!(4, migrations.len());
 
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.4.0"));
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.6.0"));
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.10.1"));
+        assert!(migrations.iter().flatten().any(|migration| migration.version == "0.11.0"));
+
+        let table_exists: bool = conn.query_row(
+            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'manga_collections')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert!(table_exists);
 
         Ok(())
     }

@@ -142,6 +142,7 @@ pub struct MangaHistory {
     pub is_favorite: bool,
     pub is_plan_to_read: bool,
     pub downloaded_count: u32,
+    pub shelf_name: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -208,6 +209,26 @@ pub struct HomeStats {
     pub favorites: u32,
     pub last_read_title: Option<String>,
 }
+
+/// Comprehensive local reading statistics for the Reading Stats Dashboard modal.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ReadingDashboardStats {
+    pub total_chapters_read: u32,
+    pub estimated_reading_minutes: u32,
+    pub reading_mangas: u32,
+    pub plan_to_read_mangas: u32,
+    pub favorites_count: u32,
+    pub shelves_count: u32,
+    pub bookmarks_count: u32,
+    pub downloaded_db_chapters: u32,
+    pub active_days_count: u32,
+    pub current_streak_days: u32,
+    pub read_last_7_days: u32,
+    pub top_read_mangas: Vec<(String, MangaProviders, u32)>,
+    pub provider_breakdown: Vec<(MangaProviders, u32, u32)>,
+}
+
+pub const PRESET_SHELVES: [&str; 4] = ["🔥 Obras Maestras", "⏸ En Pausa", "✔ Completados", "💎 Pendiente Top"];
 
 /// Arguments for retrieving manga history with filtering and pagination.
 ///
@@ -380,6 +401,18 @@ impl<'a> Database<'a> {
         )?;
 
         self.connection.execute(
+            "CREATE TABLE if not exists manga_collections (
+                manga_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                title TEXT NOT NULL,
+                shelf_name TEXT NOT NULL,
+                created_at DATETIME DEFAULT (datetime('now')),
+                PRIMARY KEY (manga_id, provider)
+             )",
+            (),
+        )?;
+
+        self.connection.execute(
             "CREATE TABLE if not exists search_history (
                 query TEXT PRIMARY KEY,
                 searched_at INTEGER NOT NULL
@@ -462,6 +495,9 @@ impl<'a> Database<'a> {
 
         self.connection
             .execute("CREATE INDEX IF NOT EXISTS idx_favorite_mangas_provider ON favorite_mangas(provider, manga_id)", ())?;
+
+        self.connection
+            .execute("CREATE INDEX IF NOT EXISTS idx_manga_collections_shelf ON manga_collections(shelf_name, provider)", ())?;
 
         Ok(())
     }
@@ -1072,8 +1108,8 @@ impl<'a> Database<'a> {
         use std::collections::HashSet;
 
         use crate::backend::cloud::{
-            LIBRARY_SYNC_SCHEMA_VERSION, LibrarySyncSnapshot, SyncChapterRecord, SyncDismissedRecord, SyncFavoriteRecord,
-            SyncMangaRecord, SyncSearchRecord,
+            LIBRARY_SYNC_SCHEMA_VERSION, LibrarySyncSnapshot, SyncChapterRecord, SyncCollectionRecord, SyncDismissedRecord,
+            SyncFavoriteRecord, SyncMangaRecord, SyncSearchRecord,
         };
 
         let reading_type_id = self.get_history_type(MangaHistoryType::ReadingHistory)?;
@@ -1194,6 +1230,25 @@ impl<'a> Database<'a> {
             }
         }
 
+        let mut collections = Vec::new();
+        if let Ok(mut stmt) = self
+            .connection
+            .prepare("SELECT manga_id, provider, title, shelf_name, created_at FROM manga_collections ORDER BY manga_id, provider")
+            && let Ok(rows) = stmt.query_map([], |row| {
+                Ok(SyncCollectionRecord {
+                    manga_id: row.get(0)?,
+                    provider: row.get(1)?,
+                    title: row.get(2)?,
+                    shelf_name: row.get(3)?,
+                    created_at: row.get(4).ok(),
+                })
+            })
+        {
+            for r in rows.flatten() {
+                collections.push(r);
+            }
+        }
+
         Ok(LibrarySyncSnapshot {
             schema_version: LIBRARY_SYNC_SCHEMA_VERSION,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -1203,6 +1258,7 @@ impl<'a> Database<'a> {
             favorites,
             dismissed_notifications,
             search_history,
+            collections,
         })
     }
 
@@ -1304,6 +1360,16 @@ impl<'a> Database<'a> {
                 s.query,
                 s.searched_at
             ])?;
+        }
+
+        for col in &merged.collections {
+            if !col.shelf_name.trim().is_empty() {
+                let _ = tx.execute(
+                    "INSERT OR REPLACE INTO manga_collections (manga_id, provider, title, shelf_name, created_at)
+                     VALUES (?1, ?2, ?3, ?4, COALESCE(?5, datetime('now')))",
+                    params![col.manga_id, col.provider, col.title, col.shelf_name, col.created_at],
+                );
+            }
         }
 
         tx.commit()?;
@@ -1528,6 +1594,266 @@ impl<'a> Database<'a> {
         rows.collect()
     }
 
+    /// Returns the custom shelf/category name assigned to a manga, if any.
+    pub fn get_manga_shelf(&self, manga_id: &str, provider: MangaProviders) -> rusqlite::Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT shelf_name FROM manga_collections WHERE manga_id = ?1 AND provider = ?2 LIMIT 1",
+                params![manga_id, provider.to_string()],
+                |row| row.get(0),
+            )
+            .optional()
+    }
+
+    /// Sets or removes (`shelf_name = None`) a custom shelf/category for a manga.
+    pub fn set_manga_shelf(
+        &self,
+        manga_id: &str,
+        provider: MangaProviders,
+        title: &str,
+        shelf_name: Option<&str>,
+    ) -> rusqlite::Result<Option<String>> {
+        match shelf_name.map(str::trim).filter(|s| !s.is_empty()) {
+            Some(shelf) => {
+                self.connection.execute(
+                    "INSERT OR REPLACE INTO manga_collections (manga_id, provider, title, shelf_name, created_at)
+                     VALUES (?1, ?2, ?3, ?4, datetime('now'))",
+                    params![manga_id, provider.to_string(), title, shelf],
+                )?;
+                Ok(Some(shelf.to_string()))
+            },
+            None => {
+                self.connection
+                    .execute("DELETE FROM manga_collections WHERE manga_id = ?1 AND provider = ?2", params![
+                        manga_id,
+                        provider.to_string()
+                    ])?;
+                Ok(None)
+            },
+        }
+    }
+
+    /// Lists all shelves (preset + any custom shelves stored in DB) along with their manga counts.
+    pub fn list_all_shelves(&self) -> rusqlite::Result<Vec<(String, u32)>> {
+        let mut counts_by_shelf: std::collections::BTreeMap<String, u32> = std::collections::BTreeMap::new();
+        if let Ok(mut stmt) = self
+            .connection
+            .prepare("SELECT shelf_name, COUNT(*) FROM manga_collections GROUP BY shelf_name")
+            && let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, u32>(1)?)))
+        {
+            for r in rows.flatten() {
+                if !r.0.trim().is_empty() {
+                    counts_by_shelf.insert(r.0, r.1);
+                }
+            }
+        }
+
+        let mut ordered = Vec::new();
+        for preset in PRESET_SHELVES {
+            let count = counts_by_shelf.remove(preset).unwrap_or(0);
+            ordered.push((preset.to_string(), count));
+        }
+        for (custom_shelf, count) in counts_by_shelf {
+            ordered.push((custom_shelf, count));
+        }
+        Ok(ordered)
+    }
+
+    /// Cycles the assigned shelf for a manga through `PRESET_SHELVES` (plus any custom shelves) and back to `None`.
+    pub fn cycle_manga_shelf(&self, manga_id: &str, provider: MangaProviders, title: &str) -> rusqlite::Result<Option<String>> {
+        let current = self.get_manga_shelf(manga_id, provider)?;
+        let all_shelves: Vec<String> = self.list_all_shelves()?.into_iter().map(|(s, _)| s).collect();
+        if all_shelves.is_empty() {
+            return Ok(None);
+        }
+
+        let next_shelf: Option<&str> = match current.as_deref() {
+            None => Some(all_shelves[0].as_str()),
+            Some(curr) => {
+                if let Some(pos) = all_shelves.iter().position(|s| s == curr) {
+                    if pos + 1 < all_shelves.len() { Some(all_shelves[pos + 1].as_str()) } else { None }
+                } else {
+                    Some(all_shelves[0].as_str())
+                }
+            },
+        };
+
+        self.set_manga_shelf(manga_id, provider, title, next_shelf)
+    }
+
+    /// Computes comprehensive local reading statistics for the Reading Stats Dashboard modal.
+    pub fn get_reading_dashboard_stats(&self) -> rusqlite::Result<ReadingDashboardStats> {
+        let total_chapters_read: u32 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM chapters WHERE is_read = 1", [], |row| row.get(0))
+            .unwrap_or(0);
+        let estimated_reading_minutes = total_chapters_read.saturating_mul(6);
+
+        let reading_mangas: u32 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(DISTINCT manga_history_union.manga_id)
+                 FROM manga_history_union
+                 INNER JOIN history_types ON manga_history_union.type_id = history_types.id
+                 INNER JOIN mangas ON mangas.id = manga_history_union.manga_id
+                 WHERE history_types.name = 'ReadingHistory' AND mangas.deleted_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let plan_to_read_mangas: u32 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(DISTINCT manga_history_union.manga_id)
+                 FROM manga_history_union
+                 INNER JOIN history_types ON manga_history_union.type_id = history_types.id
+                 INNER JOIN mangas ON mangas.id = manga_history_union.manga_id
+                 WHERE history_types.name = 'PlanToRead' AND mangas.deleted_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let favorites_count: u32 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM favorite_mangas", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let shelves_count: u32 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM manga_collections", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let bookmarks_count: u32 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM chapters WHERE is_bookmarked = 1", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let downloaded_db_chapters: u32 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM chapters WHERE is_downloaded = 1", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let active_days_count: u32 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(DISTINCT date(mangas.last_read))
+                 FROM mangas
+                 INNER JOIN chapters ON chapters.manga_id = mangas.id
+                 WHERE chapters.is_read = 1 AND mangas.last_read IS NOT NULL AND mangas.deleted_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let read_last_7_days: u32 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(chapters.id)
+                 FROM chapters
+                 INNER JOIN mangas ON mangas.id = chapters.manga_id
+                 WHERE chapters.is_read = 1
+                   AND mangas.deleted_at IS NULL
+                   AND mangas.last_read >= datetime('now', '-7 days')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        // Compute current consecutive-day streak based on distinct `date(last_read)` in descending order
+        let mut current_streak_days: u32 = 0;
+        if let Ok(mut stmt) = self.connection.prepare(
+            "SELECT DISTINCT CAST(julianday('now') - julianday(date(mangas.last_read)) AS INTEGER) AS days_ago
+             FROM mangas
+             INNER JOIN chapters ON chapters.manga_id = mangas.id
+             WHERE chapters.is_read = 1 AND mangas.last_read IS NOT NULL AND mangas.deleted_at IS NULL
+               AND days_ago >= 0
+             ORDER BY days_ago ASC",
+        ) && let Ok(rows) = stmt.query_map([], |row| row.get::<_, i64>(0))
+        {
+            let days_ago_list: Vec<i64> = rows.flatten().collect();
+            if let Some(&first) = days_ago_list.first()
+                && first <= 1
+            {
+                let mut expected = first;
+                for d in days_ago_list {
+                    if d == expected {
+                        current_streak_days += 1;
+                        expected += 1;
+                    } else if d > expected {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let top_read_mangas = {
+            let mut list = Vec::new();
+            if let Ok(mut stmt) = self.connection.prepare(
+                "SELECT mangas.title, mangas.manga_provider, COUNT(chapters.id) AS read_count
+                 FROM mangas
+                 INNER JOIN chapters ON mangas.id = chapters.manga_id
+                 WHERE chapters.is_read = 1 AND mangas.deleted_at IS NULL
+                 GROUP BY mangas.id
+                 ORDER BY read_count DESC, mangas.last_read DESC
+                 LIMIT 5",
+            ) && let Ok(rows) = stmt.query_map([], |row| {
+                let title: String = row.get(0)?;
+                let prov_str: String = row.get(1)?;
+                let cnt: u32 = row.get(2)?;
+                let prov = prov_str.parse::<MangaProviders>().unwrap_or_default();
+                Ok((title, prov, cnt))
+            }) {
+                for r in rows.flatten() {
+                    list.push(r);
+                }
+            }
+            list
+        };
+
+        let provider_breakdown = {
+            let mut list = Vec::new();
+            if let Ok(mut stmt) = self.connection.prepare(
+                "SELECT mangas.manga_provider,
+                        COUNT(DISTINCT mangas.id) AS manga_count,
+                        COALESCE(SUM(CASE WHEN chapters.is_read = 1 THEN 1 ELSE 0 END), 0) AS read_chapters
+                 FROM mangas
+                 LEFT JOIN chapters ON mangas.id = chapters.manga_id
+                 WHERE mangas.deleted_at IS NULL
+                 GROUP BY mangas.manga_provider
+                 ORDER BY read_chapters DESC, manga_count DESC",
+            ) && let Ok(rows) = stmt.query_map([], |row| {
+                let prov_str: String = row.get(0)?;
+                let m_cnt: u32 = row.get(1)?;
+                let ch_cnt: u32 = row.get(2)?;
+                let prov = prov_str.parse::<MangaProviders>().unwrap_or_default();
+                Ok((prov, m_cnt, ch_cnt))
+            }) {
+                for r in rows.flatten() {
+                    list.push(r);
+                }
+            }
+            list
+        };
+
+        Ok(ReadingDashboardStats {
+            total_chapters_read,
+            estimated_reading_minutes,
+            reading_mangas,
+            plan_to_read_mangas,
+            favorites_count,
+            shelves_count,
+            bookmarks_count,
+            downloaded_db_chapters,
+            active_days_count,
+            current_streak_days,
+            read_last_7_days,
+            top_read_mangas,
+            provider_breakdown,
+        })
+    }
+
     fn get_total_mangas_in_history(&self, history_type_id: i32, provider: MangaProviders) -> rusqlite::Result<u32> {
         let total: u32 = self.connection.query_row(
             "
@@ -1568,7 +1894,8 @@ impl<'a> Database<'a> {
                      (SELECT title FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_bookmarked = 1 LIMIT 1) AS bookmark_title,
                      (SELECT number_page_bookmarked FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_bookmarked = 1 LIMIT 1) AS bookmark_page,
                      (SELECT COUNT(*) FROM favorite_mangas WHERE favorite_mangas.manga_id = mangas.id AND favorite_mangas.provider = mangas.manga_provider) AS is_fav,
-                     (SELECT COUNT(*) FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_downloaded = 1) AS dl_count
+                     (SELECT COUNT(*) FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_downloaded = 1) AS dl_count,
+                     (SELECT shelf_name FROM manga_collections WHERE manga_collections.manga_id = mangas.id AND manga_collections.provider = mangas.manga_provider LIMIT 1) AS shelf_name
              FROM mangas 
              INNER JOIN manga_history_union ON mangas.id = manga_history_union.manga_id 
              WHERE manga_history_union.type_id = ?1 AND LOWER(mangas.title) LIKE '%' || ?2 || '%' AND mangas.manga_provider = ?3
@@ -1589,6 +1916,7 @@ impl<'a> Database<'a> {
                 let bookmark_page: Option<u32> = row.get(7).ok();
                 let is_fav_count: i32 = row.get(8).unwrap_or(0);
                 let dl_count: u32 = row.get(9).unwrap_or(0);
+                let shelf_name: Option<String> = row.get(10).ok().flatten();
 
                 Ok(MangaHistory {
                     id,
@@ -1602,6 +1930,7 @@ impl<'a> Database<'a> {
                     is_favorite: is_fav_count > 0,
                     is_plan_to_read: false,
                     downloaded_count: dl_count,
+                    shelf_name,
                 })
             },
         )?;
@@ -1687,7 +2016,8 @@ impl<'a> Database<'a> {
                      (SELECT title FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_bookmarked = 1 LIMIT 1) AS bookmark_title,
                      (SELECT number_page_bookmarked FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_bookmarked = 1 LIMIT 1) AS bookmark_page,
                      (SELECT COUNT(*) FROM favorite_mangas WHERE favorite_mangas.manga_id = mangas.id AND favorite_mangas.provider = mangas.manga_provider) AS is_fav,
-                     (SELECT COUNT(*) FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_downloaded = 1) AS dl_count
+                     (SELECT COUNT(*) FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_downloaded = 1) AS dl_count,
+                     (SELECT shelf_name FROM manga_collections WHERE manga_collections.manga_id = mangas.id AND manga_collections.provider = mangas.manga_provider LIMIT 1) AS shelf_name
              FROM mangas 
              INNER JOIN manga_history_union ON mangas.id = manga_history_union.manga_id 
              WHERE manga_history_union.type_id = ?1 AND mangas.manga_provider = ?2
@@ -1710,6 +2040,7 @@ impl<'a> Database<'a> {
                 let bookmark_page: Option<u32> = row.get(7).ok();
                 let is_fav_count: i32 = row.get(8).unwrap_or(0);
                 let dl_count: u32 = row.get(9).unwrap_or(0);
+                let shelf_name: Option<String> = row.get(10).ok().flatten();
 
                 Ok(MangaHistory {
                     id,
@@ -1723,6 +2054,7 @@ impl<'a> Database<'a> {
                     is_favorite: is_fav_count > 0,
                     is_plan_to_read: false,
                     downloaded_count: dl_count,
+                    shelf_name,
                 })
             })?;
 
@@ -1760,7 +2092,8 @@ impl<'a> Database<'a> {
                    (SELECT title FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_bookmarked = 1 LIMIT 1) AS bookmark_title,
                    (SELECT number_page_bookmarked FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_bookmarked = 1 LIMIT 1) AS bookmark_page,
                    (SELECT COUNT(*) FROM favorite_mangas WHERE favorite_mangas.manga_id = mangas.id AND favorite_mangas.provider = mangas.manga_provider) AS is_fav,
-                   (SELECT COUNT(*) FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_downloaded = 1) AS dl_count
+                   (SELECT COUNT(*) FROM chapters WHERE chapters.manga_id = mangas.id AND chapters.is_downloaded = 1) AS dl_count,
+                   (SELECT shelf_name FROM manga_collections WHERE manga_collections.manga_id = mangas.id AND manga_collections.provider = mangas.manga_provider LIMIT 1) AS shelf_name
             FROM mangas 
             INNER JOIN manga_history_union ON mangas.id = manga_history_union.manga_id 
             INNER JOIN history_types ON manga_history_union.type_id = history_types.id 
@@ -1783,6 +2116,7 @@ impl<'a> Database<'a> {
             let bookmark_page: Option<u32> = row.get(7).ok();
             let is_fav_count: i32 = row.get(8).unwrap_or(0);
             let dl_count: u32 = row.get(9).unwrap_or(0);
+            let shelf_name: Option<String> = row.get(10).ok().flatten();
 
             Ok(MangaHistory {
                 id,
@@ -1796,6 +2130,7 @@ impl<'a> Database<'a> {
                 is_favorite: is_fav_count > 0,
                 is_plan_to_read: false,
                 downloaded_count: dl_count,
+                shelf_name,
             })
         })?;
 
@@ -1812,9 +2147,18 @@ impl<'a> Database<'a> {
     }
 
     pub fn get_library(&self, args: GetHistoryArgs) -> rusqlite::Result<MangaHistoryResponse> {
+        self.get_library_with_shelf(args, None)
+    }
+
+    pub fn get_library_with_shelf(
+        &self,
+        args: GetHistoryArgs,
+        shelf_filter: Option<&str>,
+    ) -> rusqlite::Result<MangaHistoryResponse> {
         let items_per_page = args.items_per_page;
         let offset = (args.page - 1) * items_per_page;
         let search_filter = args.search.map(|s| s.get().to_lowercase());
+        let shelf_filter = shelf_filter.map(str::trim).filter(|s| !s.is_empty());
 
         let count_query = "
             WITH library_entries AS (
@@ -1825,11 +2169,21 @@ impl<'a> Database<'a> {
                 INNER JOIN manga_history_union ON mangas.id = manga_history_union.manga_id
                 INNER JOIN history_types ON manga_history_union.type_id = history_types.id
                 WHERE history_types.name = 'PlanToRead'
+                UNION
+                SELECT manga_id, provider, title FROM manga_collections
             )
             SELECT COUNT(*) FROM library_entries
             WHERE (?1 IS NULL OR LOWER(title) LIKE '%' || ?1 || '%')
+              AND (?2 IS NULL OR EXISTS (
+                    SELECT 1 FROM manga_collections
+                    WHERE manga_collections.manga_id = library_entries.manga_id
+                      AND manga_collections.provider = library_entries.provider
+                      AND manga_collections.shelf_name = ?2
+              ))
         ";
-        let total_items: u32 = self.connection.query_row(count_query, params![search_filter], |row| row.get(0))?;
+        let total_items: u32 = self
+            .connection
+            .query_row(count_query, params![search_filter, shelf_filter], |row| row.get(0))?;
 
         let select_query = "
             WITH library_entries AS (
@@ -1853,6 +2207,15 @@ impl<'a> Database<'a> {
                 INNER JOIN manga_history_union ON mangas.id = manga_history_union.manga_id
                 INNER JOIN history_types ON manga_history_union.type_id = history_types.id
                 WHERE history_types.name = 'PlanToRead'
+                UNION ALL
+                SELECT
+                    manga_id,
+                    provider,
+                    title,
+                    0 AS is_fav,
+                    0 AS is_plan,
+                    created_at AS added_at
+                FROM manga_collections
             )
             SELECT 
                 manga_id, 
@@ -1862,16 +2225,23 @@ impl<'a> Database<'a> {
                 MAX(is_plan) AS is_plan_to_read,
                 (SELECT COUNT(*) FROM chapters WHERE chapters.manga_id = library_entries.manga_id AND chapters.is_downloaded = 1) AS dl_count,
                 (SELECT COUNT(*) FROM chapters WHERE chapters.manga_id = library_entries.manga_id AND chapters.is_read = 1) AS read_count,
-                (SELECT title FROM chapters WHERE chapters.manga_id = library_entries.manga_id AND chapters.is_read = 1 ORDER BY chapters.rowid DESC LIMIT 1) AS last_chapter
+                (SELECT title FROM chapters WHERE chapters.manga_id = library_entries.manga_id AND chapters.is_read = 1 ORDER BY chapters.rowid DESC LIMIT 1) AS last_chapter,
+                (SELECT shelf_name FROM manga_collections WHERE manga_collections.manga_id = library_entries.manga_id AND manga_collections.provider = library_entries.provider LIMIT 1) AS shelf_name
             FROM library_entries
             WHERE (?1 IS NULL OR LOWER(title) LIKE '%' || ?1 || '%')
+              AND (?2 IS NULL OR EXISTS (
+                    SELECT 1 FROM manga_collections
+                    WHERE manga_collections.manga_id = library_entries.manga_id
+                      AND manga_collections.provider = library_entries.provider
+                      AND manga_collections.shelf_name = ?2
+              ))
             GROUP BY manga_id, provider
             ORDER BY is_favorite DESC, added_at DESC
-            LIMIT ?2 OFFSET ?3
+            LIMIT ?3 OFFSET ?4
         ";
 
         let mut stmt = self.connection.prepare(select_query)?;
-        let rows = stmt.query_map(params![search_filter, items_per_page, offset], |row| {
+        let rows = stmt.query_map(params![search_filter, shelf_filter, items_per_page, offset], |row| {
             let id: String = row.get(0)?;
             let provider_str: String = row.get(1)?;
             let title: String = row.get(2)?;
@@ -1880,6 +2250,7 @@ impl<'a> Database<'a> {
             let dl_count: u32 = row.get(5).unwrap_or(0);
             let read_count: u32 = row.get(6).unwrap_or(0);
             let last_chapter: Option<String> = row.get(7).ok();
+            let shelf_name: Option<String> = row.get(8).ok().flatten();
             let provider = provider_str.parse::<MangaProviders>().unwrap_or_default();
 
             Ok(MangaHistory {
@@ -1894,6 +2265,7 @@ impl<'a> Database<'a> {
                 is_favorite: is_fav_val > 0,
                 is_plan_to_read: is_plan_val > 0,
                 downloaded_count: dl_count,
+                shelf_name,
             })
         })?;
 
@@ -3840,6 +4212,75 @@ mod test {
 
         let recent = database.get_recent_searches(10)?;
         assert_eq!(recent, vec!["boku no kokoro".to_string(), "Vagabond".to_string()]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_custom_shelves_and_reading_dashboard_stats() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let database = Database::new(&conn);
+        database.setup()?;
+
+        assert_eq!(database.get_manga_shelf("berserk_1", MangaProviders::Mangaoni)?, None);
+
+        let shelf1 = database.cycle_manga_shelf("berserk_1", MangaProviders::Mangaoni, "Berserk")?;
+        assert_eq!(shelf1.as_deref(), Some(PRESET_SHELVES[0]));
+        assert_eq!(database.get_manga_shelf("berserk_1", MangaProviders::Mangaoni)?.as_deref(), Some(PRESET_SHELVES[0]));
+
+        // Library filtered by shelf returns the manga even if not favorited
+        let filtered = database.get_library_with_shelf(
+            GetHistoryArgs {
+                hist_type: MangaHistoryType::PlanToRead,
+                page: 1,
+                search: None,
+                items_per_page: 10,
+                provider: MangaProviders::Mangaoni,
+            },
+            Some(PRESET_SHELVES[0]),
+        )?;
+        assert_eq!(filtered.total_items, 1);
+        assert_eq!(filtered.mangas[0].title, "Berserk");
+        assert_eq!(filtered.mangas[0].shelf_name.as_deref(), Some(PRESET_SHELVES[0]));
+
+        // Save reading history so dashboard stats reflect read chapters, streak, and top mangas
+        database.save_history(MangaReadingHistorySave {
+            id: "berserk_1",
+            title: "Berserk",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "b_ch_1",
+                title: "Cap 1",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangaoni,
+        })?;
+        database.save_history(MangaReadingHistorySave {
+            id: "berserk_1",
+            title: "Berserk",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "b_ch_2",
+                title: "Cap 2",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangaoni,
+        })?;
+
+        let stats = database.get_reading_dashboard_stats()?;
+        assert_eq!(stats.total_chapters_read, 2);
+        assert_eq!(stats.estimated_reading_minutes, 12);
+        assert_eq!(stats.reading_mangas, 1);
+        assert_eq!(stats.shelves_count, 1);
+        assert_eq!(stats.current_streak_days, 1);
+        assert_eq!(stats.read_last_7_days, 2);
+        assert_eq!(stats.top_read_mangas.len(), 1);
+        assert_eq!(stats.top_read_mangas[0], ("Berserk".to_string(), MangaProviders::Mangaoni, 2));
+
+        // Cloud sync snapshot exports and merges collections
+        let snap = database.export_library_sync_snapshot()?;
+        assert_eq!(snap.collections.len(), 1);
+        assert_eq!(snap.collections[0].shelf_name, PRESET_SHELVES[0]);
 
         Ok(())
     }

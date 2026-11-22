@@ -801,6 +801,194 @@ struct DiskEntry {
     size_bytes: u64,
 }
 
+/// Recursively collects chapter archives (`.cbz`, `.pdf`, `.epub`) and RAW image chapter folders
+/// inside a manga folder up to `max_depth` levels deep (supports nested volume/arc subdirectories).
+fn collect_disk_entries_in_manga_dir(
+    dir: &Path,
+    inherited_lang: Option<Languages>,
+    depth: usize,
+    max_depth: usize,
+    out: &mut Vec<DiskEntry>,
+) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if let Some(src) = LocalChapterSource::from_path(&path) {
+            let stem = strip_archive_extension(&name).to_string();
+            let size_bytes = src.size_bytes();
+            let parsed = parse_disk_chapter_name(&stem);
+            out.push(DiskEntry {
+                entry_name: name,
+                stem,
+                language: inherited_lang,
+                source: src,
+                parsed,
+                size_bytes,
+            });
+        } else if path.is_dir() && depth < max_depth {
+            let sub_lang = Languages::from_str_lenient(&name).filter(|&l| l != Languages::Unkown).or(inherited_lang);
+            collect_disk_entries_in_manga_dir(&path, sub_lang, depth + 1, max_depth, out);
+        }
+    }
+}
+
+/// Infers a series title and `ParsedDiskChapterName` from a loose external archive filename stem
+/// placed directly in the root downloads folder (e.g. `"Berserk Vol 01"`, `"One Piece - Cap 1100"`, `"Uzumaki"`).
+pub fn infer_manga_and_chapter_from_external_filename(stem: &str) -> (String, ParsedDiskChapterName) {
+    let cleaned = stem.replace('_', " ");
+    let cleaned = cleaned.trim();
+    let lower = cleaned.to_lowercase();
+
+    let markers = [
+        (" - cap.", false),
+        (" - cap ", false),
+        (" - capítulo ", false),
+        (" - capitulo ", false),
+        (" - ch.", false),
+        (" - ch ", false),
+        (" - chapter ", false),
+        (" cap.", false),
+        (" cap ", false),
+        (" capítulo ", false),
+        (" capitulo ", false),
+        (" ch.", false),
+        (" ch ", false),
+        (" chapter ", false),
+        (" episodio ", false),
+        (" - vol.", true),
+        (" - vol ", true),
+        (" - volumen ", true),
+        (" - volume ", true),
+        (" - tomo ", true),
+        (" vol.", true),
+        (" vol ", true),
+        (" volumen ", true),
+        (" volume ", true),
+        (" tomo ", true),
+        (" v0", true),
+        (" v1", true),
+        (" v2", true),
+        (" v3", true),
+        (" #", false),
+    ];
+
+    for (marker, is_vol) in markers {
+        if let Some(idx) = lower.find(marker)
+            && idx > 0
+        {
+            let series = cleaned[..idx]
+                .trim_matches(|c: char| c.is_whitespace() || c == '-' || c == ':' || c == '_')
+                .trim();
+            let rest = cleaned[idx..].trim_start_matches(|c: char| c.is_whitespace() || c == '-').trim();
+            if !series.is_empty() {
+                let mut parsed = parse_disk_chapter_name(rest);
+                if is_vol && parsed.volume_number.is_none() {
+                    let digits: String = rest
+                        .chars()
+                        .skip_while(|c| !c.is_ascii_digit())
+                        .take_while(|c| c.is_ascii_digit() || *c == '.')
+                        .collect();
+                    let digits = digits.trim_end_matches('.');
+                    if !digits.is_empty() {
+                        parsed.volume_number = Some(digits.to_string());
+                        if parsed.chapter_number == "0" {
+                            parsed.chapter_number = digits.to_string();
+                        }
+                    }
+                }
+                if parsed.title.is_empty() {
+                    parsed.title = rest.to_string();
+                }
+                return (series.to_string(), parsed);
+            }
+        }
+    }
+
+    if let Some((left, right)) = cleaned.split_once(" - ") {
+        let series = left.trim();
+        let right = right.trim();
+        if !series.is_empty() && !right.is_empty() {
+            let mut parsed = parse_disk_chapter_name(right);
+            if parsed.title.is_empty() {
+                parsed.title = right.to_string();
+            }
+            return (series.to_string(), parsed);
+        }
+    }
+
+    let tokens: Vec<&str> = cleaned.split_whitespace().collect();
+    if tokens.len() >= 2 {
+        let last = tokens[tokens.len() - 1].trim_start_matches('#');
+        if last.parse::<f64>().is_ok() {
+            let series = tokens[..tokens.len() - 1]
+                .join(" ")
+                .trim_matches(|c: char| c.is_whitespace() || c == '-')
+                .to_string();
+            if !series.is_empty() {
+                return (series, ParsedDiskChapterName {
+                    chapter_number: last.to_string(),
+                    volume_number: None,
+                    title: format!("Cap. {last}"),
+                    disk_id_token: String::new(),
+                });
+            }
+        }
+    }
+
+    let series = if cleaned.is_empty() { "Manga Local".to_string() } else { cleaned.to_string() };
+    (series.clone(), ParsedDiskChapterName {
+        chapter_number: "1".to_string(),
+        volume_number: None,
+        title: series,
+        disk_id_token: String::new(),
+    })
+}
+
+/// Imports an external `.cbz`, `.pdf`, or `.epub` archive file (or a directory containing external archives)
+/// into `downloads_dir/<InferredMangaTitle>/`, returning the number of imported chapter archives.
+pub fn import_external_archives_into_downloads(source_path: &Path, downloads_dir: &Path) -> Result<usize, String> {
+    if !source_path.exists() {
+        return Err(format!("Path does not exist: {}", source_path.display()));
+    }
+
+    let mut files_to_import: Vec<PathBuf> = Vec::new();
+    if source_path.is_file() {
+        if LocalChapterSource::from_path(source_path).is_some() {
+            files_to_import.push(source_path.to_path_buf());
+        }
+    } else if source_path.is_dir() {
+        for entry in std::fs::read_dir(source_path).map_err(|e| e.to_string())?.flatten() {
+            let p = entry.path();
+            if p.is_file() && LocalChapterSource::from_path(&p).is_some() {
+                files_to_import.push(p);
+            }
+        }
+    }
+
+    let mut imported_count = 0usize;
+    for file_path in files_to_import {
+        let Some(file_name) = file_path.file_name().map(|n| n.to_string_lossy().into_owned()) else {
+            continue;
+        };
+        let stem = strip_archive_extension(&file_name);
+        let (series_title, _) = infer_manga_and_chapter_from_external_filename(stem);
+        let safe_folder = SanitizedFilename::new(&series_title).to_string();
+        let target_dir = downloads_dir.join(if safe_folder.trim().is_empty() { "Manga Local" } else { &safe_folder });
+        std::fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+        let target_file = target_dir.join(&file_name);
+        if target_file != file_path {
+            std::fs::copy(&file_path, &target_file).map_err(|e| e.to_string())?;
+        }
+        imported_count += 1;
+    }
+
+    Ok(imported_count)
+}
+
 fn db_chapter_matches_disk(
     db_ch: &OfflineDbChapter,
     provider: MangaProviders,
@@ -880,51 +1068,32 @@ pub fn scan_offline_mangas_in_dir(base_dir: &Path, db: Option<&Database<'_>>) ->
     }
 
     let mut mangas = Vec::new();
+    let mut loose_root_entries_by_series: HashMap<String, (String, Vec<DiskEntry>)> = HashMap::new();
 
     for entry1 in entries1.flatten() {
         let manga_path = entry1.path();
         if !manga_path.is_dir() {
-            continue;
-        }
-        let folder_name = entry1.file_name().to_string_lossy().into_owned();
-        let mut disk_entries = Vec::new();
-
-        for entry2 in std::fs::read_dir(&manga_path).into_iter().flatten().flatten() {
-            let path2 = entry2.path();
-            let name2 = entry2.file_name().to_string_lossy().into_owned();
-            if let Some(src) = LocalChapterSource::from_path(&path2) {
-                let stem = strip_archive_extension(&name2).to_string();
+            let file_name = entry1.file_name().to_string_lossy().into_owned();
+            if let Some(src) = LocalChapterSource::from_path(&manga_path) {
+                let stem = strip_archive_extension(&file_name).to_string();
                 let size_bytes = src.size_bytes();
-                let parsed = parse_disk_chapter_name(&stem);
-                disk_entries.push(DiskEntry {
-                    entry_name: name2,
+                let (series_title, parsed) = infer_manga_and_chapter_from_external_filename(&stem);
+                let key = series_title.to_lowercase();
+                let group = loose_root_entries_by_series.entry(key).or_insert_with(|| (series_title, Vec::new()));
+                group.1.push(DiskEntry {
+                    entry_name: file_name,
                     stem,
                     language: None,
                     source: src,
                     parsed,
                     size_bytes,
                 });
-            } else if path2.is_dir() {
-                let sub_lang = Languages::from_str_lenient(&name2);
-                for entry3 in std::fs::read_dir(&path2).into_iter().flatten().flatten() {
-                    let path3 = entry3.path();
-                    let name3 = entry3.file_name().to_string_lossy().into_owned();
-                    if let Some(src) = LocalChapterSource::from_path(&path3) {
-                        let stem = strip_archive_extension(&name3).to_string();
-                        let size_bytes = src.size_bytes();
-                        let parsed = parse_disk_chapter_name(&stem);
-                        disk_entries.push(DiskEntry {
-                            entry_name: name3,
-                            stem,
-                            language: sub_lang,
-                            source: src,
-                            parsed,
-                            size_bytes,
-                        });
-                    }
-                }
             }
+            continue;
         }
+        let folder_name = entry1.file_name().to_string_lossy().into_owned();
+        let mut disk_entries = Vec::new();
+        collect_disk_entries_in_manga_dir(&manga_path, None, 0, 3, &mut disk_entries);
 
         if disk_entries.is_empty() {
             continue;
@@ -1080,6 +1249,64 @@ pub fn scan_offline_mangas_in_dir(base_dir: &Path, db: Option<&Database<'_>>) ->
             total_size_bytes,
             languages,
         });
+    }
+
+    // Merge or add loose root-level external archives (.cbz, .pdf, .epub placed directly in base_dir)
+    for (series_lower, (series_title, root_entries)) in loose_root_entries_by_series {
+        let mut new_chapters = Vec::with_capacity(root_entries.len());
+        let mut added_bytes = 0u64;
+        let default_lang = *Languages::get_preferred_lang();
+        let folder_name = SanitizedFilename::new(&series_title).to_string();
+
+        for d in root_entries {
+            added_bytes = added_bytes.saturating_add(d.size_bytes);
+            let format_label = d.source.format_label();
+            let chapter_id = format!("offline::root::{folder_name}::{}", d.entry_name);
+            let chapter = Chapter {
+                id: chapter_id,
+                id_safe_for_download: SanitizedFilename::new(&d.entry_name).to_string(),
+                manga_id: format!("offline::{folder_name}"),
+                title: d.parsed.title,
+                language: default_lang,
+                chapter_number: d.parsed.chapter_number,
+                volume_number: d.parsed.volume_number,
+                scanlator: Some(format!("📦 {format_label} · {}", format_size_bytes(d.size_bytes))),
+                publication_date: None,
+            };
+            new_chapters.push(OfflineChapter {
+                chapter,
+                source: d.source,
+                format_label,
+                size_bytes: d.size_bytes,
+                is_read: false,
+                is_bookmarked: false,
+                bookmarked_page: None,
+            });
+        }
+
+        if let Some(existing) = mangas
+            .iter_mut()
+            .find(|m| m.title.to_lowercase() == series_lower || m.folder_name.to_lowercase() == folder_name.to_lowercase())
+        {
+            for mut ch in new_chapters {
+                ch.chapter.manga_id = existing.manga_id.clone();
+                existing.chapters.push(ch);
+            }
+            existing.total_size_bytes = existing.total_size_bytes.saturating_add(added_bytes);
+            existing.chapters.sort_by(|a, b| compare_chapters_ascending(b, a));
+        } else {
+            new_chapters.sort_by(|a, b| compare_chapters_ascending(b, a));
+            mangas.push(OfflineManga {
+                manga_id: format!("offline::{folder_name}"),
+                title: series_title,
+                folder_name,
+                provider: None,
+                is_favorite: false,
+                chapters: new_chapters,
+                total_size_bytes: added_bytes,
+                languages: vec![default_lang],
+            });
+        }
     }
 
     mangas.sort_by(|a, b| {
@@ -1513,5 +1740,48 @@ mod tests {
         let part_a_num = manual_nums["offline::Manual Comic::Part A.pdf"];
         let next_manual = manual_list.get_next_chapter(None, part_a_num).expect("Part B follows Part A");
         assert_eq!(next_manual.id, "offline::Manual Comic::Part B.pdf");
+    }
+
+    #[test]
+    fn test_scan_loose_root_archives_nested_volumes_and_importer() {
+        let temp = TempDir::new("offline_external_scan");
+        let root = &temp.0;
+
+        // 1. Loose root-level CBZ & PDF files directly inside downloads root
+        let write_dummy_cbz = |path: &Path| {
+            let file = std::fs::File::create(path).unwrap();
+            let mut zip = ZipWriter::new(file);
+            zip.start_file("001.jpg", SimpleFileOptions::default()).unwrap();
+            zip.write_all(&sample_jpeg_bytes()).unwrap();
+            zip.finish().unwrap();
+        };
+
+        write_dummy_cbz(&root.join("Berserk Vol 01.cbz"));
+        write_dummy_cbz(&root.join("Berserk Vol 02.cbz"));
+
+        // 2. Deeply nested volume subdirectory inside a manga folder
+        let nested_vol_dir = root.join("Vagabond").join("Arco Yoshioka").join("Volumen 25");
+        std::fs::create_dir_all(&nested_vol_dir).unwrap();
+        write_dummy_cbz(&nested_vol_dir.join("Cap 220.cbz"));
+
+        let scanned = scan_offline_mangas_in_dir(root, None);
+        assert_eq!(scanned.len(), 2);
+
+        let berserk = scanned.iter().find(|m| m.title == "Berserk").expect("Berserk inferred from root CBZs");
+        assert_eq!(berserk.chapters.len(), 2);
+        assert_eq!(berserk.chapters[0].chapter.chapter_number, "2");
+        assert_eq!(berserk.chapters[1].chapter.chapter_number, "1");
+
+        let vagabond = scanned.iter().find(|m| m.title == "Vagabond").expect("Vagabond found from nested dir");
+        assert_eq!(vagabond.chapters.len(), 1);
+
+        // 3. Test import_external_archives_into_downloads
+        let ext_src = TempDir::new("external_import_src");
+        let ext_cbz = ext_src.0.join("Chainsaw Man - Cap 150.cbz");
+        write_dummy_cbz(&ext_cbz);
+
+        let imported = import_external_archives_into_downloads(&ext_cbz, root).unwrap();
+        assert_eq!(imported, 1);
+        assert!(root.join("Chainsaw Man").join("Chainsaw Man - Cap 150.cbz").exists());
     }
 }

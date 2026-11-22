@@ -124,6 +124,10 @@ pub enum FeedActions {
     GoToMangaPage,
     /// Toggle favorite on the selected manga (f key)
     ToggleFavorite,
+    /// Cycle the custom shelf/category assigned to the selected manga (e key)
+    CycleMangaShelf,
+    /// Cycle the active shelf filter in the Library tab (Shift+E key)
+    CycleShelfFilter,
     /// Refresh timeline feed (Shift+R key)
     RefreshTimeline,
     /// Open selected downloaded manga directly in the local Web Viewer HD (v key)
@@ -201,6 +205,8 @@ where
     tasks: JoinSet<()>,
     /// Manga provider for fetching data
     manga_provider: Option<Arc<T>>,
+    /// Active shelf filter in Library tab (`None` = show all shelves)
+    pub active_shelf_filter: Option<String>,
     tabs_area: Rect,
     tab_hit_boxes: Vec<(Rect, FeedTabs)>,
     search_bar_area: Rect,
@@ -238,6 +244,7 @@ where
             items_per_page: 5,
             is_typing: false,
             manga_provider: None,
+            active_shelf_filter: None,
             tabs_area: Rect::default(),
             tab_hit_boxes: Vec::new(),
             search_bar_area: Rect::default(),
@@ -366,6 +373,7 @@ where
                 self.render_empty_history_card(area, buf);
             } else {
                 history.active_tab = active_tab;
+                history.active_shelf_filter = self.active_shelf_filter.clone();
                 let widget_snapshot = history.clone();
                 let (prev_rect, next_rect) =
                     HistoryWidget::pagination_hit_boxes(area, widget_snapshot.page, widget_snapshot.total_results);
@@ -633,6 +641,9 @@ where
                 if manga.is_plan_to_read {
                     let _ = database.remove_from_history(&manga.id, MangaHistoryType::PlanToRead);
                 }
+                if manga.shelf_name.is_some() {
+                    let _ = database.set_manga_shelf(&manga.id, manga.provider, &manga.title, None);
+                }
                 self.init_search();
             } else if let Err(err) = database.remove_from_history(&manga.id, MangaHistoryType::ReadingHistory) {
                 if let Some(tx) = &self.global_event_tx {
@@ -671,6 +682,64 @@ where
             }
             self.init_search();
         }
+    }
+
+    /// Cycles the custom shelf/category assigned to the currently selected manga.
+    fn cycle_selected_manga_shelf(&mut self) {
+        let manga_info = match self.tabs {
+            FeedTabs::Timeline => self
+                .timeline
+                .as_ref()
+                .and_then(|t| t.get_current_selected())
+                .map(|item| (item.manga_id.clone(), item.provider, item.manga_title.clone())),
+            FeedTabs::Downloads => self
+                .offline_downloads
+                .as_ref()
+                .and_then(|w| w.get_current_selected())
+                .and_then(|m| m.provider.map(|p| (m.manga_id.clone(), p, m.title.clone()))),
+            _ => self
+                .history
+                .as_ref()
+                .and_then(|h| h.get_current_manga_selected())
+                .map(|manga| (manga.id.clone(), manga.provider, manga.title.clone())),
+        };
+
+        if let Some((manga_id, provider, title)) = manga_info {
+            if let Ok(conn) = Database::get_connection() {
+                let db = Database::new(&conn);
+                let _ = db.cycle_manga_shelf(&manga_id, provider, &title);
+            }
+            self.init_search();
+        }
+    }
+
+    /// Cycles the active shelf filter in the Library tab (`None` -> each shelf -> `None`).
+    fn cycle_shelf_filter(&mut self) {
+        if self.tabs != FeedTabs::Library {
+            self.set_tab(FeedTabs::Library);
+        }
+        let all_shelves: Vec<String> = Database::get_connection()
+            .ok()
+            .and_then(|conn| Database::new(&conn).list_all_shelves().ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(s, _)| s)
+            .collect();
+
+        self.active_shelf_filter = match self.active_shelf_filter.as_deref() {
+            None => all_shelves.first().cloned(),
+            Some(curr) => {
+                if let Some(pos) = all_shelves.iter().position(|s| s == curr) {
+                    all_shelves.get(pos + 1).cloned()
+                } else {
+                    None
+                }
+            },
+        };
+        if let Some(h) = self.history.as_mut() {
+            h.page = 1;
+        }
+        self.init_search();
     }
 
     /// Removes all manga from the current provider and history type.
@@ -776,6 +845,12 @@ where
                 },
                 KeyCode::Char('f') => {
                     self.local_action_tx.send(FeedActions::ToggleFavorite).ok();
+                },
+                KeyCode::Char('e') => {
+                    self.local_action_tx.send(FeedActions::CycleMangaShelf).ok();
+                },
+                KeyCode::Char('E') => {
+                    self.local_action_tx.send(FeedActions::CycleShelfFilter).ok();
                 },
                 KeyCode::Char('d') => {
                     if self.tabs == FeedTabs::Timeline {
@@ -1002,6 +1077,7 @@ where
             Some(provider) => provider.name(),
             None => MangaProviders::default(),
         };
+        let shelf_filter = self.active_shelf_filter.clone();
 
         self.tasks.spawn(async move {
             let connection = match Database::get_connection() {
@@ -1015,13 +1091,16 @@ where
             let database = Database::new(&connection);
 
             let maybe_reading_history = if tab == FeedTabs::Library {
-                database.get_library(GetHistoryArgs {
-                    hist_type: history_type,
-                    page,
-                    search: SearchTerm::trimmed_lowercased(&search_term),
-                    items_per_page,
-                    provider,
-                })
+                database.get_library_with_shelf(
+                    GetHistoryArgs {
+                        hist_type: history_type,
+                        page,
+                        search: SearchTerm::trimmed_lowercased(&search_term),
+                        items_per_page,
+                        provider,
+                    },
+                    shelf_filter.as_deref(),
+                )
             } else {
                 database.get_continue_reading(GetHistoryArgs {
                     hist_type: history_type,
@@ -1443,6 +1522,12 @@ where
             FeedBottomAction::ToggleFavorite => {
                 self.local_action_tx.send(FeedActions::ToggleFavorite).ok();
             },
+            FeedBottomAction::CycleMangaShelf => {
+                self.local_action_tx.send(FeedActions::CycleMangaShelf).ok();
+            },
+            FeedBottomAction::CycleShelfFilter => {
+                self.local_action_tx.send(FeedActions::CycleShelfFilter).ok();
+            },
             FeedBottomAction::DownloadTimelineChapter => {
                 self.download_timeline_chapter();
             },
@@ -1670,6 +1755,8 @@ where
             FeedActions::SwitchTab => self.switch_tabs(),
             FeedActions::SetTab(tab) => self.set_tab(tab),
             FeedActions::ToggleFavorite => self.toggle_favorite_selected_manga(),
+            FeedActions::CycleMangaShelf => self.cycle_selected_manga_shelf(),
+            FeedActions::CycleShelfFilter => self.cycle_shelf_filter(),
             FeedActions::RefreshTimeline => self.init_search(),
             FeedActions::OpenOfflineWebViewer => self.open_offline_web_viewer(),
         }

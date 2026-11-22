@@ -26,6 +26,8 @@ pub enum FeedBottomAction {
     ReadTimelineChapter,
     OpenOfflineWebViewer,
     ToggleFavorite,
+    CycleMangaShelf,
+    CycleShelfFilter,
     DownloadTimelineChapter,
     RemoveSelected,
     AskDeleteAll,
@@ -466,6 +468,7 @@ pub struct MangasRead {
     pub is_favorite: bool,
     pub is_plan_to_read: bool,
     pub downloaded_count: u32,
+    pub shelf_name: Option<String>,
 }
 
 impl From<LatestChapter> for RecentChapters {
@@ -499,8 +502,12 @@ impl MangasRead {
                 Some(FeedBottomAction::OpenManga),
             ),
             (
-                vec![t.key_chip("f"), Span::styled(tr(" Favorito", " Favorite"), Style::default().fg(t.text_muted))],
+                vec![t.key_chip("f"), Span::styled(tr(" Favorito  ", " Favorite  "), Style::default().fg(t.text_muted))],
                 Some(FeedBottomAction::ToggleFavorite),
+            ),
+            (
+                vec![t.key_chip("e"), Span::styled(tr(" Estantería", " Shelf"), Style::default().fg(t.text_muted))],
+                Some(FeedBottomAction::CycleMangaShelf),
             ),
         ]
     }
@@ -581,6 +588,12 @@ impl Widget for MangasRead {
                 format!(" 💾 {} {} ", self.downloaded_count, tr("caps", "chaps")),
                 Style::default().fg(Color::Black).bg(t.accent_secondary).bold(),
             ));
+            badges.push(Span::raw(" "));
+        }
+        if let Some(shelf) = &self.shelf_name
+            && !shelf.trim().is_empty()
+        {
+            badges.push(Span::styled(format!(" 🏷 {shelf} "), Style::default().fg(Color::Black).bg(t.accent_highlight).bold()));
         }
         if !badges.is_empty() {
             info_lines.push(Line::from(badges));
@@ -657,6 +670,7 @@ pub struct HistoryWidget {
     pub mangas: Vec<MangasRead>,
     pub state: tui_widget_list::ListState,
     pub active_tab: FeedTabs,
+    pub active_shelf_filter: Option<String>,
 }
 
 impl HistoryWidget {
@@ -752,6 +766,16 @@ impl HistoryWidget {
                 Some(FeedBottomAction::ToggleFavorite),
             ),
             (
+                t.key_chip("e"),
+                Span::styled(tr(" Estantería  ", " Shelf  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::CycleMangaShelf),
+            ),
+            (
+                t.key_chip("E"),
+                Span::styled(tr(" Filtrar est.  ", " Filter shelf  "), Style::default().fg(t.text_muted)),
+                Some(FeedBottomAction::CycleShelfFilter),
+            ),
+            (
                 t.key_chip("d"),
                 Span::styled(tr(" Quitar  ", " Remove  "), Style::default().fg(t.text_muted)),
                 Some(FeedBottomAction::RemoveSelected),
@@ -789,10 +813,12 @@ impl HistoryWidget {
                     is_favorite: history.is_favorite,
                     is_plan_to_read: history.is_plan_to_read,
                     downloaded_count: history.downloaded_count,
+                    shelf_name: history.shelf_name,
                 })
                 .collect(),
             state: tui_widget_list::ListState::default(),
             active_tab: FeedTabs::ContinueReading,
+            active_shelf_filter: None,
         }
     }
 }
@@ -808,10 +834,18 @@ impl StatefulWidget for HistoryWidget {
             _ => tr(" 📖 Continuar leyendo ", " 📖 Continue Reading "),
         };
 
-        let top_left = Line::from(vec![
+        let mut top_left_spans = vec![
             Span::styled(tab_label, Style::default().fg(t.accent_primary).bg(t.title_chip_primary_bg).bold()),
             Span::styled(format!(" ({}) ", self.total_results), Style::default().fg(t.accent_highlight).bold()),
-        ]);
+        ];
+        if self.active_tab == FeedTabs::Library {
+            let shelf_text = match &self.active_shelf_filter {
+                Some(s) => format!(" 🏷 {s} <E> "),
+                None => format!(" 🏷 {} <E> ", tr("Todas", "All Shelves")),
+            };
+            top_left_spans.push(Span::styled(shelf_text, Style::default().fg(Color::Black).bg(t.accent_secondary).bold()));
+        }
+        let top_left = Line::from(top_left_spans);
 
         let (prev_span, page_span, next_span) = Self::pagination_spans(self.page, self.total_results);
         let pagination_top = Line::from(vec![prev_span, page_span, next_span]).right_aligned();

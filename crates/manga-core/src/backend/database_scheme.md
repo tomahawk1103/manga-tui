@@ -94,6 +94,23 @@ Stores user-favorited mangas across all providers.
 
 PRIMARY KEY (manga_id, provider)
 
+# manga_collections
+
+Stores custom user shelves / categories assigned to mangas across all providers.
+
+- manga_id
+    - type: TEXT NOT NULL
+- provider
+    - type: TEXT NOT NULL
+- title
+    - type: TEXT NOT NULL
+- shelf_name
+    - type: TEXT NOT NULL
+- created_at
+    - type: DATETIME DEFAULT (datetime('now'))
+
+PRIMARY KEY (manga_id, provider)
+
 # search_history
 
 Stores recently searched queries for quick recall and autocompletion cycling.
@@ -119,5 +136,7 @@ To ensure high-performance concurrent reads and writes without `SQLITE_BUSY` con
   - Optimizes reading history and timeline lookups ordered by recent activity.
 - `idx_favorite_mangas_provider`: `CREATE INDEX IF NOT EXISTS idx_favorite_mangas_provider ON favorite_mangas(provider);`
   - Speeds up favorite manga filtering per provider.
+- `idx_manga_collections_shelf`: `CREATE INDEX IF NOT EXISTS idx_manga_collections_shelf ON manga_collections(shelf_name, provider);`
+  - Speeds up filtering and grouping mangas by custom library shelf.
 
 

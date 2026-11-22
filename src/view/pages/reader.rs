@@ -83,6 +83,12 @@ pub enum MangaReaderEvents {
     FailedPage(usize),
     ErrorTrackingReadingProgress(String),
     WebViewerError(String),
+    NextChapterPrefetched(ChapterToRead),
+    NextChapterPagePrefetched {
+        chapter_id: String,
+        index: usize,
+        panel: MangaPanel,
+    },
 }
 
 pub struct Page {
@@ -186,6 +192,9 @@ where
     left_panel_area: Rect,
     center_image_area: Rect,
     web_viewer_notice: Option<(String, Instant, bool)>,
+    prefetched_next_chapter: Option<ChapterToRead>,
+    prefetched_next_pages: HashMap<usize, MangaPanel>,
+    prefetching_chapter_id: Option<String>,
 }
 
 fn truncate_to_display_width(text: &str, max_width: usize) -> String {
@@ -483,6 +492,9 @@ where
             left_panel_area: Rect::default(),
             center_image_area: Rect::default(),
             web_viewer_notice: None,
+            prefetched_next_chapter: None,
+            prefetched_next_pages: HashMap::new(),
+            prefetching_chapter_id: None,
         }
     }
 
@@ -840,6 +852,15 @@ where
     }
 
     fn load_chapter(&mut self, chapter: ChapterToRead) {
+        let mut ready_pages = if self.prefetched_next_chapter.as_ref().is_some_and(|c| c.id == chapter.id) {
+            std::mem::take(&mut self.prefetched_next_pages)
+        } else {
+            HashMap::new()
+        };
+        self.prefetched_next_chapter = None;
+        self.prefetched_next_pages.clear();
+        self.prefetching_chapter_id = None;
+
         self.clean_up();
         self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
 
@@ -850,6 +871,9 @@ where
         self.init_fetching_pages();
         if !self.pages.is_empty() && self.page_list_state.list_state.selected.is_none() {
             self.page_list_state.list_state.select(Some(0));
+        }
+        for (idx, panel) in ready_pages.drain() {
+            self.load_page(PageData { panel, index: idx });
         }
         self.init_save_reading_history();
         self.track_manga_reading_history(self.manga_tracker.clone());
@@ -985,6 +1009,137 @@ where
         for index in self.get_pages_to_fetch() {
             self.fetch_page(index);
         }
+        self.maybe_prefetch_next_chapter();
+    }
+
+    fn maybe_prefetch_next_chapter(&mut self) {
+        let total = self.pages.len().max(self.pages_list.pages.len());
+        if total == 0 {
+            return;
+        }
+        let curr = self.current_page_index();
+        // Trigger background next-chapter prefetch once within 4 pages of the end (or immediately for short chapters)
+        if curr + 4 < total && total > 5 {
+            return;
+        }
+        let Some(next_meta) = self.get_next_chapter_in_the_list() else {
+            return;
+        };
+        let next_id = next_meta.id.clone();
+        if self.prefetched_next_chapter.as_ref().is_some_and(|c| c.id == next_id)
+            || self.prefetching_chapter_id.as_deref() == Some(next_id.as_str())
+        {
+            return;
+        }
+        self.prefetching_chapter_id = Some(next_id.clone());
+
+        let api_client = self.api_client.clone();
+        let provider = self.provider;
+        let sender = self.local_event_tx.clone();
+        let manga_id = self.manga_id.clone();
+        let manga_title = self.manga_title.clone();
+        let is_offline_mode = self.is_offline_mode;
+        let offline_source = self.offline_sources.get(&next_id).cloned();
+        let current_lang = self.current_chapter.language;
+
+        self.image_tasks.spawn(async move {
+            let resolve_local = || async {
+                let src_opt = match offline_source.clone() {
+                    Some(s) => Some(s),
+                    None => {
+                        let t = manga_title.clone();
+                        let cid = next_id.clone();
+                        tokio::task::spawn_blocking(move || LocalChapterSource::find(&t, &cid))
+                            .await
+                            .ok()
+                            .flatten()
+                    },
+                };
+                let src = src_opt?;
+                let count = tokio::task::spawn_blocking(move || src.page_count()).await.ok()?;
+                if count == 0 {
+                    return None;
+                }
+                let dummy_urls = (0..count)
+                    .filter_map(|i| reqwest::Url::parse(&format!("http://localhost/local/{i}")).ok())
+                    .collect();
+                let n = next_meta.number.parse::<f64>().unwrap_or(0.0);
+                let v = if next_meta.volume.trim().is_empty() { "none".to_string() } else { next_meta.volume.clone() };
+                Some(ChapterToRead {
+                    id: next_id.clone(),
+                    title: String::new(),
+                    number: n,
+                    volume_number: Some(v),
+                    num_page_bookmarked: None,
+                    language: current_lang,
+                    pages_url: dummy_urls,
+                })
+            };
+
+            let resolved_chapter = if is_offline_mode {
+                resolve_local().await
+            } else {
+                let response = match provider {
+                    Some(p) => crate::backend::multi_provider::search_chapter_for_provider(p, &next_id, &manga_id).await,
+                    None => api_client.search_chapter(&next_id, &manga_id).await,
+                }
+                .ok();
+                match response {
+                    Some(chap) => Some(chap),
+                    None => resolve_local().await,
+                }
+            };
+
+            let Some(next_chap) = resolved_chapter else {
+                return;
+            };
+            let chap_id = next_chap.id.clone();
+            let first_urls: Vec<(usize, reqwest::Url)> = next_chap.pages_url.iter().cloned().enumerate().take(3).collect();
+            sender.send(MangaReaderEvents::NextChapterPrefetched(next_chap)).ok();
+
+            let local_src_for_pages = match offline_source {
+                Some(s) => Some(s),
+                None => {
+                    let t = manga_title.clone();
+                    let cid = chap_id.clone();
+                    tokio::task::spawn_blocking(move || LocalChapterSource::find(&t, &cid))
+                        .await
+                        .ok()
+                        .flatten()
+                },
+            };
+
+            for (idx, url) in first_urls {
+                if let Some(ref src) = local_src_for_pages {
+                    let src_clone = src.clone();
+                    if let Ok(Ok(panel)) = tokio::task::spawn_blocking(move || src_clone.load_page(idx)).await {
+                        sender
+                            .send(MangaReaderEvents::NextChapterPagePrefetched {
+                                chapter_id: chap_id.clone(),
+                                index: idx,
+                                panel,
+                            })
+                            .ok();
+                        continue;
+                    }
+                }
+                if url.host_str() != Some("localhost") {
+                    let res = match provider {
+                        Some(p) => crate::backend::multi_provider::search_manga_panel_for_provider(p, url).await,
+                        None => api_client.search_manga_panel(url).await,
+                    };
+                    if let Ok(panel) = res {
+                        sender
+                            .send(MangaReaderEvents::NextChapterPagePrefetched {
+                                chapter_id: chap_id.clone(),
+                                index: idx,
+                                panel,
+                            })
+                            .ok();
+                    }
+                }
+            }
+        });
     }
 
     fn set_chapter_not_found(&mut self) {
@@ -1332,6 +1487,12 @@ where
         if failed_count > 0 {
             stats_spans.push(Span::styled(format!(" · ✗ {failed_count}"), Style::default().fg(t.status_error).bold()));
         }
+        if self.prefetched_next_chapter.is_some() {
+            stats_spans.push(Span::styled(
+                format!(" · ⚡ {}", tr("Sig. listo", "Next ready")),
+                Style::default().fg(t.accent_highlight).bold(),
+            ));
+        }
         info_lines.push(Line::from(stats_spans));
 
         match self.state {
@@ -1461,6 +1622,20 @@ where
                 MangaReaderEvents::WebViewerError(err) => {
                     self.web_viewer_notice = Some((format!("⚠ {}: {err}", tr("Visor Web", "Web Viewer")), Instant::now(), true));
                 },
+                MangaReaderEvents::NextChapterPrefetched(next_chap) => {
+                    if self.prefetching_chapter_id.as_deref() == Some(next_chap.id.as_str()) {
+                        self.prefetched_next_chapter = Some(next_chap);
+                    }
+                },
+                MangaReaderEvents::NextChapterPagePrefetched {
+                    chapter_id,
+                    index,
+                    panel,
+                } => {
+                    if self.prefetched_next_chapter.as_ref().is_some_and(|c| c.id == chapter_id) {
+                        self.prefetched_next_pages.insert(index, panel);
+                    }
+                },
             }
         }
     }
@@ -1547,6 +1722,12 @@ where
     fn initiate_search_next_chapter(&mut self) {
         match self.get_next_chapter_in_the_list() {
             Some(next_chapter) => {
+                if let Some(prefetched) = self.prefetched_next_chapter.clone()
+                    && prefetched.id == next_chapter.id
+                {
+                    self.load_chapter(prefetched);
+                    return;
+                }
                 self.set_searching_chapter();
                 self.local_event_tx.send(MangaReaderEvents::SearchNextChapter(next_chapter.id)).ok();
             },
@@ -2999,5 +3180,82 @@ mod test {
         assert!(restored_text.contains("Páginas") || restored_text.contains("Pages"));
         assert!(restored_text.contains("Controles") || restored_text.contains("Controls"));
         assert!(restored_text.contains("ATAJOS") || restored_text.contains("KEYS"));
+    }
+
+    #[tokio::test]
+    async fn reader_background_prefetches_next_chapter_and_switches_instantly() {
+        use crate::backend::manga_provider::{Languages, SortedChapters, SortedVolumes, Volumes};
+
+        let chapter1 = ChapterToRead {
+            id: "ch_1".to_string(),
+            title: "Chapter 1".to_string(),
+            number: 1.0,
+            volume_number: Some("1".to_string()),
+            num_page_bookmarked: None,
+            language: Languages::Spanish,
+            pages_url: vec!["http://localhost/p1.jpg".parse().unwrap(), "http://localhost/p2.jpg".parse().unwrap()],
+        };
+        let list = ListOfChapters {
+            volumes: SortedVolumes::new(vec![Volumes {
+                volume: "1".to_string(),
+                chapters: SortedChapters::new(vec![
+                    ChapterReader {
+                        id: "ch_1".to_string(),
+                        number: "1".to_string(),
+                        volume: "1".to_string(),
+                    },
+                    ChapterReader {
+                        id: "ch_2".to_string(),
+                        number: "2".to_string(),
+                        volume: "1".to_string(),
+                    },
+                ]),
+            }]),
+        };
+
+        let picker = Picker::new((8, 16));
+        let api_client = Arc::new(ReaderPageProvierMock::new());
+        let mut reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(chapter1, "m_1".to_string(), picker, api_client).with_list_of_chapters(list);
+
+        reader.init_fetching_pages();
+
+        // Simulate receiving the prefetched next chapter and its first page
+        let prefetched_ch2 = ChapterToRead {
+            id: "ch_2".to_string(),
+            title: "Chapter 2".to_string(),
+            number: 2.0,
+            volume_number: Some("1".to_string()),
+            num_page_bookmarked: None,
+            language: Languages::Spanish,
+            pages_url: vec!["http://localhost/c2_p1.jpg".parse().unwrap()],
+        };
+        reader.prefetching_chapter_id = Some("ch_2".to_string());
+        reader
+            .local_event_tx
+            .send(MangaReaderEvents::NextChapterPrefetched(prefetched_ch2))
+            .unwrap();
+        let img = DynamicImage::new_rgb8(16, 16);
+        reader
+            .local_event_tx
+            .send(MangaReaderEvents::NextChapterPagePrefetched {
+                chapter_id: "ch_2".to_string(),
+                index: 0,
+                panel: MangaPanel {
+                    image_decoded: img,
+                    dimensions: (16, 16),
+                },
+            })
+            .unwrap();
+
+        reader.tick();
+        assert_eq!(reader.prefetched_next_chapter.as_ref().map(|c| c.id.as_str()), Some("ch_2"));
+        assert!(reader.prefetched_next_pages.contains_key(&0));
+
+        // Pressing 'w' (SearchNextChapter) switches immediately to ch_2 with page 0 already loaded!
+        reader.update(MangaReaderActions::SearchNextChapter);
+        assert_eq!(reader.current_chapter.id, "ch_2");
+        assert_eq!(reader.pages.len(), 1);
+        assert!(reader.pages[0].is_loaded());
     }
 }

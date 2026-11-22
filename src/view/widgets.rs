@@ -707,11 +707,7 @@ impl<'a> Widget for ReadingStatsModal<'a> {
         let s = &self.state.db_stats;
         let hours = s.estimated_reading_minutes / 60;
         let mins = s.estimated_reading_minutes % 60;
-        let time_str = if hours > 0 {
-            format!("{hours}h {mins:02}m")
-        } else {
-            format!("{mins} min")
-        };
+        let time_str = if hours > 0 { format!("{hours}h {mins:02}m") } else { format!("{mins} min") };
         let disk_str = crate::backend::offline::format_size_bytes(self.state.total_disk_bytes);
 
         let [kpi_area, body_area] = Layout::default()
@@ -729,8 +725,15 @@ impl<'a> Widget for ReadingStatsModal<'a> {
             ])
             .areas(kpi_area);
 
-        let render_kpi = |rect: Rect, title: &str, primary: String, sub: String, color: ratatui::style::Color, buf: &mut ratatui::prelude::Buffer| {
-            let b = t.rounded_block().title(Span::styled(format!(" {title} "), Style::default().fg(color).add_modifier(Modifier::BOLD)));
+        let render_kpi = |rect: Rect,
+                          title: &str,
+                          primary: String,
+                          sub: String,
+                          color: ratatui::style::Color,
+                          buf: &mut ratatui::prelude::Buffer| {
+            let b = t
+                .rounded_block()
+                .title(Span::styled(format!(" {title} "), Style::default().fg(color).add_modifier(Modifier::BOLD)));
             let r_in = b.inner(rect);
             b.render(rect, buf);
             if r_in.height >= 2 {
@@ -781,10 +784,8 @@ impl<'a> Widget for ReadingStatsModal<'a> {
             .constraints([Constraint::Percentage(52), Constraint::Percentage(48)])
             .areas(body_area);
 
-        let mut left_lines = vec![
-            Line::raw(""),
-            HelpModal::section_title(tr("🏆 Top 5 Mangas Más Leídos", "🏆 Top 5 Most Read Mangas")),
-        ];
+        let mut left_lines =
+            vec![Line::raw(""), HelpModal::section_title(tr("🏆 Top 5 Mangas Más Leídos", "🏆 Top 5 Most Read Mangas"))];
         if s.top_read_mangas.is_empty() {
             left_lines.push(Line::from(vec![Span::styled(
                 tr("  Aún no has leído capítulos.", "  No chapters read yet."),
@@ -822,10 +823,8 @@ impl<'a> Widget for ReadingStatsModal<'a> {
             }
         }
 
-        let mut right_lines = vec![
-            Line::raw(""),
-            HelpModal::section_title(tr("🌐 Distribución por Proveedor", "🌐 Provider Breakdown")),
-        ];
+        let mut right_lines =
+            vec![Line::raw(""), HelpModal::section_title(tr("🌐 Distribución por Proveedor", "🌐 Provider Breakdown"))];
         if s.provider_breakdown.is_empty() {
             right_lines.push(Line::from(vec![Span::styled(
                 tr("  Sin actividad registrada por proveedor.", "  No provider activity recorded yet."),
@@ -837,7 +836,10 @@ impl<'a> Widget for ReadingStatsModal<'a> {
                 let bar_len = ((*ch_count as usize * 10) / max_prov_ch as usize).clamp(1, 10);
                 let bar = format!("{}{}", "█".repeat(bar_len), "░".repeat(10 - bar_len));
                 right_lines.push(Line::from(vec![
-                    Span::styled(format!(" {:<13}", prov.short_name()), Style::default().fg(t.accent_secondary).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        format!(" {:<13}", prov.short_name()),
+                        Style::default().fg(t.accent_secondary).add_modifier(Modifier::BOLD),
+                    ),
                     Span::styled(bar, Style::default().fg(t.accent_primary)),
                     Span::styled(format!(" {ch_count} caps ({m_count} mangas)"), Style::default().fg(t.text_secondary)),
                 ]));
@@ -944,5 +946,49 @@ mod tests {
             .find(|&x| buf[(x, top_border_y)].symbol() == "╭")
             .expect("top-left corner");
         assert_eq!(buf[(top_left_x, top_border_y)].fg, theme().status_error);
+    }
+
+    #[test]
+    fn reading_stats_modal_renders_kpis_top_mangas_and_shelves() {
+        let state = ReadingStatsModalState {
+            db_stats: crate::backend::database::ReadingDashboardStats {
+                total_chapters_read: 42,
+                estimated_reading_minutes: 252,
+                reading_mangas: 5,
+                plan_to_read_mangas: 8,
+                favorites_count: 4,
+                shelves_count: 2,
+                bookmarks_count: 3,
+                downloaded_db_chapters: 15,
+                active_days_count: 7,
+                current_streak_days: 3,
+                read_last_7_days: 12,
+                top_read_mangas: vec![("Berserk".to_string(), MangaProviders::Mangaoni, 25)],
+                provider_breakdown: vec![(MangaProviders::Mangaoni, 3, 25)],
+            },
+            shelves: vec![("🔥 Obras Maestras".to_string(), 2)],
+            offline_mangas_count: 2,
+            offline_chapters_count: 15,
+            total_disk_bytes: 128 * 1024 * 1024,
+            cbz_count: 10,
+            pdf_count: 3,
+            epub_count: 2,
+            raw_count: 0,
+        };
+
+        let area = Rect::new(0, 0, 130, 42);
+        let mut buf = Buffer::empty(area);
+        ReadingStatsModal::new(&state).render(area, &mut buf);
+
+        let rendered: String = (0..area.height)
+            .map(|y| (0..area.width).map(|x| buf[(x, y)].symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert!(rendered.contains("42"));
+        assert!(rendered.contains("4h 12m"));
+        assert!(rendered.contains("Berserk"));
+        assert!(rendered.contains("Obras Maestras"));
+        assert!(rendered.contains("128.0 MB") || rendered.contains("128 MB"));
     }
 }

@@ -40,8 +40,8 @@ use crate::view::provider_filters::TuiSearchProvider;
 use crate::view::tasks::manga::{AutoDownloadItem, download_new_chapters, download_new_favorite_chapters};
 use crate::view::widgets::{
     AppUpdateModal, AppUpdateModalState, AppUpdateStage, CloudModal, CloudModalOutcome, CloudModalState, DownloadQueueModal,
-    ErrorModal, HelpModal, NewChapterItem, NewChaptersModal, NewChaptersModalState, SettingsModal, SettingsModalState,
-    SettingsOutcome,
+    ErrorModal, HelpModal, NewChapterItem, NewChaptersModal, NewChaptersModalState, ReadingStatsModal, ReadingStatsModalState,
+    SettingsModal, SettingsModalState, SettingsOutcome,
 };
 
 const NEW_CHAPTER_CHECK_INTERVAL: Duration = Duration::from_secs(10 * 60);
@@ -192,6 +192,8 @@ where
     pub is_cloud_modal_open: bool,
     pub cloud_state: CloudModalState,
     cloud_task: Option<tokio::task::JoinHandle<()>>,
+    pub is_stats_modal_open: bool,
+    pub stats_state: Option<ReadingStatsModalState>,
     pub app_update_state: Option<AppUpdateModalState>,
     pub pending_update_install: Option<crate::backend::updater::PreparedUpdate>,
     app_update_task: Option<tokio::task::JoinHandle<()>>,
@@ -244,6 +246,10 @@ where
             SettingsModal::new(&self.settings_state).render(area, frame.buffer_mut());
         } else if self.is_cloud_modal_open {
             CloudModal::new(&self.cloud_state).render(area, frame.buffer_mut());
+        } else if self.is_stats_modal_open
+            && let Some(ref stats) = self.stats_state
+        {
+            ReadingStatsModal::new(stats).render(area, frame.buffer_mut());
         }
     }
 
@@ -583,6 +589,8 @@ where
             needs_terminal_clear: false,
             top_tabs_area: Rect::default(),
             tab_hit_boxes: Vec::new(),
+            is_stats_modal_open: false,
+            stats_state: None,
         }
     }
 
@@ -1310,6 +1318,8 @@ where
             (tr(" ⚙  AJUSTES ", " ⚙  SETTINGS "), t.accent_primary)
         } else if self.is_cloud_modal_open {
             (tr(" ☁  NUBE ", " ☁  CLOUD "), t.accent_primary)
+        } else if self.is_stats_modal_open {
+            (tr(" 📊 ESTADÍSTICAS ", " 📊 STATS "), t.accent_highlight)
         } else if self.is_queue_modal_open {
             (tr(" ⬇ COLA ", " ⬇ QUEUE "), t.accent_primary)
         } else if self.app_update_state.is_some() {
@@ -1380,6 +1390,7 @@ where
                         ("Tab/1-4", tr("Pestaña", "Tab")),
                         ("j/k", tr("Mover", "Move")),
                         ("r/Enter", tr("Abrir", "Open")),
+                        ("e/E", tr("Estantería", "Shelf")),
                         ("w/b", tr("Pág.", "Page")),
                         ("s", tr("Filtrar", "Filter")),
                         ("f", tr("Favorito", "Favorite")),
@@ -1427,6 +1438,8 @@ where
         let active_theme_label = current_theme().label();
         let right_spans: Vec<Span<'static>> = if area.width >= 100 {
             vec![
+                Span::styled(" S ", Style::default().fg(t.status_success).bg(chip_bg).bold()),
+                Span::styled(format!(" {}  ", tr("Stats", "Stats")), Style::default().fg(t.text_muted).bg(bar_bg)),
                 Span::styled(" c ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
                 Span::styled(format!(" {}  ", tr("Ajustes", "Settings")), Style::default().fg(t.text_muted).bg(bar_bg)),
                 Span::styled(" C ", Style::default().fg(t.accent_highlight).bg(chip_bg).bold()),
@@ -1442,6 +1455,8 @@ where
             ]
         } else {
             vec![
+                Span::styled(" S ", Style::default().fg(t.status_success).bg(chip_bg).bold()),
+                Span::styled(" ", Style::default().bg(bar_bg)),
                 Span::styled(" c ", Style::default().fg(t.accent_primary).bg(chip_bg).bold()),
                 Span::styled(" ", Style::default().bg(bar_bg)),
                 Span::styled(" C ", Style::default().fg(t.accent_highlight).bg(chip_bg).bold()),
@@ -1551,6 +1566,7 @@ where
             || self.is_help_modal_open
             || self.is_settings_modal_open
             || self.is_cloud_modal_open
+            || self.is_stats_modal_open
     }
 
     /// Returns `true` when any global modal or page-level popup overlay is currently open.
@@ -1652,6 +1668,14 @@ where
                     | KeyCode::Esc
             ) {
                 self.is_help_modal_open = false;
+            }
+            return;
+        }
+
+        if self.is_stats_modal_open {
+            if matches!(key_event.code, KeyCode::Char('S') | KeyCode::F(7) | KeyCode::Char('q') | KeyCode::Char('Q') | KeyCode::Esc)
+            {
+                self.is_stats_modal_open = false;
             }
             return;
         }
@@ -1935,6 +1959,16 @@ where
             && matches!(key_event.code, KeyCode::Char('C') | KeyCode::F(6))
         {
             self.open_cloud_modal();
+            return;
+        }
+
+        if !is_typing
+            && !self.search_page.is_filter_open()
+            && self.current_tab != SelectedPage::ReaderTab
+            && matches!(key_event.code, KeyCode::Char('S') | KeyCode::F(7))
+        {
+            self.stats_state = Some(ReadingStatsModalState::load_current());
+            self.is_stats_modal_open = true;
             return;
         }
 

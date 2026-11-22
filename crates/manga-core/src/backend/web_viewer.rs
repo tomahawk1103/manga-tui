@@ -6,7 +6,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, RwLock};
 
-use crate::backend::database::{ChapterToSaveHistory, Database, MangaReadingHistorySave};
+use crate::backend::database::{Bookmark, ChapterToBookmark, ChapterToSaveHistory, Database, MangaReadingHistorySave};
 use crate::backend::error_log::{ErrorType, write_to_error_log};
 use crate::backend::manga_provider::{ChapterReader, ChapterToRead, ListOfChapters, MangaProviders};
 use crate::backend::offline::LocalChapterSource;
@@ -130,6 +130,7 @@ async fn handle_connection(
     match path {
         "/" | "/index.html" => {
             let session = state.read().await.clone();
+            save_chapter_read_in_db(&session, &session.chapter);
             let prev_chapter = session
                 .list_of_chapters
                 .get_previous_chapter(session.chapter.volume_number.as_deref(), session.chapter.number);
@@ -148,10 +149,13 @@ async fn handle_connection(
             .await?;
         },
         "/navigate" => {
+            let requested_id = query.split('&').find_map(|pair| pair.strip_prefix("id=")).map(percent_decode_query_param);
             let dir = query.split('&').find_map(|pair| pair.strip_prefix("dir=")).unwrap_or("next");
 
             let current_session = state.read().await.clone();
-            let target_chapter = if dir == "prev" {
+            let target_chapter = if let Some(target_id) = requested_id {
+                find_chapter_reader_by_id(&current_session.list_of_chapters, &target_id)
+            } else if dir == "prev" {
                 current_session
                     .list_of_chapters
                     .get_previous_chapter(current_session.chapter.volume_number.as_deref(), current_session.chapter.number)
@@ -178,6 +182,22 @@ async fn handle_connection(
                 "HTTP/1.1 302 Found\r\nLocation: /\r\nCache-Control: no-store\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
             stream.write_all(redirect.as_bytes()).await?;
             stream.flush().await?;
+        },
+        "/progress" => {
+            let page_idx = query
+                .split('&')
+                .find_map(|pair| pair.strip_prefix("page="))
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0);
+
+            {
+                let mut write_guard = state.write().await;
+                write_guard.chapter.num_page_bookmarked = Some(page_idx);
+                save_chapter_progress_in_db(&write_guard, page_idx);
+            }
+
+            let body = format!(r#"{{"ok":true,"page":{page_idx}}}"#);
+            write_simple_response(&mut stream, "200 OK", "application/json", body.as_bytes()).await?;
         },
         p if p.starts_with("/page/") => {
             let idx_str = p.trim_start_matches("/page/").trim_matches('/');
@@ -294,6 +314,33 @@ async fn resolve_chapter(session: &WebViewerSession, target: &ChapterReader) -> 
     }
 }
 
+fn percent_decode_query_param(raw: &str) -> String {
+    let mut bytes = Vec::with_capacity(raw.len());
+    let src = raw.as_bytes();
+    let mut i = 0;
+    while i < src.len() {
+        if src[i] == b'%'
+            && i + 2 < src.len()
+            && let Ok(hex_str) = std::str::from_utf8(&src[i + 1..i + 3])
+            && let Ok(val) = u8::from_str_radix(hex_str, 16)
+        {
+            bytes.push(val);
+            i += 3;
+            continue;
+        } else if src[i] == b'+' {
+            bytes.push(b' ');
+        } else {
+            bytes.push(src[i]);
+        }
+        i += 1;
+    }
+    String::from_utf8_lossy(&bytes).into_owned()
+}
+
+fn find_chapter_reader_by_id(list: &ListOfChapters, target_id: &str) -> Option<ChapterReader> {
+    list.find_chapter_by_id(target_id)
+}
+
 fn save_chapter_read_in_db(session: &WebViewerSession, chapter: &ChapterToRead) {
     if let Ok(conn) = Database::get_connection() {
         let database = Database::new(&conn);
@@ -306,6 +353,23 @@ fn save_chapter_read_in_db(session: &WebViewerSession, chapter: &ChapterToRead) 
                 title: &chapter.title,
                 translated_language: chapter.language.as_iso_code(),
             },
+            provider: session.provider,
+        });
+    }
+}
+
+fn save_chapter_progress_in_db(session: &WebViewerSession, page_idx: u32) {
+    save_chapter_read_in_db(session, &session.chapter);
+    if let Ok(conn) = Database::get_connection() {
+        let mut database = Database::new(&conn);
+        let _ = database.bookmark(ChapterToBookmark {
+            chapter_id: &session.chapter.id,
+            manga_id: &session.manga_id,
+            chapter_title: &session.chapter.title,
+            manga_title: &session.manga_title,
+            manga_cover_url: session.manga_cover_url.as_deref(),
+            translated_language: session.chapter.language,
+            page_number: Some(page_idx),
             provider: session.provider,
         });
     }
@@ -405,6 +469,32 @@ pub fn render_viewer_html(
 
     let page_count = session.chapter.pages_url.len();
     let chapter_cache_buster = escape_html(&session.chapter.id);
+    let initial_bookmarked_page = session.chapter.num_page_bookmarked.unwrap_or(0);
+
+    let mut chapter_options = String::new();
+    for vol in session.list_of_chapters.volumes.as_slice() {
+        for ch in vol.chapters.as_slice() {
+            let selected = if ch.id == session.chapter.id { " selected" } else { "" };
+            let ch_id_escaped = escape_html(&ch.id);
+            let ch_num_escaped = escape_html(&ch.number);
+            let vol_prefix = if vol.volume.trim().is_empty() || vol.volume.eq_ignore_ascii_case("none") {
+                String::new()
+            } else {
+                format!("Vol. {} · ", escape_html(&vol.volume))
+            };
+            let ch_label =
+                if es { format!("{vol_prefix}Cap. {ch_num_escaped}") } else { format!("{vol_prefix}Ch. {ch_num_escaped}") };
+            chapter_options.push_str(&format!(r#"<option value="{ch_id_escaped}"{selected}>{ch_label}</option>"#));
+        }
+    }
+    let chapter_select_html = if chapter_options.is_empty() {
+        String::new()
+    } else {
+        format!(
+            r#"<select id="chapter-select" class="ctrl-select" onchange="jumpToChapter(this.value)" title="{}">{chapter_options}</select>"#,
+            if es { "Cambiar de capítulo" } else { "Switch chapter" }
+        )
+    };
 
     let mut page_options = String::new();
     let mut pages_html = String::new();
@@ -444,14 +534,23 @@ pub fn render_viewer_html(
     let fit_orig_label = if es { "Máx. Res (100%)" } else { "Max Res (100%)" };
     let fit_wide_label = if es { "Ancho (1200px)" } else { "Wide (1200px)" };
     let fit_std_label = if es { "Estándar (900px)" } else { "Standard (900px)" };
-    let gap_label = if es { "Cascada" } else { "Seamless" };
+    let gap_label = if es { "Sin Bordes" } else { "Seamless" };
     let fullscreen_label = if es { "Pantalla completa" } else { "Fullscreen" };
+    let mode_cascade_label = if es { "📜 Cascada" } else { "📜 Cascade" };
+    let mode_double_rtl_label = if es { "📖 Doble (Manga RTL)" } else { "📖 Double (Manga RTL)" };
+    let mode_double_ltr_label = if es { "📖 Doble (LTR)" } else { "📖 Double (LTR)" };
+    let mode_single_label = if es { "📄 Página Única" } else { "📄 Single Page" };
+    let sync_badge_initial = if es {
+        format!("🔖 Pág. {} guardada", initial_bookmarked_page + 1)
+    } else {
+        format!("🔖 Saved pg. {}", initial_bookmarked_page + 1)
+    };
     let end_title = if es { format!("Has completado el {chapter_title}") } else { format!("Finished reading {chapter_title}") };
     let back_top_label = if es { "↑ Volver arriba" } else { "↑ Back to top" };
     let shortcuts_hint = if es {
-        "Atajos: [j/k] Scroll • [a/d] Pág. Ant/Sig • [+/-] Zoom • [0] Máx. Resolución • [m] Cascada/Bordes • [f] Pantalla Completa • [b/w] Cap. Ant/Sig"
+        "Atajos: [j/k] Scroll • [a/d] Pág. Ant/Sig • [v] Modo Cascada/Doble/Única • [+/-] Zoom • [0] Máx. Res • [m] Bordes • [f] Pantalla Completa • [b/w] Cap. Ant/Sig"
     } else {
-        "Shortcuts: [j/k] Scroll • [a/d] Prev/Next Page • [+/-] Zoom • [0] Max Resolution • [m] Seamless/Gaps • [f] Fullscreen • [b/w] Prev/Next Chapter"
+        "Shortcuts: [j/k] Scroll • [a/d] Prev/Next Page • [v] View Mode (Cascade/Double/Single) • [+/-] Zoom • [0] Max Res • [m] Seamless/Gaps • [f] Fullscreen • [b/w] Prev/Next Chapter"
     };
 
     let prev_btn_top = match prev_chapter {
@@ -628,6 +727,50 @@ pub fn render_viewer_html(
             padding-bottom: 60px;
             gap: var(--page-gap);
         }}
+        body.mode-double-rtl main.reader-stream,
+        body.mode-double-ltr main.reader-stream {{
+            display: grid;
+            grid-template-columns: repeat(2, minmax(0, 1fr));
+            max-width: 98vw;
+            margin: 0 auto;
+            align-items: start;
+            justify-items: center;
+            gap: 12px 6px;
+        }}
+        body.mode-double-rtl main.reader-stream {{
+            direction: rtl;
+        }}
+        body.mode-double-rtl .page-container {{
+            direction: ltr;
+        }}
+        body.mode-double-rtl img.manga-page,
+        body.mode-double-ltr img.manga-page {{
+            max-width: 100%;
+            max-height: 92vh;
+            width: auto;
+            object-fit: contain;
+        }}
+        body.mode-double-rtl .page-container.landscape-spread,
+        body.mode-double-ltr .page-container.landscape-spread {{
+            grid-column: 1 / -1;
+        }}
+        body.mode-single .page-container {{
+            display: none;
+        }}
+        body.mode-single .page-container.active-single-page {{
+            display: flex;
+            min-height: calc(100vh - 130px);
+        }}
+        body.mode-single img.manga-page {{
+            max-height: 90vh;
+            width: auto;
+            object-fit: contain;
+        }}
+        .badge.sync-badge {{
+            background: rgba(16, 185, 129, 0.16);
+            color: #34d399;
+            border-color: rgba(16, 185, 129, 0.35);
+        }}
         .page-container {{
             width: 100%;
             display: flex;
@@ -717,6 +860,7 @@ pub fn render_viewer_html(
         <div class="hud-left">
             <span class="badge">{provider_badge}</span>
             {local_badge_html}
+            <span class="badge sync-badge" id="sync-badge">{sync_badge_initial}</span>
             <div class="manga-info">
                 <span class="manga-title" title="{manga_title}">{manga_title}</span>
                 <span class="chapter-subtitle" title="{chapter_title}">{chapter_title}</span>
@@ -724,8 +868,15 @@ pub fn render_viewer_html(
         </div>
         <div class="hud-controls">
             {prev_btn_top}
+            {chapter_select_html}
             <select id="page-select" class="ctrl-select" onchange="jumpToPage(this.value)">
                 {page_options}
+            </select>
+            <select id="view-mode-select" class="ctrl-select" onchange="setViewMode(this.value)">
+                <option value="cascade">{mode_cascade_label}</option>
+                <option value="double-rtl">{mode_double_rtl_label}</option>
+                <option value="double-ltr">{mode_double_ltr_label}</option>
+                <option value="single">{mode_single_label}</option>
             </select>
             <button class="ctrl-btn active" id="fit-orig" onclick="setFitMode('100%', 'fit-orig')">{fit_orig_label}</button>
             <button class="ctrl-btn" id="fit-wide" onclick="setFitMode('1200px', 'fit-wide')">{fit_wide_label}</button>
@@ -753,12 +904,63 @@ pub fn render_viewer_html(
     </footer>
 
     <script>
-        let currentPage = 0;
+        let currentPage = {initial_bookmarked_page};
         const totalPages = {page_count};
         let zoomPercent = 100;
         let seamlessGap = true;
+        let viewMode = 'cascade';
         let lastScrollY = window.scrollY;
+        let progressSaveTimer = null;
+        let lastSavedPage = -1;
+        const isEs = {is_es_js};
         const retryCounts = {{}};
+
+        function scheduleSaveProgress(pageIdx) {{
+            if (pageIdx === lastSavedPage) return;
+            if (progressSaveTimer) clearTimeout(progressSaveTimer);
+            progressSaveTimer = setTimeout(() => {{
+                lastSavedPage = pageIdx;
+                fetch('/progress?page=' + pageIdx, {{ method: 'POST', keepalive: true }})
+                    .then(() => {{
+                        const badge = document.getElementById('sync-badge');
+                        if (badge) {{
+                            badge.textContent = isEs
+                                ? ('🔖 Pág. ' + (pageIdx + 1) + ' guardada')
+                                : ('🔖 Saved pg. ' + (pageIdx + 1));
+                        }}
+                    }})
+                    .catch(() => {{}});
+            }}, 350);
+        }}
+
+        function jumpToChapter(chapterId) {{
+            if (!chapterId) return;
+            window.location.href = '/navigate?id=' + encodeURIComponent(chapterId);
+        }}
+
+        function setViewMode(mode) {{
+            viewMode = mode;
+            document.body.classList.remove('mode-double-rtl', 'mode-double-ltr', 'mode-single');
+            if (mode === 'double-rtl') document.body.classList.add('mode-double-rtl');
+            else if (mode === 'double-ltr') document.body.classList.add('mode-double-ltr');
+            else if (mode === 'single') document.body.classList.add('mode-single');
+            const sel = document.getElementById('view-mode-select');
+            if (sel) sel.value = mode;
+            updateSinglePageVisibility();
+        }}
+
+        function cycleViewMode() {{
+            const modes = ['cascade', 'double-rtl', 'double-ltr', 'single'];
+            const nextIdx = (modes.indexOf(viewMode) + 1) % modes.length;
+            setViewMode(modes[nextIdx]);
+        }}
+
+        function updateSinglePageVisibility() {{
+            document.querySelectorAll('.page-container').forEach(el => {{
+                const idx = parseInt(el.getAttribute('data-index'), 10);
+                el.classList.toggle('active-single-page', idx === currentPage);
+            }});
+        }}
 
         function onPageLoaded(idx) {{
             const skel = document.getElementById('skel-' + idx);
@@ -766,7 +968,13 @@ pub fn render_viewer_html(
             const err = document.getElementById('err-' + idx);
             if (err) err.style.display = 'none';
             const img = document.getElementById('img-' + idx);
-            if (img) img.style.display = 'block';
+            if (img) {{
+                img.style.display = 'block';
+                const container = document.getElementById('page-' + idx);
+                if (container && img.naturalWidth > img.naturalHeight * 1.15) {{
+                    container.classList.add('landscape-spread');
+                }}
+            }}
         }}
 
         function onPageError(idx) {{
@@ -796,10 +1004,16 @@ pub fn render_viewer_html(
         }}
 
         function jumpToPage(idx) {{
-            const el = document.getElementById('page-' + idx);
+            const parsed = parseInt(idx, 10);
+            if (isNaN(parsed)) return;
+            currentPage = Math.max(0, Math.min(totalPages - 1, parsed));
+            updateSinglePageVisibility();
+            const sel = document.getElementById('page-select');
+            if (sel) sel.value = String(currentPage);
+            scheduleSaveProgress(currentPage);
+            const el = document.getElementById('page-' + currentPage);
             if (el) {{
                 el.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
-                currentPage = parseInt(idx, 10);
             }}
         }}
 
@@ -861,6 +1075,7 @@ pub fn render_viewer_html(
         }}, {{ passive: true }});
 
         const observer = new IntersectionObserver((entries) => {{
+            if (viewMode === 'single') return;
             entries.forEach(entry => {{
                 if (entry.isIntersecting) {{
                     const idx = parseInt(entry.target.getAttribute('data-index'), 10);
@@ -868,12 +1083,17 @@ pub fn render_viewer_html(
                         currentPage = idx;
                         const sel = document.getElementById('page-select');
                         if (sel) sel.value = String(idx);
+                        scheduleSaveProgress(idx);
                     }}
                 }}
             }});
         }}, {{ rootMargin: '-35% 0px -55% 0px' }});
 
         document.querySelectorAll('.page-container').forEach(el => observer.observe(el));
+        updateSinglePageVisibility();
+        if (currentPage > 0) {{
+            setTimeout(() => jumpToPage(currentPage), 120);
+        }}
 
         window.addEventListener('keydown', (e) => {{
             if (e.target && (e.target.tagName === 'SELECT' || e.target.tagName === 'INPUT')) return;
@@ -891,6 +1111,10 @@ pub fn render_viewer_html(
                 case 'a':
                 case 'ArrowLeft':
                     if (currentPage > 0) jumpToPage(currentPage - 1);
+                    break;
+                case 'v':
+                case 'V':
+                    cycleViewMode();
                     break;
                 case 'g':
                     window.scrollTo({{ top: 0, behavior: 'smooth' }});
@@ -930,7 +1154,8 @@ pub fn render_viewer_html(
     </script>
 </body>
 </html>"#,
-        lang = if es { "es" } else { "en" }
+        lang = if es { "es" } else { "en" },
+        is_es_js = if es { "true" } else { "false" }
     )
 }
 
@@ -1001,6 +1226,9 @@ mod tests {
         assert!(html.contains("/page/1?ch=cap-10"));
         assert!(html.contains("/navigate?dir=prev"));
         assert!(html.contains("/navigate?dir=next"));
+        assert!(html.contains(r#"id="chapter-select""#));
+        assert!(html.contains(r#"id="view-mode-select""#));
+        assert!(html.contains("double-rtl"));
     }
 
     #[tokio::test]

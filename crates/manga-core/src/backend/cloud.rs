@@ -98,6 +98,15 @@ pub struct SyncSearchRecord {
     pub searched_at: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SyncCollectionRecord {
+    pub manga_id: String,
+    pub provider: String,
+    pub title: String,
+    pub shelf_name: String,
+    pub created_at: Option<String>,
+}
+
 /// Cross-platform library snapshot stored as `library_sync.json` in the cloud.
 /// Designed so both desktop (`manga-tui`) and future mobile clients (Android / iOS)
 /// can perform lossless bidirectional merges without SQLite schema coupling.
@@ -111,6 +120,8 @@ pub struct LibrarySyncSnapshot {
     pub favorites: Vec<SyncFavoriteRecord>,
     pub dismissed_notifications: Vec<SyncDismissedRecord>,
     pub search_history: Vec<SyncSearchRecord>,
+    #[serde(default)]
+    pub collections: Vec<SyncCollectionRecord>,
 }
 
 impl Default for LibrarySyncSnapshot {
@@ -124,6 +135,7 @@ impl Default for LibrarySyncSnapshot {
             favorites: Vec::new(),
             dismissed_notifications: Vec::new(),
             search_history: Vec::new(),
+            collections: Vec::new(),
         }
     }
 }
@@ -329,6 +341,31 @@ pub fn merge_library_snapshots(local: &LibrarySyncSnapshot, remote: &LibrarySync
     let mut search_history: Vec<SyncSearchRecord> = search_map.into_values().collect();
     search_history.sort_by_key(|a| std::cmp::Reverse(a.searched_at));
 
+    let mut collections_map: BTreeMap<(String, String), SyncCollectionRecord> = BTreeMap::new();
+    for col in local.collections.iter().chain(remote.collections.iter()) {
+        if col.shelf_name.trim().is_empty() {
+            continue;
+        }
+        let key = (col.manga_id.clone(), col.provider.clone());
+        collections_map
+            .entry(key)
+            .and_modify(|existing| {
+                let remote_is_newer = match (&existing.created_at, &col.created_at) {
+                    (Some(a), Some(b)) => b >= a,
+                    (None, Some(_)) => true,
+                    _ => false,
+                };
+                if remote_is_newer {
+                    existing.shelf_name = col.shelf_name.clone();
+                    existing.created_at = col.created_at.clone();
+                }
+                if existing.title.trim().is_empty() && !col.title.trim().is_empty() {
+                    existing.title = col.title.clone();
+                }
+            })
+            .or_insert_with(|| col.clone());
+    }
+
     LibrarySyncSnapshot {
         schema_version: LIBRARY_SYNC_SCHEMA_VERSION,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -338,6 +375,7 @@ pub fn merge_library_snapshots(local: &LibrarySyncSnapshot, remote: &LibrarySync
         favorites: favorites_map.into_values().collect(),
         dismissed_notifications,
         search_history,
+        collections: collections_map.into_values().collect(),
     }
 }
 
@@ -1858,6 +1896,7 @@ mod tests {
                 query: "one piece".to_string(),
                 searched_at: 100,
             }],
+            collections: vec![],
         };
 
         // Remote has newer reading timestamp on m1, read c2, bookmarked c2 on page 12, and added m2
@@ -1912,6 +1951,7 @@ mod tests {
                 query: "One Piece".to_string(),
                 searched_at: 250,
             }],
+            collections: vec![],
         };
 
         let merged = merge_library_snapshots(&local, &remote);
@@ -2105,6 +2145,7 @@ mod tests {
             favorites: vec![],
             dismissed_notifications: vec![],
             search_history: vec![],
+            collections: vec![],
         };
         fs::write(cloud_dir.join(CLOUD_LIBRARY_JSON_NAME), serde_json::to_vec_pretty(&remote_snap).unwrap()).unwrap();
         let cloud_remote_manga_dir = cloud_dir.join(CLOUD_DOWNLOADS_FOLDER_NAME).join("Sakamoto Days");
