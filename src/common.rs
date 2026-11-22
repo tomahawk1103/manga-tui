@@ -97,11 +97,20 @@ pub fn render_stateful_image_cleared(
         canvas.contains(Position::new(draw_area.x, draw_area.y)) && buf[(draw_area.x, draw_area.y)].symbol().starts_with('\x1b');
 
     if is_graphical_escape {
-        let mut prefix = String::with_capacity((canvas.height as usize) * (canvas.width as usize + 12) + 24);
+        let reaches_right_edge = canvas.right() >= buf.area.right();
+        let mut prefix = String::with_capacity(
+            (canvas.height as usize) * (if reaches_right_edge { 16 } else { canvas.width as usize + 12 }) + 24,
+        );
         prefix.push_str("\x1b[0m");
-        let blanks = " ".repeat(canvas.width as usize);
-        for row in canvas.top()..canvas.bottom() {
-            let _ = write!(prefix, "\x1b[{};{}H{blanks}", row + 1, canvas.x + 1);
+        if reaches_right_edge {
+            for row in canvas.top()..canvas.bottom() {
+                let _ = write!(prefix, "\x1b[{};{}H\x1b[K", row + 1, canvas.x + 1);
+            }
+        } else {
+            let blanks = " ".repeat(canvas.width as usize);
+            for row in canvas.top()..canvas.bottom() {
+                let _ = write!(prefix, "\x1b[{};{}H{blanks}", row + 1, canvas.x + 1);
+            }
         }
         let _ = write!(prefix, "\x1b[{};{}H", draw_area.y + 1, draw_area.x + 1);
         let combined = format!("{prefix}{}", buf[(draw_area.x, draw_area.y)].symbol());
@@ -203,5 +212,26 @@ mod tests {
         assert!(!buf[(draw_area.x, draw_area.y)].skip);
         assert!(buf[(canvas.x, canvas.y)].skip);
         assert!(buf[(canvas.right() - 1, canvas.bottom() - 1)].skip);
+    }
+
+    #[test]
+    fn render_stateful_image_cleared_uses_el_on_right_edge_canvas_to_avoid_bottom_right_wrap() {
+        let mut picker = Picker::new((9, 18));
+        picker.protocol_type = ProtocolType::Sixel;
+        let mut proto = picker.new_resize_protocol(DynamicImage::new_rgb8(400, 600));
+
+        let full_area = Rect::new(0, 0, 40, 20);
+        let draw_area = Rect::new(8, 0, 24, 19);
+        let mut buf = Buffer::empty(full_area);
+
+        render_stateful_image_cleared(&mut proto, full_area, draw_area, &mut buf, Color::Rgb(1, 1, 1));
+
+        let sym = buf[(draw_area.x, draw_area.y)].symbol();
+        assert!(sym.starts_with("\x1b[0m\x1b[1;1H\x1b[K"), "Expected CSI EL row clear prefix, got: {sym:?}");
+        assert!(sym.contains("\x1b[20;1H\x1b[K"), "Final row should use CSI EL instead of trailing spaces");
+        assert!(sym.contains("\x1b[1;9H"), "Expected cursor reposition to draw_area origin");
+        assert!(!sym.contains(&" ".repeat(40)), "Full-width canvas must not emit trailing spaces into the right edge");
+        assert!(!buf[(draw_area.x, draw_area.y)].skip);
+        assert!(buf[(full_area.right() - 1, full_area.bottom() - 1)].skip);
     }
 }

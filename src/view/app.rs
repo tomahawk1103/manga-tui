@@ -1411,6 +1411,7 @@ where
                     ("g/G", tr("Inicio/Fin", "Start/End")),
                     ("w/b", tr("Cap.", "Chap.")),
                     ("v", tr("Visor Web", "Web HD")),
+                    ("z/f", tr("Sin HUD", "Zen")),
                     ("Esc/q", tr("Volver", "Back")),
                 ],
             }

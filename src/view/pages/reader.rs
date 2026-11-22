@@ -51,6 +51,7 @@ pub enum MangaReaderActions {
     GoToFirstPage,
     GoToLastPage,
     OpenInWebViewer,
+    ToggleZenMode,
 }
 
 #[derive(Debug, PartialEq, Eq, Default)]
@@ -180,6 +181,7 @@ where
     pub offline_sources: HashMap<String, LocalChapterSource>,
     pub is_offline_mode: bool,
     pub needs_terminal_clear: bool,
+    pub zen_mode: bool,
     margin_clear_generation: u8,
     left_panel_area: Rect,
     center_image_area: Rect,
@@ -230,6 +232,52 @@ fn centered_image_rect(area: Rect, img_w: u32, img_h: u32, font_w: u16, font_h: 
     )
 }
 
+/// Returns how many terminal rows a Sixel image of `rows` rows will actually span after
+/// rounding its pixel height up to the nearest 6-pixel Sixel band.
+fn sixel_occupied_rows(rows: u16, font_h: u16) -> u16 {
+    if rows == 0 || font_h == 0 {
+        return 0;
+    }
+    let px_h = (rows as u32) * (font_h as u32);
+    let rounded_px_h = px_h.div_ceil(6) * 6;
+    rounded_px_h.div_ceil(font_h as u32).min(u16::MAX as u32) as u16
+}
+
+/// Clamps `canvas` vertically so a Sixel image inside it never reaches `frame_area.bottom() - 1`
+/// even after 6-pixel band rounding, preventing bottom-row terminal scrolling.
+fn sixel_safe_image_canvas(canvas: Rect, frame_area: Rect, font_h: u16) -> Rect {
+    if canvas.width == 0 || canvas.height == 0 || frame_area.height <= 1 {
+        return canvas;
+    }
+    let safe_bottom = frame_area.bottom().saturating_sub(1);
+    if canvas.y >= safe_bottom {
+        return Rect::new(canvas.x, canvas.y, canvas.width, 0);
+    }
+    let mut max_h = canvas.height.min(safe_bottom.saturating_sub(canvas.y));
+    while max_h > 1 && canvas.y.saturating_add(sixel_occupied_rows(max_h, font_h)) > safe_bottom {
+        max_h -= 1;
+    }
+    Rect::new(canvas.x, canvas.y, canvas.width, max_h)
+}
+
+/// Shifts or shrinks `draw_area` so its Sixel band-rounded bottom stays strictly above the final terminal row.
+fn clamp_sixel_draw_area(mut draw_area: Rect, frame_area: Rect, font_h: u16) -> Rect {
+    if draw_area.width == 0 || draw_area.height == 0 || frame_area.height <= 1 {
+        return draw_area;
+    }
+    let safe_bottom = frame_area.bottom().saturating_sub(1);
+    while draw_area.y.saturating_add(sixel_occupied_rows(draw_area.height, font_h)) > safe_bottom {
+        if draw_area.y > frame_area.y {
+            draw_area.y -= 1;
+        } else if draw_area.height > 1 {
+            draw_area.height -= 1;
+        } else {
+            break;
+        }
+    }
+    draw_area
+}
+
 impl<T, S> Component for MangaReader<T, S>
 where
     T: ReaderPageProvider,
@@ -244,15 +292,32 @@ where
         let t = theme();
         let buf = frame.buffer_mut();
 
-        let [top_bar_area, body_area, bottom_bar_area] =
-            Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)]).areas(area);
-
-        self.render_reader_top_bar(top_bar_area, buf);
+        if let Some(bm) = self.page_list_state.page_bookmarked
+            && self.page_list_state.list_state.selected.is_none()
+        {
+            let total_pages = self.pages_list.pages.len().max(self.pages.len());
+            let target = if total_pages > 0 { bm.min(total_pages - 1) } else { bm };
+            self.page_list_state.list_state.select(Some(target));
+        }
 
         let index = self.current_page_index();
         if let Some((raw_w, raw_h)) = self.pages.get(index).and_then(|p| p.dimensions) {
             self.resize_based_on_image_size(raw_w, raw_h);
         }
+
+        let margin_fg = if self.margin_clear_generation & 1 == 0 { Color::Rgb(1, 1, 1) } else { Color::Rgb(2, 2, 2) };
+
+        if self.zen_mode {
+            self.left_panel_area = Rect::default();
+            self.center_image_area = area;
+            self.render_page_or_status(area, area, area, buf, margin_fg);
+            return;
+        }
+
+        let [top_bar_area, body_area, bottom_bar_area] =
+            Layout::vertical([Constraint::Length(1), Constraint::Min(3), Constraint::Length(1)]).areas(area);
+
+        self.render_reader_top_bar(top_bar_area, buf);
 
         let left_w = if body_area.width >= 120 {
             22
@@ -289,89 +354,15 @@ where
             ))
             .render(left, buf);
 
-        let margin_fg = if self.margin_clear_generation & 1 == 0 { Color::Rgb(1, 1, 1) } else { Color::Rgb(2, 2, 2) };
-
-        let page_loaded = self.pages.get(index).map(|page| page.is_loaded()).unwrap_or(false);
-        let show_reload = if page_loaded {
-            let font_size = self.picker.font_size;
-            let image_canvas = if center.width > 2 && center.height > 2 {
-                center.inner(Margin {
-                    horizontal: 1,
-                    vertical: 1,
-                })
-            } else {
-                center
-            };
-            let page = &mut self.pages[index];
-            let (raw_w, raw_h) = page.dimensions.unwrap_or((0, 0));
-            let display_h = if page.is_tall_strip() { page.viewport_height() } else { raw_h };
-            let draw_area = centered_image_rect(image_canvas, raw_w, display_h, font_size.0, font_size.1);
-            if let Some(protocol) = page.get_or_create_protocol(&mut self.picker) {
-                crate::common::render_stateful_image_cleared(protocol, center, draw_area, buf, margin_fg);
-            }
-
-            false
+        let image_canvas = if center.width > 2 && center.height > 2 {
+            center.inner(Margin {
+                horizontal: 1,
+                vertical: 1,
+            })
         } else {
-            for y in center.top()..center.bottom() {
-                for x in center.left()..center.right() {
-                    buf[(x, y)].set_symbol(" ").set_fg(margin_fg);
-                }
-            }
-            let show_failed = self
-                .pages_list
-                .pages
-                .get(index)
-                .map(|page| page.state == PageItemState::FailedLoad)
-                .unwrap_or(false);
-
-            let card_w = (center.width.saturating_mul(60) / 100).clamp(24.min(center.width), 52.min(center.width));
-            let card_h = 5.min(center.height);
-            let card_area = Rect::new(
-                center.x + center.width.saturating_sub(card_w) / 2,
-                center.y + center.height.saturating_sub(card_h) / 2,
-                card_w,
-                card_h,
-            );
-
-            if show_failed {
-                let block = t
-                    .rounded_accent_block()
-                    .border_style(Style::default().fg(t.status_error))
-                    .title(Span::styled(
-                        format!(" ⚠ {} ", tr("Error de carga", "Load error")),
-                        Style::default().fg(t.status_error).bold(),
-                    ));
-                let inner = block.inner(card_area);
-                block.render(card_area, buf);
-                Paragraph::new(Line::from(vec![
-                    Span::styled(
-                        tr("No se pudo cargar la página. ", "Failed to load page. "),
-                        Style::default().fg(t.text_secondary),
-                    ),
-                    t.highlight_key_chip("r"),
-                    Span::styled(format!(" {}", tr("Reintentar", "Reload")), Style::default().fg(t.accent_highlight)),
-                ]))
-                .alignment(Alignment::Center)
-                .wrap(Wrap { trim: true })
-                .render(inner, buf);
-            } else {
-                let block = t.rounded_block().title(Span::styled(
-                    format!(" ⏳ {} ", tr("Cargando página", "Loading page")),
-                    Style::default().fg(t.accent_primary).bold(),
-                ));
-                let inner = block.inner(card_area);
-                block.render(card_area, buf);
-                Paragraph::new(Span::styled(
-                    format!("{} {current_page_num}/{total_pages}...", tr("Cargando pág.", "Loading page")),
-                    Style::default().fg(t.text_muted),
-                ))
-                .alignment(Alignment::Center)
-                .wrap(Wrap { trim: true })
-                .render(inner, buf);
-            }
-
-            show_failed
+            center
         };
+        let show_reload = self.render_page_or_status(center, image_canvas, area, buf, margin_fg);
 
         self.render_page_list(left, buf);
         let has_right_panel = right.is_some();
@@ -393,6 +384,7 @@ where
             MangaReaderActions::GoToFirstPage => self.go_to_first_page(),
             MangaReaderActions::GoToLastPage => self.go_to_last_page(),
             MangaReaderActions::OpenInWebViewer => self.open_in_web_viewer(),
+            MangaReaderActions::ToggleZenMode => self.toggle_zen_mode(),
         }
     }
 
@@ -486,6 +478,7 @@ where
             offline_sources: HashMap::new(),
             is_offline_mode: false,
             needs_terminal_clear: false,
+            zen_mode: false,
             margin_clear_generation: 0,
             left_panel_area: Rect::default(),
             center_image_area: Rect::default(),
@@ -567,6 +560,104 @@ where
         self
     }
 
+    fn toggle_zen_mode(&mut self) {
+        self.zen_mode = !self.zen_mode;
+        self.needs_terminal_clear = true;
+        self.margin_clear_generation = self.margin_clear_generation.wrapping_add(1);
+    }
+
+    fn render_page_or_status(
+        &mut self,
+        canvas: Rect,
+        image_canvas: Rect,
+        frame_area: Rect,
+        buf: &mut Buffer,
+        margin_fg: Color,
+    ) -> bool {
+        let t = theme();
+        let index = self.current_page_index();
+        let total_pages = self.pages_list.pages.len().max(self.pages.len());
+        let current_page_num = if total_pages == 0 { 0 } else { (index + 1).min(total_pages) };
+        let page_loaded = self.pages.get(index).map(|page| page.is_loaded()).unwrap_or(false);
+
+        if page_loaded {
+            let font_size = self.picker.font_size;
+            let is_sixel = self.picker.protocol_type == ProtocolType::Sixel;
+            let safe_canvas = if is_sixel { sixel_safe_image_canvas(image_canvas, frame_area, font_size.1) } else { image_canvas };
+            let page = &mut self.pages[index];
+            let (raw_w, raw_h) = page.dimensions.unwrap_or((0, 0));
+            let display_h = if page.is_tall_strip() { page.viewport_height() } else { raw_h };
+            let mut draw_area = centered_image_rect(safe_canvas, raw_w, display_h, font_size.0, font_size.1);
+            if is_sixel {
+                draw_area = clamp_sixel_draw_area(draw_area, frame_area, font_size.1);
+            }
+            if let Some(protocol) = page.get_or_create_protocol(&mut self.picker) {
+                crate::common::render_stateful_image_cleared(protocol, canvas, draw_area, buf, margin_fg);
+            }
+            false
+        } else {
+            for y in canvas.top()..canvas.bottom() {
+                for x in canvas.left()..canvas.right() {
+                    buf[(x, y)].set_symbol(" ").set_fg(margin_fg);
+                }
+            }
+            let show_failed = self
+                .pages_list
+                .pages
+                .get(index)
+                .map(|page| page.state == PageItemState::FailedLoad)
+                .unwrap_or(false);
+
+            let card_w = (canvas.width.saturating_mul(60) / 100).clamp(24.min(canvas.width), 52.min(canvas.width));
+            let card_h = 5.min(canvas.height);
+            let card_area = Rect::new(
+                canvas.x + canvas.width.saturating_sub(card_w) / 2,
+                canvas.y + canvas.height.saturating_sub(card_h) / 2,
+                card_w,
+                card_h,
+            );
+
+            if show_failed {
+                let block = t
+                    .rounded_accent_block()
+                    .border_style(Style::default().fg(t.status_error))
+                    .title(Span::styled(
+                        format!(" ⚠ {} ", tr("Error de carga", "Load error")),
+                        Style::default().fg(t.status_error).bold(),
+                    ));
+                let inner = block.inner(card_area);
+                block.render(card_area, buf);
+                Paragraph::new(Line::from(vec![
+                    Span::styled(
+                        tr("No se pudo cargar la página. ", "Failed to load page. "),
+                        Style::default().fg(t.text_secondary),
+                    ),
+                    t.highlight_key_chip("r"),
+                    Span::styled(format!(" {}", tr("Reintentar", "Reload")), Style::default().fg(t.accent_highlight)),
+                ]))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true })
+                .render(inner, buf);
+            } else {
+                let block = t.rounded_block().title(Span::styled(
+                    format!(" ⏳ {} ", tr("Cargando página", "Loading page")),
+                    Style::default().fg(t.accent_primary).bold(),
+                ));
+                let inner = block.inner(card_area);
+                block.render(card_area, buf);
+                Paragraph::new(Span::styled(
+                    format!("{} {current_page_num}/{total_pages}...", tr("Cargando pág.", "Loading page")),
+                    Style::default().fg(t.text_muted),
+                ))
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: true })
+                .render(inner, buf);
+            }
+
+            show_failed
+        }
+    }
+
     fn next_page(&mut self) {
         let curr_index = self.current_page_index();
         if let Some(page) = self.pages.get_mut(curr_index) {
@@ -581,10 +672,15 @@ where
             }
         }
         let total = self.pages.len().max(self.pages_list.pages.len());
-        if self.page_list_state.list_state.selected.is_some_and(|i| i + 1 >= total) {
+        if total == 0 {
             return;
         }
-        self.page_list_state.list_state.next();
+        let target = match self.page_list_state.list_state.selected {
+            None => 0,
+            Some(i) if i + 1 < total => i + 1,
+            Some(_) => return,
+        };
+        self.page_list_state.list_state.select(Some(target));
         let new_index = self.current_page_index();
         if new_index != curr_index {
             if let Some(page) = self.pages.get_mut(new_index) {
@@ -606,7 +702,7 @@ where
             }
         }
         if curr_index > 0 {
-            self.page_list_state.list_state.previous();
+            self.page_list_state.list_state.select(Some(curr_index - 1));
             let new_index = self.current_page_index();
             if new_index != curr_index {
                 if let Some(page) = self.pages.get_mut(new_index) {
@@ -752,6 +848,9 @@ where
         self.state = State::SearchingPages;
 
         self.init_fetching_pages();
+        if !self.pages.is_empty() && self.page_list_state.list_state.selected.is_none() {
+            self.page_list_state.list_state.select(Some(0));
+        }
         self.init_save_reading_history();
         self.track_manga_reading_history(self.manga_tracker.clone());
     }
@@ -1166,6 +1265,7 @@ where
         push_chip("j/k", nav_label, false);
         push_chip("w/b", tr("Cap.", "Chap."), false);
         push_chip("v", tr("Visor Web HD", "Web HD"), true);
+        push_chip("z/f", tr("Sin HUD", "Zen"), false);
         push_chip("Esc/q", tr("Volver", "Back"), false);
         push_chip("g/G", tr("Inicio/Fin", "Start/End"), false);
         if show_reload {
@@ -1312,6 +1412,7 @@ where
             shortcut_row("w", tr("Cap. siguiente", "Next chapter")),
             shortcut_row("b", tr("Cap. anterior", "Prev chapter")),
             shortcut_row("v", tr("Visor Web HD", "Web Viewer HD")),
+            shortcut_row("z / f", tr("Zen (sin HUD)", "Zen (no HUD)")),
         ];
 
         if show_reload {
@@ -1396,6 +1497,9 @@ where
             },
             KeyCode::Char('v') => {
                 self.local_action_tx.send(MangaReaderActions::OpenInWebViewer).ok();
+            },
+            KeyCode::Char('z') | KeyCode::Char('f') => {
+                self.local_action_tx.send(MangaReaderActions::ToggleZenMode).ok();
             },
             KeyCode::Char('m') if !self.auto_bookmark => {
                 self.local_action_tx.send(MangaReaderActions::BookMarkCurrentChapter).ok();
@@ -2713,5 +2817,187 @@ mod test {
         reader.initiate_search_previous_chapter();
         let prev_evt = timeout(Duration::from_millis(500), reader.local_event_rx.recv()).await.unwrap().unwrap();
         assert_eq!(prev_evt, MangaReaderEvents::SearchPreviousChapter("c1".to_string()));
+    }
+
+    #[test]
+    fn sixel_safe_canvas_and_draw_area_never_reach_bottom_row_after_band_rounding() {
+        for h in [24u16, 40, 50] {
+            let frame = Rect::new(0, 0, 120, h);
+            let safe_bottom = frame.bottom().saturating_sub(1);
+            let zen_canvas = frame;
+            let normal_canvas = Rect::new(23, 2, 70, h.saturating_sub(4));
+
+            for font_h in [16u16, 18, 20, 22] {
+                let font_w = (font_h / 2).max(1);
+                for canvas in [zen_canvas, normal_canvas] {
+                    let safe = sixel_safe_image_canvas(canvas, frame, font_h);
+                    assert!(
+                        safe.y + sixel_occupied_rows(safe.height, font_h) <= safe_bottom,
+                        "safe canvas overflowed for frame_h={h}, font_h={font_h}: {safe:?}"
+                    );
+
+                    for (img_w, img_h) in [(600u32, 900u32), (800, 800), (1200, 600)] {
+                        let raw_draw = centered_image_rect(safe, img_w, img_h, font_w, font_h);
+                        let clamped = clamp_sixel_draw_area(raw_draw, frame, font_h);
+                        assert!(
+                            clamped.y + sixel_occupied_rows(clamped.height, font_h) <= safe_bottom,
+                            "clamped draw_area overflowed for frame_h={h}, font_h={font_h}, img=({img_w},{img_h}): {clamped:?}"
+                        );
+                    }
+                }
+
+                // Direct clamping of an overflowing draw_area
+                let overflowing_bottom = clamp_sixel_draw_area(Rect::new(0, h - 1, 80, 1), frame, font_h);
+                assert!(overflowing_bottom.y + sixel_occupied_rows(overflowing_bottom.height, font_h) <= safe_bottom);
+
+                let overflowing_full = clamp_sixel_draw_area(Rect::new(0, 0, 80, h), frame, font_h);
+                assert!(overflowing_full.y + sixel_occupied_rows(overflowing_full.height, font_h) <= safe_bottom);
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn zen_mode_toggles_with_z_and_f_hides_all_hud_clears_terminal_and_navigates_pages() {
+        use image::DynamicImage;
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        use crate::backend::manga_provider::MangaPanel;
+
+        let make_chapter = |id: &str| ChapterToRead {
+            id: id.into(),
+            title: "Cap Test".into(),
+            number: 1.0,
+            pages_url: vec![
+                "http://localhost/1".parse().unwrap(),
+                "http://localhost/2".parse().unwrap(),
+                "http://localhost/3".parse().unwrap(),
+            ],
+            ..Default::default()
+        };
+
+        let mut picker = Picker::new((9, 18));
+        picker.protocol_type = ProtocolType::Sixel;
+
+        let mut reader: MangaReader<ReaderPageProvierMock, TrackerTest> =
+            MangaReader::new(make_chapter("c1"), "m1".into(), picker, ReaderPageProvierMock::new().into())
+                .with_manga_title("Shi ni Aruki".into());
+        reader.init_fetching_pages();
+        for idx in 0..3 {
+            reader.load_page(PageData {
+                panel: MangaPanel {
+                    image_decoded: DynamicImage::new_rgb8(600, 900),
+                    dimensions: (600, 900),
+                },
+                index: idx,
+            });
+        }
+
+        let area = Rect::new(0, 0, 140, 40);
+        let mut terminal = Terminal::new(TestBackend::new(140, 40)).unwrap();
+
+        // Normal mode renders full HUD including single-line `z / f` shortcut hint
+        terminal.draw(|f| reader.render(area, f)).unwrap();
+        let normal_text: String = (0..40)
+            .map(|y| {
+                (0..140)
+                    .map(|x| {
+                        let cell = &terminal.backend().buffer()[(x, y)];
+                        if cell.symbol().starts_with('\x1b') { " " } else { cell.symbol() }
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(normal_text.contains("LECTOR") || normal_text.contains("READER"));
+        assert!(normal_text.contains("Páginas") || normal_text.contains("Pages"));
+        assert!(normal_text.contains("ATAJOS") || normal_text.contains("KEYS"));
+        assert!(
+            normal_text
+                .lines()
+                .any(|line| line.contains("z / f") && (line.contains("Zen (sin HUD)") || line.contains("Zen (no HUD)"))),
+            "Controls card should show single-line z / f Zen hint"
+        );
+
+        // Press 'z' -> enters Zen mode and requests terminal clear
+        press_key(&mut reader, KeyCode::Char('z'));
+        let action = reader.local_action_rx.recv().await.unwrap();
+        assert_eq!(action, MangaReaderActions::ToggleZenMode);
+        reader.update(action);
+        assert!(reader.zen_mode);
+        assert!(reader.needs_terminal_clear);
+        reader.needs_terminal_clear = false;
+
+        // Render in Zen mode: zero HUD, full-screen area, CSI EL row clears, safe Sixel bottom
+        terminal
+            .draw(|f| {
+                reader.render(area, f);
+                assert_eq!(reader.left_panel_area, Rect::default());
+                assert_eq!(reader.center_image_area, area);
+
+                let buf = f.buffer_mut();
+                let mut origin_count = 0usize;
+                let mut visible_text = String::new();
+                for y in area.top()..area.bottom() {
+                    for x in area.left()..area.right() {
+                        let cell = &buf[(x, y)];
+                        if cell.symbol().starts_with("\x1b[0m") {
+                            origin_count += 1;
+                            assert!(!cell.skip);
+                            assert!(cell.symbol().contains("\x1b[1;1H\x1b[K"));
+                            assert!(cell.symbol().contains("\x1b[40;1H\x1b[K"));
+                            assert!(cell.symbol().contains("\x1bP"));
+                            assert!(y < 39, "Sixel origin must stay above final row");
+                        } else {
+                            assert!(cell.skip, "All non-origin cells in Zen mode Sixel frame should be skipped");
+                            visible_text.push_str(cell.symbol());
+                        }
+                    }
+                }
+                assert_eq!(origin_count, 1);
+                assert!(buf[(139, 39)].skip);
+                for hud_token in ["LECTOR", "READER", "Páginas", "Pages", "Controles", "Controls", "ATAJOS", "KEYS", "Shi ni Aruki"]
+                {
+                    assert!(!visible_text.contains(hud_token), "Zen mode must hide HUD token {hud_token}");
+                }
+            })
+            .unwrap();
+
+        // Loading a new chapter preserves Zen mode and selects page 0 so navigation works without PagesList::render
+        reader.load_chapter(make_chapter("c2"));
+        assert!(reader.zen_mode, "Zen mode must persist across chapter switches");
+        assert_eq!(reader.page_list_state.list_state.selected, Some(0));
+        assert_eq!(reader.current_page_index(), 0);
+
+        reader.next_page();
+        assert_eq!(reader.current_page_index(), 1);
+        reader.next_page();
+        assert_eq!(reader.current_page_index(), 2);
+        reader.previous_page();
+        assert_eq!(reader.current_page_index(), 1);
+
+        // Press 'f' -> exits Zen mode and restores HUD
+        press_key(&mut reader, KeyCode::Char('f'));
+        let action = reader.local_action_rx.recv().await.unwrap();
+        assert_eq!(action, MangaReaderActions::ToggleZenMode);
+        reader.update(action);
+        assert!(!reader.zen_mode);
+        assert!(reader.needs_terminal_clear);
+
+        terminal.draw(|f| reader.render(area, f)).unwrap();
+        let restored_text: String = (0..40)
+            .map(|y| {
+                (0..140)
+                    .map(|x| {
+                        let cell = &terminal.backend().buffer()[(x, y)];
+                        if cell.symbol().starts_with('\x1b') { " " } else { cell.symbol() }
+                    })
+                    .collect::<String>()
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(restored_text.contains("Páginas") || restored_text.contains("Pages"));
+        assert!(restored_text.contains("Controles") || restored_text.contains("Controls"));
+        assert!(restored_text.contains("ATAJOS") || restored_text.contains("KEYS"));
     }
 }

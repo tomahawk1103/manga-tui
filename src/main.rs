@@ -156,6 +156,7 @@ struct TerminalGuard;
 impl TerminalGuard {
     fn init() -> Result<(ratatui::DefaultTerminal, Self), Box<dyn std::error::Error>> {
         let terminal = ratatui::init();
+        backend::tui::probe_terminal_cell_size();
         stdout().execute(EnableMouseCapture)?;
         let _ = stdout().execute(SetTitle(format!("Manga TUI v{}", env!("CARGO_PKG_VERSION"))));
         Ok((terminal, Self))

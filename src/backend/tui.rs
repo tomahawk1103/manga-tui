@@ -152,10 +152,21 @@ pub fn build_picker_with_font_size(
     }
 }
 
+/// Returns a safe fallback cell `(width, height)` in pixels on Windows when `CSI 16t` is
+/// unavailable. Keeps a 1:2 aspect ratio and never exceeds Windows Terminal's 10x20 virtual Sixel grid.
+pub fn safe_windows_fallback_font_size(is_modern_terminal: bool, is_vscode: bool) -> (u16, u16) {
+    if is_modern_terminal && !is_vscode { (9, 18) } else { (8, 16) }
+}
+
 /// Builds a `Picker` for `proto` at runtime using the cached startup font size without querying stdin.
 pub fn picker_for_protocol(proto: crate::config::ImageProtocol) -> Option<Picker> {
     let is_modern = is_running_in_modern_windows_terminal();
-    let fallback_size = if cfg!(target_os = "windows") && is_modern { (10, 22) } else { (8, 16) };
+    let fallback_size = if cfg!(target_os = "windows") {
+        let is_vscode = std::env::var("TERM_PROGRAM").map(|v| v.eq_ignore_ascii_case("vscode")).unwrap_or(false);
+        safe_windows_fallback_font_size(is_modern, is_vscode)
+    } else {
+        (8, 16)
+    };
     let font_size = *MEASURED_FONT_SIZE.get().unwrap_or(&fallback_size);
     build_picker_with_font_size(font_size, is_modern, proto)
 }
@@ -251,13 +262,6 @@ pub fn parse_csi_cell_size_response(buf: &str) -> Option<(u16, u16)> {
 }
 
 #[cfg(target_os = "windows")]
-/// Safe default cell width in pixels when CSI 16t query is unavailable (never over-estimates height).
-const DEFAULT_FONT_SIZE_WIDTH: u16 = 8;
-#[cfg(target_os = "windows")]
-/// Safe default cell height in pixels when CSI 16t query is unavailable (never over-estimates height).
-const DEFAULT_FONT_SIZE_HEIGHT: u16 = 16;
-
-#[cfg(target_os = "windows")]
 fn query_windows_terminal_cell_size() -> Option<(u16, u16)> {
     use std::io::Write;
     use std::thread;
@@ -273,14 +277,36 @@ fn query_windows_terminal_cell_size() -> Option<(u16, u16)> {
         return None;
     }
 
+    // Drain any queued non-key-down events (focus/resize/key-up from launch) before probing.
+    loop {
+        let mut count = 0u32;
+        if unsafe { GetNumberOfConsoleInputEvents(stdin_handle, &mut count) } == 0 || count == 0 {
+            break;
+        }
+        let mut peek_record: INPUT_RECORD = unsafe { std::mem::zeroed() };
+        let mut read_count = 0u32;
+        if unsafe { PeekConsoleInputW(stdin_handle, &mut peek_record, 1, &mut read_count) } == 0 || read_count == 0 {
+            break;
+        }
+        let is_key_down = peek_record.EventType as u32 == KEY_EVENT && unsafe { peek_record.Event.KeyEvent.bKeyDown } != 0;
+        if is_key_down {
+            break;
+        }
+        let mut discard: INPUT_RECORD = unsafe { std::mem::zeroed() };
+        let mut got = 0u32;
+        if unsafe { ReadConsoleInputW(stdin_handle, &mut discard, 1, &mut got) } == 0 || got == 0 {
+            break;
+        }
+    }
+
     let mut stdout = std::io::stdout();
     stdout.write_all(b"\x1b[16t").ok()?;
     stdout.flush().ok()?;
 
     let mut found_escape = false;
     // Drain unrelated startup events (FOCUS_EVENT, WINDOW_BUFFER_SIZE_EVENT, key-up from Enter)
-    // until the CSI 16t ESC prefix arrives or the short polling budget expires.
-    for _ in 0..25 {
+    // until the CSI 16t ESC prefix arrives or the 150ms polling budget expires.
+    for _ in 0..75 {
         let mut count = 0u32;
         if unsafe { GetNumberOfConsoleInputEvents(stdin_handle, &mut count) } == 0 {
             return None;
@@ -319,7 +345,8 @@ fn query_windows_terminal_cell_size() -> Option<(u16, u16)> {
     }
 
     let mut response = String::new();
-    for _ in 0..32 {
+    let mut chars_collected = 0usize;
+    for _ in 0..64 {
         let mut avail = 0u32;
         if unsafe { GetNumberOfConsoleInputEvents(stdin_handle, &mut avail) } == 0 {
             break;
@@ -341,7 +368,8 @@ fn query_windows_terminal_cell_size() -> Option<(u16, u16)> {
                 && ch != '\0'
             {
                 response.push(ch);
-                if ch == 't' {
+                chars_collected += 1;
+                if ch == 't' || chars_collected >= 32 {
                     break;
                 }
             }
@@ -352,34 +380,33 @@ fn query_windows_terminal_cell_size() -> Option<(u16, u16)> {
 }
 
 #[cfg(target_os = "windows")]
-pub fn get_picker() -> Option<Picker> {
-    const FALLBACK_CELL_WIDTH: u16 = 10;
-    const FALLBACK_CELL_HEIGHT: u16 = 22;
-
-    let is_modern_terminal = is_running_in_modern_windows_terminal();
-    let size: (u16, u16) = if is_modern_terminal {
-        query_windows_terminal_cell_size().unwrap_or_else(|| {
-            use windows_sys::Win32::System::Console::GetConsoleWindow;
-            use windows_sys::Win32::UI::HiDpi::{GetDpiForSystem, GetDpiForWindow};
-
-            let window_dpi = unsafe { GetDpiForWindow(GetConsoleWindow()) };
-            let dpi = if window_dpi == 0 {
-                let sys_dpi = unsafe { GetDpiForSystem() };
-                if sys_dpi == 0 { 96 } else { sys_dpi }
-            } else {
-                window_dpi
-            };
-            let scale = dpi as f32 / 96.0;
-            (
-                ((FALLBACK_CELL_WIDTH as f32 * scale).round() as u16).max(1),
-                ((FALLBACK_CELL_HEIGHT as f32 * scale).round() as u16).max(1),
-            )
-        })
+fn measure_windows_cell_size() -> (u16, u16) {
+    let is_modern = is_running_in_modern_windows_terminal();
+    let is_vscode = std::env::var("TERM_PROGRAM").map(|v| v.eq_ignore_ascii_case("vscode")).unwrap_or(false);
+    if is_modern {
+        query_windows_terminal_cell_size().unwrap_or_else(|| safe_windows_fallback_font_size(true, is_vscode))
     } else {
-        (DEFAULT_FONT_SIZE_WIDTH, DEFAULT_FONT_SIZE_HEIGHT)
-    };
+        safe_windows_fallback_font_size(false, is_vscode)
+    }
+}
 
-    let _ = MEASURED_FONT_SIZE.set(size);
+/// Probes and caches the terminal character-cell size before mouse capture is enabled on Windows.
+#[cfg(target_os = "windows")]
+pub fn probe_terminal_cell_size() {
+    if MEASURED_FONT_SIZE.get().is_none() {
+        let size = measure_windows_cell_size();
+        let _ = MEASURED_FONT_SIZE.set(size);
+    }
+}
+
+/// Probes and caches the terminal character-cell size before mouse capture is enabled.
+#[cfg(not(target_os = "windows"))]
+pub fn probe_terminal_cell_size() {}
+
+#[cfg(target_os = "windows")]
+pub fn get_picker() -> Option<Picker> {
+    let is_modern_terminal = is_running_in_modern_windows_terminal();
+    let size = *MEASURED_FONT_SIZE.get_or_init(measure_windows_cell_size);
 
     let mut picker = Picker::new(size);
 
@@ -572,5 +599,16 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn windows_fallback_font_size_never_exceeds_sixel_cell_height() {
+        let modern = safe_windows_fallback_font_size(true, false);
+        assert_eq!(modern, (9, 18));
+        assert!(modern.1 <= 20, "modern Windows fallback cell height must not exceed Windows Terminal's 20px Sixel height");
+
+        assert_eq!(safe_windows_fallback_font_size(true, true), (8, 16));
+        assert_eq!(safe_windows_fallback_font_size(false, false), (8, 16));
+        assert_eq!(safe_windows_fallback_font_size(false, true), (8, 16));
     }
 }

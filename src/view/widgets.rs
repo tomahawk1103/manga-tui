@@ -601,6 +601,7 @@ impl Widget for HelpModal {
             Self::key_line("j / k", tr("Pasar página en el lector", "Next / prev page in reader")),
             Self::key_line("g / G", tr("Primera / última pág. en lector", "First / last page in reader")),
             Self::key_line("v", tr("Abrir en navegador (Scroll HD)", "Open in browser (HD Scroll)")),
+            Self::key_line("z / f", tr("Modo Zen (ocultar/mostrar HUD)", "Zen mode (toggle HUD)")),
             Self::key_line("r", tr("Recargar pág. fallida (lector)", "Reload failed page (reader)")),
             Self::key_line("w / b", tr("Siguiente / anterior capítulo", "Next / prev chapter in reader")),
             Self::key_line("Esc / q", tr("Volver atrás / Salir del lector", "Go back / Exit reader")),
