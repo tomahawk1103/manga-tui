@@ -918,8 +918,8 @@ where
         self.cloud_state.is_busy = true;
         self.cloud_state.progress = Some(crate::backend::cloud::CloudSyncProgress {
             step_label: tr(
-                "Abriendo navegador para autorizar tu cuenta privada de MyAnimeList (OAuth 2.0 + PKCE)...",
-                "Opening browser to authorize your private MyAnimeList account (OAuth 2.0 + PKCE)...",
+                "Abriendo MyAnimeList en tu navegador para iniciar sesión...",
+                "Opening MyAnimeList in your browser to sign in...",
             )
             .to_string(),
             completed_items: 1,
@@ -938,8 +938,8 @@ where
                     let _ = auth_url;
                     let _ = tx_url.send(Events::CloudSyncProgress(crate::backend::cloud::CloudSyncProgress {
                         step_label: tr(
-                            "Esperando que autorices MyAnimeList en tu navegador...",
-                            "Waiting for you to authorize MyAnimeList in your browser...",
+                            "Inicia sesión en MyAnimeList en tu navegador y pulsa 'Allow'...",
+                            "Sign in to MyAnimeList in your browser and click 'Allow'...",
                         )
                         .to_string(),
                         completed_items: 2,

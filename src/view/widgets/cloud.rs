@@ -69,10 +69,7 @@ impl CloudActionRow {
             Self::LinkLocalCloudFolder => {
                 tr("📁 Conectar carpeta de iCloud Drive / Google Drive del PC", "📁 Connect iCloud Drive / Google Drive PC folder")
             },
-            Self::LinkMyAnimeList => tr(
-                "🔐 Vincular mi cuenta de MyAnimeList (OAuth 2.0 PKCE privado)",
-                "🔐 Link my MyAnimeList account (Private OAuth 2.0 PKCE)",
-            ),
+            Self::LinkMyAnimeList => tr("🌐 Iniciar sesión con MyAnimeList", "🌐 Sign in with MyAnimeList"),
             Self::SyncMyAnimeList => {
                 tr("📲 Sincronizar lista con MyAnimeList (Móvil ⇄ PC)", "📲 Sync manga list with MyAnimeList (Mobile ⇄ PC)")
             },
@@ -80,7 +77,7 @@ impl CloudActionRow {
         }
     }
 
-    pub fn description_for(self, has_google_ready: bool) -> &'static str {
+    pub fn description_for(self, has_google_ready: bool, has_mal_ready: bool) -> &'static str {
         match self {
             Self::SyncLibrary => tr(
                 "Mantiene al día tu historial, la página exacta donde te quedaste, favoritos y Plan to Read",
@@ -115,10 +112,19 @@ impl CloudActionRow {
                 "Detecta en 1 clic tu carpeta de iCloud Drive, Google Drive o OneDrive (o pulsa <e> para elegir otra carpeta)",
                 "Detects your iCloud Drive, Google Drive, or OneDrive folder in 1 click (or press <e> to choose a folder)",
             ),
-            Self::LinkMyAnimeList => tr(
-                "Cada usuario vincula su propia cuenta con su Client ID privado (guardado en el Keyring del sistema, sin exponer contraseñas ni proveedores)",
-                "Each user links their own account with their private Client ID (stored in OS Keyring, never exposing passwords or providers)",
-            ),
+            Self::LinkMyAnimeList => {
+                if has_mal_ready {
+                    tr(
+                        "Abre MyAnimeList en tu navegador para iniciar sesión con tu cuenta en 1 clic",
+                        "Opens MyAnimeList in your browser to sign in with your account in 1 click",
+                    )
+                } else {
+                    tr(
+                        "Inicia sesión en MyAnimeList desde el navegador (en compilación manual pide Client ID)",
+                        "Sign in to MyAnimeList in your browser (manual builds ask for a Client ID)",
+                    )
+                }
+            },
             Self::SyncMyAnimeList => tr(
                 "Importa tus mangas del móvil (Reading / Plan to Read) y sube a MyAnimeList tu progreso de capítulos leídos",
                 "Imports your mobile mangas (Reading / Plan to Read) and pushes your read chapter progress to MyAnimeList",
@@ -302,7 +308,7 @@ impl CloudModalState {
                 self.mal_connection = new_state;
                 let summary = self.mal_connection.connection_summary();
                 self.set_status(
-                    format!("✓ {}: {summary}", tr("Cuenta privada de MyAnimeList vinculada", "Private MyAnimeList account linked")),
+                    format!("✓ {}: {summary}", tr("Sesión iniciada en MyAnimeList", "Signed in to MyAnimeList")),
                     false,
                 );
             },
@@ -466,15 +472,23 @@ impl CloudModalState {
                 CloudModalOutcome::None
             },
             CloudActionRow::LinkMyAnimeList => {
-                self.open_mal_credentials_popup();
-                CloudModalOutcome::None
+                if let Some(client_id) = self.mal_connection.get_client_id() {
+                    let client_secret = self.mal_connection.get_client_secret();
+                    CloudModalOutcome::StartMalOAuthLogin {
+                        client_id,
+                        client_secret,
+                    }
+                } else {
+                    self.open_mal_credentials_popup();
+                    CloudModalOutcome::None
+                }
             },
             CloudActionRow::SyncMyAnimeList => {
                 if !self.mal_connection.is_connected() {
                     self.set_status(
                         tr(
-                            "⚠ Primero vincula tu cuenta privada de MyAnimeList pulsando <m>.",
-                            "⚠ Please link your private MyAnimeList account first by pressing <m>.",
+                            "⚠ Primero inicia sesión en MyAnimeList pulsando <m>.",
+                            "⚠ Please sign in to MyAnimeList first by pressing <m>.",
                         ),
                         true,
                     );
@@ -757,6 +771,7 @@ impl Widget for CloudModal<'_> {
         Clear.render(modal_area, buf);
 
         let has_google_ready = self.state.connection.get_client_id().is_some();
+        let has_mal_ready = self.state.mal_connection.get_client_id().is_some();
 
         let bottom_bar = Line::from(vec![
             Span::raw(" "),
@@ -779,16 +794,13 @@ impl Widget for CloudModal<'_> {
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(t.accent_primary))
             .style(Style::default().bg(t.bar_bg))
-            .title(Line::from(vec![
-                Span::styled(
-                    tr(
-                        " ☁  Nube y Cuentas Privadas · Google Drive, iCloud & MyAnimeList ",
-                        " ☁  Cloud & Private Accounts · Google Drive, iCloud & MyAnimeList ",
-                    ),
-                    Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD),
+            .title(Line::from(vec![Span::styled(
+                tr(
+                    " ☁  Nube y Sincronización · Google Drive, iCloud & MyAnimeList ",
+                    " ☁  Cloud & Sync · Google Drive, iCloud & MyAnimeList ",
                 ),
-                Span::styled(tr(" [OAuth 2.0 + Keyring] ", " [OAuth 2.0 + Keyring] "), Style::default().fg(t.accent_secondary)),
-            ]))
+                Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD),
+            )]))
             .title_bottom(bottom_bar);
 
         let inner = outer_block.inner(modal_area).inner(Margin {
@@ -977,7 +989,7 @@ impl Widget for CloudModal<'_> {
             vec![
                 Line::from(vec![Span::styled(format!("  {msg}"), Style::default().fg(color).add_modifier(Modifier::BOLD))]),
                 Line::from(vec![Span::styled(
-                    format!("  {}", self.state.selected_row().description_for(has_google_ready)),
+                    format!("  {}", self.state.selected_row().description_for(has_google_ready, has_mal_ready)),
                     Style::default().fg(t.text_muted),
                 )]),
             ]
@@ -995,7 +1007,7 @@ impl Widget for CloudModal<'_> {
             };
             vec![
                 Line::from(vec![Span::styled(
-                    format!("  💡 {}", self.state.selected_row().description_for(has_google_ready)),
+                    format!("  💡 {}", self.state.selected_row().description_for(has_google_ready, has_mal_ready)),
                     Style::default().fg(t.text_secondary),
                 )]),
                 Line::from(vec![Span::styled(tip_line, Style::default().fg(t.text_muted))]),
@@ -1100,10 +1112,7 @@ impl Widget for CloudModal<'_> {
                     .border_style(Style::default().fg(t.accent_highlight))
                     .style(Style::default().bg(t.bar_bg))
                     .title(Line::from(vec![Span::styled(
-                        tr(
-                            " 🔐 Vincular cuenta privada de MyAnimeList (OAuth 2.0 + PKCE + Keyring) ",
-                            " 🔐 Link Private MyAnimeList Account (OAuth 2.0 + PKCE + Keyring) ",
-                        ),
+                        tr(" ⚙ Configuración avanzada: MyAnimeList manual ", " ⚙ Advanced setup: Manual MyAnimeList "),
                         Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD),
                     )]))
                     .title_bottom(
@@ -1149,10 +1158,10 @@ impl Widget for CloudModal<'_> {
                 let lines = vec![
                     Line::from(Span::styled(
                         tr(
-                            "100% Privado y Seguro: Cada usuario usa su propio Client ID personal. Tus tokens se cifran en el Keyring del SO.",
-                            "100% Private & Secure: Each user uses their own personal Client ID. Tokens are encrypted in your OS Keyring.",
+                            "Build sin credenciales de MyAnimeList integradas (solo para compilar a mano o usar tu propio ID).",
+                            "This build has no bundled MyAnimeList credentials (only for manual builds or using your own ID).",
                         ),
-                        Style::default().fg(t.status_success).bold(),
+                        Style::default().fg(t.text_muted),
                     )),
                     Line::from(Span::styled(
                         tr(
@@ -1170,8 +1179,8 @@ impl Widget for CloudModal<'_> {
                     )),
                     Line::from(Span::styled(
                         tr(
-                            "3. Pega tu Client ID abajo y pulsa <Enter> para iniciar sesión con tu cuenta del móvil/web:",
-                            "3. Paste your Client ID below and press <Enter> to sign in with your mobile/web account:",
+                            "3. Pega el Client ID abajo y pulsa <Enter> para iniciar sesión en tu navegador:",
+                            "3. Paste the Client ID below and press <Enter> to sign in via your browser:",
                         ),
                         Style::default().fg(t.text_muted),
                     )),
@@ -1316,5 +1325,56 @@ mod tests {
 
         let mut buf = Buffer::empty(Rect::new(0, 0, 120, 36));
         CloudModal::new(&state).render(buf.area, &mut buf);
+    }
+
+    #[test]
+    fn cloud_modal_starts_one_click_mal_login_when_client_id_is_configured() {
+        let mut state = CloudModalState {
+            selected_index: 6,
+            connection: CloudConnectionState::default(),
+            mal_connection: MalConnectionState {
+                client_id: Some("bundled_mal_client_id".to_string()),
+                ..Default::default()
+            },
+            detected_folders: Vec::new(),
+            detected_cursor: 0,
+            input_popup: CloudInputPopup::None,
+            is_busy: false,
+            progress: None,
+            status_message: None,
+            status_is_error: false,
+        };
+
+        assert_eq!(state.selected_row(), CloudActionRow::LinkMyAnimeList);
+        let outcome = state.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        assert_eq!(outcome, CloudModalOutcome::StartMalOAuthLogin {
+            client_id: "bundled_mal_client_id".to_string(),
+            client_secret: None,
+        });
+        assert!(matches!(state.input_popup, CloudInputPopup::None));
+
+        // Pressing 'e' still opens manual credentials popup
+        state.handle_key_event(KeyEvent::new(KeyCode::Char('e'), KeyModifiers::NONE));
+        assert!(matches!(state.input_popup, CloudInputPopup::MalCredentials { .. }));
+    }
+
+    #[test]
+    fn cloud_modal_opens_mal_credentials_popup_when_no_client_id_configured() {
+        let mut state = CloudModalState {
+            selected_index: 6,
+            connection: CloudConnectionState::default(),
+            mal_connection: MalConnectionState::default(),
+            detected_folders: Vec::new(),
+            detected_cursor: 0,
+            input_popup: CloudInputPopup::None,
+            is_busy: false,
+            progress: None,
+            status_message: None,
+            status_is_error: false,
+        };
+
+        let outcome = state.handle_key_event(KeyEvent::new(KeyCode::Char('m'), KeyModifiers::NONE));
+        assert_eq!(outcome, CloudModalOutcome::None);
+        assert!(matches!(state.input_popup, CloudInputPopup::MalCredentials { .. }));
     }
 }

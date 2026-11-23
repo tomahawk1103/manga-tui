@@ -98,6 +98,8 @@ fn load_dotenv_file(path: &Path) -> HashMap<String, String> {
 fn emit_cloud_oauth_config(root: &Path) {
     println!("cargo:rerun-if-env-changed=MANGA_TUI_GDRIVE_CLIENT_ID");
     println!("cargo:rerun-if-env-changed=MANGA_TUI_GDRIVE_CLIENT_SECRET");
+    println!("cargo:rerun-if-env-changed=MANGA_TUI_MAL_CLIENT_ID");
+    println!("cargo:rerun-if-env-changed=MANGA_TUI_MAL_CLIENT_SECRET");
     let dotenv = root.join(".env");
     let dotenv_local = root.join(".env.local");
     println!("cargo:rerun-if-changed={}", dotenv.display());
@@ -116,8 +118,14 @@ fn emit_cloud_oauth_config(root: &Path) {
     if let Some(client_id) = resolve("MANGA_TUI_GDRIVE_CLIENT_ID") {
         println!("cargo:rustc-env=MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_ID={client_id}");
     }
-    if let Some(client_secret) = resolve("MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET") {
+    if let Some(client_secret) = resolve("MANGA_TUI_GDRIVE_CLIENT_SECRET") {
         println!("cargo:rustc-env=MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET={client_secret}");
+    }
+    if let Some(client_id) = resolve("MANGA_TUI_MAL_CLIENT_ID") {
+        println!("cargo:rustc-env=MANGA_TUI_EMBEDDED_MAL_CLIENT_ID={client_id}");
+    }
+    if let Some(client_secret) = resolve("MANGA_TUI_MAL_CLIENT_SECRET") {
+        println!("cargo:rustc-env=MANGA_TUI_EMBEDDED_MAL_CLIENT_SECRET={client_secret}");
     }
 }
 

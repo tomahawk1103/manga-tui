@@ -37,6 +37,37 @@ pub const SECRET_MAL_CLIENT_SECRET: &str = "mal_client_secret";
 pub const SECRET_MAL_ACCESS_TOKEN: &str = "mal_access_token";
 pub const SECRET_MAL_REFRESH_TOKEN: &str = "mal_refresh_token";
 
+/// Returns the MyAnimeList OAuth Client ID embedded at compile time (via `.env` or CI secrets), if configured.
+pub fn embedded_mal_client_id() -> Option<&'static str> {
+    option_env!("MANGA_TUI_EMBEDDED_MAL_CLIENT_ID").map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// Returns the MyAnimeList OAuth Client Secret embedded at compile time (via `.env` or CI secrets), if configured.
+pub fn embedded_mal_client_secret() -> Option<&'static str> {
+    option_env!("MANGA_TUI_EMBEDDED_MAL_CLIENT_SECRET")
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+/// Returns `true` when this binary was built with 1-click MyAnimeList OAuth credentials bundled.
+pub fn has_embedded_mal_oauth_config() -> bool {
+    embedded_mal_client_id().is_some()
+}
+
+fn resolve_secret_with_precedence(
+    runtime_env: Option<&str>,
+    saved: Option<&str>,
+    keyring: Option<&str>,
+    embedded: Option<&str>,
+) -> Option<String> {
+    [runtime_env, saved, keyring, embedded]
+        .into_iter()
+        .flatten()
+        .map(str::trim)
+        .find(|s| !s.is_empty())
+        .map(ToOwned::to_owned)
+}
+
 /// Generates a 64-character URL-safe PKCE verifier (`code_challenge_method=plain`, required by MyAnimeList OAuth 2.0).
 #[derive(Debug, Clone)]
 pub struct MalPkceChallenge {
@@ -225,13 +256,9 @@ impl MalConnectionState {
 
     pub fn connection_summary(&self) -> String {
         if !self.is_connected() {
-            return tr("Sin vincular (Cuenta privada desactivada)", "Not linked (Private account disconnected)").to_string();
+            return tr("Sin vincular", "Not linked").to_string();
         }
-        if let Some(name) = &self.username {
-            format!("MyAnimeList · @{name}")
-        } else {
-            "MyAnimeList · OAuth 2.0 PKCE".to_string()
-        }
+        if let Some(name) = &self.username { format!("MyAnimeList · @{name}") } else { "MyAnimeList".to_string() }
     }
 
     pub fn save_oauth_tokens(
@@ -264,42 +291,27 @@ impl MalConnectionState {
     }
 
     pub fn get_client_id(&self) -> Option<String> {
-        if let Ok(env_id) = std::env::var("MANGA_TUI_MAL_CLIENT_ID")
-            && !env_id.trim().is_empty()
-        {
-            return Some(env_id.trim().to_string());
-        }
-        if let Some(saved) = self.client_id.as_ref().filter(|s| !s.trim().is_empty()) {
-            return Some(saved.trim().to_string());
-        }
-        if !cfg!(any(test, feature = "test-utils"))
-            && let Ok(Some(kr)) = KeyringStorage::new().get_secret(SECRET_MAL_CLIENT_ID)
-            && !kr.trim().is_empty()
-        {
-            return Some(kr.trim().to_string());
-        }
-        option_env!("MANGA_TUI_EMBEDDED_MAL_CLIENT_ID")
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .map(ToOwned::to_owned)
+        let runtime_env = std::env::var("MANGA_TUI_MAL_CLIENT_ID").ok();
+        let keyring = if cfg!(any(test, feature = "test-utils")) {
+            None
+        } else {
+            KeyringStorage::new().get_secret(SECRET_MAL_CLIENT_ID).ok().flatten()
+        };
+        let embedded = if cfg!(any(test, feature = "test-utils")) { None } else { embedded_mal_client_id() };
+
+        resolve_secret_with_precedence(runtime_env.as_deref(), self.client_id.as_deref(), keyring.as_deref(), embedded)
     }
 
     pub fn get_client_secret(&self) -> Option<String> {
-        if let Ok(env_sec) = std::env::var("MANGA_TUI_MAL_CLIENT_SECRET")
-            && !env_sec.trim().is_empty()
-        {
-            return Some(env_sec.trim().to_string());
-        }
-        if let Some(saved) = self.fallback_client_secret.as_ref().filter(|s| !s.trim().is_empty()) {
-            return Some(saved.trim().to_string());
-        }
-        if !cfg!(any(test, feature = "test-utils"))
-            && let Ok(Some(kr)) = KeyringStorage::new().get_secret(SECRET_MAL_CLIENT_SECRET)
-            && !kr.trim().is_empty()
-        {
-            return Some(kr.trim().to_string());
-        }
-        None
+        let runtime_env = std::env::var("MANGA_TUI_MAL_CLIENT_SECRET").ok();
+        let keyring = if cfg!(any(test, feature = "test-utils")) {
+            None
+        } else {
+            KeyringStorage::new().get_secret(SECRET_MAL_CLIENT_SECRET).ok().flatten()
+        };
+        let embedded = if cfg!(any(test, feature = "test-utils")) { None } else { embedded_mal_client_secret() };
+
+        resolve_secret_with_precedence(runtime_env.as_deref(), self.fallback_client_secret.as_deref(), keyring.as_deref(), embedded)
     }
 
     pub fn get_access_token(&self) -> Option<String> {
@@ -544,8 +556,8 @@ impl MyAnimeListClient {
             <html><head><title>Manga TUI - MyAnimeList</title></head>\
             <body style='font-family:system-ui,sans-serif;background:#1a1b26;color:#c0caf5;text-align:center;padding:60px;'>\
             <div style='max-width:480px;margin:0 auto;background:#24283b;padding:32px;border-radius:12px;border:1px solid #2e51a2;'>\
-            <h2 style='color:#9ece6a;margin-top:0;'>✓ Cuenta de MyAnimeList vinculada con Manga TUI</h2>\
-            <p>Tu cuenta se ha conectado de forma privada y segura mediante OAuth 2.0 + PKCE. Ya puedes cerrar esta pestaña y volver a <b>Manga TUI</b>.</p>\
+            <h2 style='color:#9ece6a;margin-top:0;'>✓ Sesión iniciada en MyAnimeList</h2>\
+            <p>Tu cuenta de MyAnimeList ya está conectada con Manga TUI. Ya puedes cerrar esta pestaña y volver a la app.</p>\
             </div></body></html>";
         let _ = socket.write_all(success_html.as_bytes()).await;
         let _ = socket.shutdown().await;
@@ -758,17 +770,56 @@ impl MyAnimeListClient {
         Ok(parsed.data.into_iter().next().map(|w| w.node))
     }
 
+    async fn try_refresh_tokens(&self, state: &mut MalConnectionState) -> Result<String, String> {
+        let client_id = state.get_client_id().ok_or_else(|| {
+            tr(
+                "Falta el Client ID de MyAnimeList para refrescar la sesión.",
+                "Missing MyAnimeList Client ID to refresh the session.",
+            )
+            .to_string()
+        })?;
+        let refresh_token = state.get_refresh_token().ok_or_else(|| {
+            tr(
+                "La sesión de MyAnimeList ha caducado; inicia sesión de nuevo.",
+                "MyAnimeList session expired; please sign in again.",
+            )
+            .to_string()
+        })?;
+        let client_secret = state.get_client_secret();
+        let refreshed = self.refresh_access_token(&client_id, client_secret.as_deref(), &refresh_token).await?;
+        let next_refresh = refreshed.refresh_token.as_deref().unwrap_or(&refresh_token);
+        state.save_oauth_tokens(&client_id, client_secret.as_deref(), &refreshed.access_token, Some(next_refresh));
+        let _ = state.save();
+        Ok(refreshed.access_token)
+    }
+
     /// Synchronizes the user's MyAnimeList manga list with the local SQLite database:
     /// 1. Pulls all entries from the user's mobile/web MyAnimeList account (`reading`, `plan_to_read`, `completed`) into local
     ///    library.
     /// 2. Pushes local reading progress (`total_read_count`) up to MyAnimeList if local progress is ahead.
     pub async fn sync_with_database(&self, state: &mut MalConnectionState, db_path: &Path) -> Result<MalSyncReport, String> {
-        let token = state.get_access_token().ok_or_else(|| {
-            tr("Primero inicia sesión en tu cuenta de MyAnimeList.", "Please sign in to your MyAnimeList account first.")
-                .to_string()
-        })?;
+        let mut token = match state.get_access_token() {
+            Some(tok) => tok,
+            None if state.get_refresh_token().is_some() && state.get_client_id().is_some() => {
+                self.try_refresh_tokens(state).await?
+            },
+            None => {
+                return Err(tr(
+                    "Primero inicia sesión en tu cuenta de MyAnimeList.",
+                    "Please sign in to your MyAnimeList account first.",
+                )
+                .to_string());
+            },
+        };
 
-        let mal_entries = self.get_my_manga_list(&token).await?;
+        let mal_entries = match self.get_my_manga_list(&token).await {
+            Ok(entries) => entries,
+            Err(err) if err.contains("401") && state.get_refresh_token().is_some() && state.get_client_id().is_some() => {
+                token = self.try_refresh_tokens(state).await?;
+                self.get_my_manga_list(&token).await?
+            },
+            Err(err) => return Err(err),
+        };
         let total_mal_entries = mal_entries.len();
         let mut imported_from_mal = 0usize;
         let mut pushed_to_mal = 0usize;
@@ -1052,6 +1103,95 @@ mod tests {
         let report = client.sync_with_database(&mut state, &db_path).await.unwrap();
         assert_eq!(report.total_mal_entries, 2);
         assert_eq!(report.imported_from_mal, 2);
+
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn resolve_mal_secret_precedence_respects_order_and_ignores_blank_values() {
+        assert_eq!(
+            resolve_secret_with_precedence(Some("  "), Some("saved-id"), Some("kr-id"), Some("emb-id")),
+            Some("saved-id".to_string())
+        );
+        assert_eq!(
+            resolve_secret_with_precedence(Some("env-id"), Some("saved-id"), Some("kr-id"), Some("emb-id")),
+            Some("env-id".to_string())
+        );
+        assert_eq!(resolve_secret_with_precedence(None, Some(""), None, Some("emb-id")), Some("emb-id".to_string()));
+        assert_eq!(resolve_secret_with_precedence(None, None, Some("  "), None), None);
+    }
+
+    #[tokio::test]
+    async fn mal_sync_refreshes_expired_token_on_401_and_retries() {
+        let server = MockServer::start_async().await;
+
+        let _expired_mock = server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/v2/users/@me/mangalist")
+                    .header("authorization", "Bearer expired_token");
+                then.status(401).body("Unauthorized");
+            })
+            .await;
+
+        let _refresh_mock = server
+            .mock_async(|when, then| {
+                when.method(POST).path("/v1/oauth2/token");
+                then.status(200).json_body(serde_json::json!({
+                    "token_type": "Bearer",
+                    "expires_in": 2678400,
+                    "access_token": "fresh_token",
+                    "refresh_token": "fresh_refresh_token"
+                }));
+            })
+            .await;
+
+        let _fresh_mock = server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/v2/users/@me/mangalist")
+                    .header("authorization", "Bearer fresh_token");
+                then.status(200).json_body(serde_json::json!({
+                    "data": [
+                        {
+                            "node": {
+                                "id": 126287,
+                                "title": "Sousou no Frieren"
+                            },
+                            "list_status": {
+                                "status": "reading",
+                                "num_chapters_read": 10,
+                                "num_volumes_read": 1
+                            }
+                        }
+                    ]
+                }));
+            })
+            .await;
+
+        let client = MyAnimeListClient::new().with_endpoints(
+            server.url("/v1/oauth2/authorize"),
+            server.url("/v1/oauth2/token"),
+            server.url("/v2"),
+        );
+
+        let base_dir = PathBuf::from("./test_results/mal_refresh_test");
+        let _ = fs::remove_dir_all(&base_dir);
+        fs::create_dir_all(&base_dir).unwrap();
+        let db_path = base_dir.join("test_mal_refresh.db");
+
+        let mut state = MalConnectionState {
+            client_id: Some("test_mal_client_id".to_string()),
+            fallback_access_token: Some("expired_token".to_string()),
+            fallback_refresh_token: Some("old_refresh_token".to_string()),
+            ..Default::default()
+        };
+
+        let report = client.sync_with_database(&mut state, &db_path).await.unwrap();
+        assert_eq!(report.total_mal_entries, 1);
+        assert_eq!(report.imported_from_mal, 1);
+        assert_eq!(state.get_access_token().as_deref(), Some("fresh_token"));
+        assert_eq!(state.get_refresh_token().as_deref(), Some("fresh_refresh_token"));
 
         let _ = fs::remove_dir_all(&base_dir);
     }

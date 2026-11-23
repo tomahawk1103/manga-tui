@@ -736,7 +736,7 @@ async fn run_cli_mal(command: &MalCommand) -> Result<(), String> {
     match command {
         MalCommand::Status => {
             println!(
-                "🔐 MyAnimeList (OAuth 2.0 + PKCE + Keyring) — {}: {}",
+                "🌐 MyAnimeList — {}: {}",
                 tr("Estado", "Status"),
                 if state.is_connected() {
                     format!("🟢 {}", state.connection_summary())
@@ -778,15 +778,12 @@ async fn run_cli_mal(command: &MalCommand) -> Result<(), String> {
                     println!(
                         "{}\n  1. {}\n  2. App Type = 'other' | App Redirect URL = http://127.0.0.1:8765/callback",
                         tr(
-                            "🔐 Configuración privada de MyAnimeList (OAuth 2.0 + PKCE):",
-                            "🔐 Private MyAnimeList setup (OAuth 2.0 + PKCE):"
+                            "⚙ Build sin Client ID integrado de MyAnimeList (solo necesario al compilar a mano):",
+                            "⚙ Build without bundled MyAnimeList Client ID (only needed for manual builds):"
                         ),
                         MAL_APICONFIG_URL
                     );
-                    print!(
-                        "{}",
-                        tr("Introduce tu Client ID personal de MyAnimeList: ", "Enter your personal MyAnimeList Client ID: ")
-                    );
+                    print!("{}", tr("Introduce un Client ID de MyAnimeList: ", "Enter a MyAnimeList Client ID: "));
                     let _ = std::io::stdout().flush();
                     let mut input = String::new();
                     std::io::stdin().read_line(&mut input).map_err(|e| e.to_string())?;
