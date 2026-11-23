@@ -74,6 +74,8 @@ pub enum Events {
     CloudSyncProgress(crate::backend::cloud::CloudSyncProgress),
     CloudSyncFinished(Result<crate::backend::cloud::CloudSyncReport, String>),
     CloudOAuthFinished(Result<crate::backend::cloud::CloudConnectionState, String>),
+    MalOAuthFinished(Result<crate::backend::tracker::myanimelist::MalConnectionState, String>),
+    MalSyncFinished(Result<crate::backend::tracker::myanimelist::MalSyncReport, String>),
 }
 
 impl From<super::download_queue::DownloadQueueEvent> for Events {

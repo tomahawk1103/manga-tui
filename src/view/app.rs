@@ -16,6 +16,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use self::feed::Feed;
 use self::home::Home;
 use self::manga::MangaPage;
+use self::news::NewsPage;
 use self::reader::MangaReader;
 use self::search::{InputMode, SearchPage};
 use super::widgets::Component;
@@ -175,6 +176,7 @@ where
     pub search_page: SearchPage<T, S>,
     pub home_page: Home<T>,
     pub feed_page: Feed<T>,
+    pub news_page: NewsPage,
     manga_provider: Arc<T>,
     pub active_provider: MangaProviders,
     pub is_checking_provider: bool,
@@ -205,6 +207,7 @@ where
     pub needs_terminal_clear: bool,
     top_tabs_area: Rect,
     tab_hit_boxes: Vec<(u16, u16, SelectedPage)>,
+    ui_tick: usize,
 }
 
 impl<T, S> Component for App<T, S>
@@ -458,6 +461,22 @@ where
                 self.cloud_task = None;
                 self.cloud_state.on_oauth_finished(result);
             },
+            Events::MalOAuthFinished(result) => {
+                self.cloud_task = None;
+                self.cloud_state.on_mal_oauth_finished(result);
+            },
+            Events::MalSyncFinished(result) => {
+                self.cloud_task = None;
+                let ok = result.is_ok();
+                self.cloud_state.on_mal_sync_finished(result);
+                if ok {
+                    self.home_page.refresh_stats();
+                    self.search_page.refresh_personal_discovery();
+                    if self.current_tab == SelectedPage::Feed {
+                        self.feed_page.init_search();
+                    }
+                }
+            },
             Events::ProviderCheckFinished {
                 active_provider,
                 switched_from,
@@ -547,6 +566,7 @@ where
                 .with_global_sender(global_event_tx.clone())
                 .with_api_client(Arc::clone(&provider)),
             home_page: Home::new(picker, Arc::clone(&provider)).with_global_sender(global_event_tx.clone()),
+            news_page: NewsPage::new(picker),
             manga_page: None,
             manga_reader_page: None,
             global_action_tx,
@@ -591,6 +611,7 @@ where
             tab_hit_boxes: Vec::new(),
             is_stats_modal_open: false,
             stats_state: None,
+            ui_tick: 0,
         }
     }
 
@@ -886,6 +907,93 @@ where
             })
             .await;
             let _ = event_tx.send(Events::CloudSyncFinished(res));
+        });
+        self.cloud_task = Some(handle);
+    }
+
+    pub fn spawn_mal_oauth_login(&mut self, client_id: String, client_secret: Option<String>) {
+        if let Some(handle) = self.cloud_task.take() {
+            handle.abort();
+        }
+        self.cloud_state.is_busy = true;
+        self.cloud_state.progress = Some(crate::backend::cloud::CloudSyncProgress {
+            step_label: tr(
+                "Abriendo navegador para autorizar tu cuenta privada de MyAnimeList (OAuth 2.0 + PKCE)...",
+                "Opening browser to authorize your private MyAnimeList account (OAuth 2.0 + PKCE)...",
+            )
+            .to_string(),
+            completed_items: 1,
+            total_items: 3,
+        });
+
+        let event_tx = self.global_event_tx.clone();
+        let handle = tokio::spawn(async move {
+            let client = crate::backend::tracker::myanimelist::MyAnimeListClient::new();
+            let tx_url = event_tx.clone();
+            let token_res = client
+                .run_loopback_oauth_flow(&client_id, client_secret.as_deref(), move |auth_url| {
+                    #[cfg(not(test))]
+                    let _ = open::that(auth_url);
+                    #[cfg(test)]
+                    let _ = auth_url;
+                    let _ = tx_url.send(Events::CloudSyncProgress(crate::backend::cloud::CloudSyncProgress {
+                        step_label: tr(
+                            "Esperando que autorices MyAnimeList en tu navegador...",
+                            "Waiting for you to authorize MyAnimeList in your browser...",
+                        )
+                        .to_string(),
+                        completed_items: 2,
+                        total_items: 3,
+                    }));
+                })
+                .await;
+
+            match token_res {
+                Ok(tokens) => {
+                    let mut state = crate::backend::tracker::myanimelist::MalConnectionState::load();
+                    state.save_oauth_tokens(
+                        &client_id,
+                        client_secret.as_deref(),
+                        &tokens.access_token,
+                        tokens.refresh_token.as_deref(),
+                    );
+                    if let Ok(profile) = client.get_my_profile(&tokens.access_token).await {
+                        state.username = Some(profile.name);
+                        state.user_id = Some(profile.id);
+                    }
+                    let _ = state.save();
+                    let _ = event_tx.send(Events::MalOAuthFinished(Ok(state)));
+                },
+                Err(err) => {
+                    let _ = event_tx.send(Events::MalOAuthFinished(Err(err)));
+                },
+            }
+        });
+        self.cloud_task = Some(handle);
+    }
+
+    pub fn spawn_mal_sync(&mut self) {
+        if let Some(handle) = self.cloud_task.take() {
+            handle.abort();
+        }
+        self.cloud_state.is_busy = true;
+        self.cloud_state.progress = Some(crate::backend::cloud::CloudSyncProgress {
+            step_label: tr(
+                "Sincronizando tu lista de mangas con MyAnimeList (Móvil ⇄ PC)...",
+                "Syncing your manga list with MyAnimeList (Mobile ⇄ PC)...",
+            )
+            .to_string(),
+            completed_items: 1,
+            total_items: 2,
+        });
+
+        let mut state = self.cloud_state.mal_connection.clone();
+        let event_tx = self.global_event_tx.clone();
+        let handle = tokio::spawn(async move {
+            let client = crate::backend::tracker::myanimelist::MyAnimeListClient::new();
+            let db_path = crate::backend::AppDirectories::History.get_full_path();
+            let res = client.sync_with_database(&mut state, &db_path).await;
+            let _ = event_tx.send(Events::MalSyncFinished(res));
         });
         self.cloud_task = Some(handle);
     }
@@ -1226,6 +1334,7 @@ where
             (SelectedPage::Home, tr(" 🏠 Inicio <u/F1> ", " 🏠 Home <u/F1> ").to_string()),
             (SelectedPage::Search, tr(" 🔍 Buscar <i/F2> ", " 🔍 Search <i/F2> ").to_string()),
             (SelectedPage::Feed, tr(" 📚 Seguimiento <o/F3> ", " 📚 Feed <o/F3> ").to_string()),
+            (SelectedPage::News, tr(" 📰 Noticias <p/F8> ", " 📰 News <p/F8> ").to_string()),
         ];
 
         if self.current_tab == SelectedPage::MangaTab {
@@ -1276,7 +1385,7 @@ where
 
         Paragraph::new(Line::from(spans)).render(left_area, buf);
 
-        // Second row: subtle horizontal rule with active tab highlight bar
+        // Second row: clean neon underline on active tab (static, zero redraw jitter)
         if area.height >= 2 {
             let divider_y = area.y + 1;
             let rule_style = Style::default().fg(t.border_muted);
@@ -1333,6 +1442,7 @@ where
                 SelectedPage::Home => (tr(" 🏠 INICIO ", " 🏠 HOME "), t.accent_primary),
                 SelectedPage::Search => (tr(" 🔍 EXPLORAR ", " 🔍 SEARCH "), t.accent_primary),
                 SelectedPage::Feed => (tr(" 📚 BIBLIOTECA ", " 📚 LIBRARY "), t.status_success),
+                SelectedPage::News => (tr(" 📰 NOTICIAS ", " 📰 NEWS "), t.accent_highlight),
                 SelectedPage::MangaTab => (tr(" 📖 FICHA ", " 📖 MANGA "), t.accent_secondary),
                 SelectedPage::ReaderTab => (tr(" 👁 LECTOR ", " 👁 READER "), t.accent_highlight),
             }
@@ -1350,10 +1460,15 @@ where
                     ("w/b", tr("Popular", "Popular")),
                     ("h/l", tr("Recientes", "Recent")),
                     ("r/Enter", tr("Abrir", "Open")),
-                    ("v/V", tr("Escena/Cine", "Scene/TV")),
                     ("i", tr("Buscar", "Search")),
                     ("o", tr("Biblioteca", "Library")),
                     ("g", "GitHub"),
+                ],
+                SelectedPage::News => vec![
+                    ("j/k", tr("Mover", "Move")),
+                    ("Enter", tr("Abrir en navegador", "Open in browser")),
+                    ("Tab/1-4", tr("Fuente", "Source")),
+                    ("R", tr("Actualizar", "Refresh")),
                 ],
                 SelectedPage::Search => vec![
                     ("s", tr("Buscar", "Search")),
@@ -1572,7 +1687,6 @@ where
     /// Returns `true` when any global modal or page-level popup overlay is currently open.
     pub fn is_overlay_open(&self) -> bool {
         self.is_displaying_modal()
-            || self.home_page.is_overlay_open()
             || self.search_page.is_filter_open()
             || self.feed_page.is_overlay_open()
             || self.manga_page.as_ref().is_some_and(|page| {
@@ -1587,6 +1701,7 @@ where
         let new_picker = crate::backend::tui::picker_for_protocol(proto);
         self.picker = new_picker;
         self.home_page.set_picker(new_picker);
+        self.news_page.set_picker(new_picker);
         self.search_page.set_picker(new_picker);
         if let Some(manga_page) = self.manga_page.as_mut() {
             manga_page.set_picker(new_picker);
@@ -1605,6 +1720,7 @@ where
             SelectedPage::MangaTab => self.render_manga_page(area, frame),
             SelectedPage::Home => self.render_home_page(area, frame),
             SelectedPage::Feed => self.render_feed_page(area, frame),
+            SelectedPage::News => self.news_page.render(area, frame),
             // Reader tab should be on full screen
             SelectedPage::ReaderTab => {},
         }
@@ -1728,8 +1844,17 @@ where
                 } => {
                     self.spawn_cloud_oauth_login(client_id, client_secret);
                 },
+                CloudModalOutcome::StartMalOAuthLogin {
+                    client_id,
+                    client_secret,
+                } => {
+                    self.spawn_mal_oauth_login(client_id, client_secret);
+                },
                 CloudModalOutcome::StartSync(mode) => {
                     self.spawn_cloud_sync(mode);
+                },
+                CloudModalOutcome::StartMalSync => {
+                    self.spawn_mal_sync();
                 },
                 CloudModalOutcome::CancelRunningTask => {
                     if let Some(handle) = self.cloud_task.take() {
@@ -1999,6 +2124,16 @@ where
                 KeyCode::Char('o') | KeyCode::F(3) if self.current_tab != SelectedPage::ReaderTab => {
                     self.global_event_tx.send(Events::GoFeedPage).ok();
                 },
+                KeyCode::F(8) if self.current_tab != SelectedPage::ReaderTab => self.go_news_page(),
+                // `p` is used by Search (plan) and Manga (provider) pages, so only map it elsewhere
+                KeyCode::Char('p')
+                    if !matches!(
+                        self.current_tab,
+                        SelectedPage::ReaderTab | SelectedPage::Search | SelectedPage::MangaTab | SelectedPage::News
+                    ) =>
+                {
+                    self.go_news_page();
+                },
 
                 _ => {},
             }
@@ -2026,6 +2161,7 @@ where
                         SelectedPage::Feed => {
                             self.global_event_tx.send(Events::GoFeedPage).ok();
                         },
+                        SelectedPage::News => self.go_news_page(),
                         _ => {},
                     }
                     return;
@@ -2179,10 +2315,24 @@ where
         self.current_tab = SelectedPage::Feed;
     }
 
+    fn go_news_page(&mut self) {
+        if self.manga_page.is_some() {
+            self.manga_page.as_mut().unwrap().clean_up();
+            self.manga_page = None;
+        }
+        self.feed_page.clean_up();
+        self.news_page.ensure_loaded();
+        self.current_tab = SelectedPage::News;
+    }
+
     pub fn process_global_event(&mut self, event: Events) {
         let was_displaying_modal = self.is_displaying_modal();
 
         self.handle_events(event.clone());
+
+        if event == Events::Tick {
+            self.ui_tick = self.ui_tick.wrapping_add(1);
+        }
 
         if event == Events::Tick && self.last_new_chapter_check.elapsed() >= NEW_CHAPTER_CHECK_INTERVAL {
             self.global_event_tx.send(Events::CheckForNewDownloadedChapters).ok();
@@ -2218,6 +2368,9 @@ where
             },
             SelectedPage::Feed => {
                 self.feed_page.handle_events(event);
+            },
+            SelectedPage::News => {
+                self.news_page.handle_events(event);
             },
         };
     }
@@ -2280,6 +2433,7 @@ where
                     self.feed_page.update(feed_event);
                 }
             },
+            SelectedPage::News => {},
         };
     }
 
@@ -2552,7 +2706,7 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(app.tab_hit_boxes.len(), 3);
+        assert_eq!(app.tab_hit_boxes.len(), 4);
 
         // Sending 'n' again while modal is open closes it
         app.global_event_tx.send(Events::Key(KeyCode::Char('n').into())).unwrap();
@@ -2842,7 +2996,7 @@ mod tests {
         let area = Rect::new(0, 0, 100, 30);
         terminal.draw(|f| app.render(area, f)).unwrap();
 
-        assert_eq!(app.tab_hit_boxes.len(), 3);
+        assert_eq!(app.tab_hit_boxes.len(), 4);
         let (home_start, home_end, _) = app.tab_hit_boxes[0];
         let (search_start, search_end, _) = app.tab_hit_boxes[1];
         let (feed_start, feed_end, _) = app.tab_hit_boxes[2];

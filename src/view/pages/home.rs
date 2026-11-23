@@ -20,8 +20,8 @@ use crate::backend::tui::Events;
 use crate::common::ImageState;
 use crate::i18n::tr;
 use crate::theme::{current_theme, theme};
+use crate::view::widgets::Component;
 use crate::view::widgets::home::{CarrouselItemPopularManga, CarrouselState, PopularMangaCarrousel, RecentlyAddedCarrousel};
-use crate::view::widgets::{AnimePlayerState, AnimeVisualModal, Component, handle_anime_modal_key};
 
 #[derive(PartialEq, Eq)]
 pub enum HomeState {
@@ -49,8 +49,6 @@ pub enum HomeActions {
     SelectNextRecentlyAddedManga,
     SelectPreviousRecentlyAddedManga,
     SupportProject,
-    NextAnimeScene,
-    ToggleAnimeModal,
 }
 
 /// "ANSI Shadow" glyphs used to compose the big `MANGA-TUI` hero logo.
@@ -92,13 +90,13 @@ fn color_to_rgb(color: Color, fallback: (f32, f32, f32)) -> (f32, f32, f32) {
     }
 }
 
-/// Theme-aware horizontal gradient (`accent_primary` → `accent_secondary` → `status_error`).
+/// Theme-aware smooth static horizontal gradient (`accent_primary` → `accent_secondary` → `status_error`).
 fn gradient_color(index: usize, total: usize) -> Color {
     let t_pal = theme();
     let stops = [
-        color_to_rgb(t_pal.accent_primary, (0.0, 210.0, 255.0)),
-        color_to_rgb(t_pal.accent_secondary, (168.0, 128.0, 255.0)),
-        color_to_rgb(t_pal.status_error, (255.0, 95.0, 200.0)),
+        color_to_rgb(t_pal.accent_primary, (0.0, 232.0, 255.0)),
+        color_to_rgb(t_pal.accent_secondary, (192.0, 118.0, 255.0)),
+        color_to_rgb(t_pal.status_error, (255.0, 92.0, 142.0)),
     ];
     let t = if total <= 1 { 0.0 } else { index.min(total - 1) as f32 / (total - 1) as f32 };
     let (from, to, local_t) = if t < 0.5 { (stops[0], stops[1], t * 2.0) } else { (stops[1], stops[2], (t - 0.5) * 2.0) };
@@ -106,7 +104,7 @@ fn gradient_color(index: usize, total: usize) -> Color {
     Color::Rgb(lerp(from.0, to.0), lerp(from.1, to.1), lerp(from.2, to.2))
 }
 
-/// Colors every visible character of `text` with the hero gradient.
+/// Colors every visible character of `text` with the clean Neo-Tokyo gradient.
 fn gradient_line(text: &str, bold: bool) -> Line<'static> {
     let total = text.chars().count();
     let spans: Vec<Span<'static>> = text
@@ -210,11 +208,9 @@ where
     manga_provider: Arc<T>,
     pub active_provider: MangaProviders,
     top_bar_area: Rect,
-    anime_banner_area: Rect,
     popular_mangas_area: Rect,
     recently_added_area: Rect,
     stats: HomeStats,
-    pub anime_player: AnimePlayerState,
 }
 
 impl<T> Component for Home<T>
@@ -228,6 +224,7 @@ where
 
         let hero_mode = HeroMode::for_area(area);
         let top_bar_height = hero_mode.height(area.height);
+        // Balanced 50/50 split below the Hero header so both Popular and Recently Added covers have ample room
         let [top_bar_area, carrousel_popular_mangas_area, latest_updates_area] =
             Layout::vertical([Constraint::Length(top_bar_height), Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
 
@@ -238,10 +235,6 @@ where
         self.render_hero(top_bar_area, buf, hero_mode);
         self.render_popular_mangas_carrousel(carrousel_popular_mangas_area, buf);
         self.render_recently_added_mangas_area(latest_updates_area, buf);
-
-        if self.anime_player.is_fullscreen_open {
-            AnimeVisualModal::new(&mut self.anime_player, self.picker.as_mut()).render(area, buf);
-        }
     }
 
     fn update(&mut self, action: Self::Actions) {
@@ -258,8 +251,6 @@ where
                 self.go_to_manga_page_recently_added();
             },
             HomeActions::SupportProject => self.support_project(),
-            HomeActions::NextAnimeScene => self.anime_player.next_scene(),
-            HomeActions::ToggleAnimeModal => self.anime_player.toggle_fullscreen(),
         }
     }
 
@@ -307,16 +298,10 @@ where
             manga_provider,
             active_provider,
             top_bar_area: Rect::default(),
-            anime_banner_area: Rect::default(),
             popular_mangas_area: Rect::default(),
             recently_added_area: Rect::default(),
             stats: load_home_stats(),
-            anime_player: AnimePlayerState::new(),
         }
-    }
-
-    pub fn is_overlay_open(&self) -> bool {
-        self.anime_player.is_fullscreen_open
     }
 
     pub fn set_picker(&mut self, picker: Option<Picker>) {
@@ -326,7 +311,6 @@ where
         self.carrousel_recently_added.can_display_images = can_display;
         self.popular_manga_carrousel_state.rebuild_protocols(self.picker.as_mut());
         self.recently_added_manga_state.rebuild_protocols(self.picker.as_mut());
-        self.anime_player.invalidate_protocols();
         if can_display {
             if !self.carrousel_popular_mangas.items.is_empty() && self.popular_manga_carrousel_state.is_empty() {
                 self.init_search_popular_mangas_cover();
@@ -358,20 +342,20 @@ where
 
         let mut top_left_spans = vec![Span::styled(
             tr(" 🔥 Títulos Populares ", " 🔥 Popular New Titles "),
-            Style::default().fg(t.accent_primary).bg(t.title_chip_primary_bg).bold(),
+            Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
         )];
         if total > 0 {
-            top_left_spans.push(Span::styled(format!(" ({current}/{total}) "), Style::default().fg(t.accent_highlight).bold()));
+            top_left_spans.push(Span::styled(format!("  {current}/{total} "), Style::default().fg(t.accent_highlight).bold()));
         }
 
         let mut dot_spans = Vec::new();
         if total > 0 {
             dot_spans.push(Span::raw(" "));
-            let max_dots = total.min(15);
+            let max_dots = total.min(12);
             let active_dot = self.carrousel_popular_mangas.current_item_visible_index % max_dots;
             for idx in 0..max_dots {
                 if idx == active_dot {
-                    dot_spans.push(Span::styled("● ", Style::default().fg(t.accent_primary).bold()));
+                    dot_spans.push(Span::styled("━ ", Style::default().fg(t.accent_primary).bold()));
                 } else {
                     dot_spans.push(Span::styled("· ", Style::default().fg(t.border_muted)));
                 }
@@ -380,17 +364,15 @@ where
 
         let instructions = Line::from(vec![
             Span::raw(" "),
-            t.key_chip("b"),
-            Span::styled(tr(" Anterior  ", " Previous  "), Style::default().fg(t.text_muted)),
-            t.key_chip("w"),
-            Span::styled(tr(" Siguiente  ", " Next  "), Style::default().fg(t.text_muted)),
+            t.key_chip("b/w"),
+            Span::styled(tr(" Cambiar  ", " Switch  "), Style::default().fg(t.text_muted)),
             t.action_chip_primary("r"),
-            Span::styled(tr(" Leer manga ", " Read manga "), Style::default().fg(t.text_primary).bold()),
+            Span::styled(tr(" Leer ahora ", " Read now "), Style::default().fg(t.text_primary).bold()),
         ]);
 
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(t.border))
+            .border_style(Style::default().fg(t.border_accent))
             .title(Line::from(top_left_spans))
             .title_bottom(instructions);
 
@@ -468,7 +450,6 @@ where
     }
 
     pub fn tick(&mut self) {
-        self.anime_player.tick();
         self.carrousel_popular_mangas.tick();
         self.carrousel_recently_added.tick();
         while let Ok(local_event) = self.local_event_rx.try_recv() {
@@ -645,10 +626,10 @@ where
 
         let mut top_left_spans = vec![Span::styled(
             tr(" ✨ Añadidos Recientemente ", " ✨ Recently Added "),
-            Style::default().fg(t.accent_secondary).bg(t.title_chip_secondary_bg).bold(),
+            Style::default().fg(Color::Black).bg(t.accent_secondary).bold(),
         )];
         if total > 0 {
-            top_left_spans.push(Span::styled(format!(" ({current}/{total}) "), Style::default().fg(t.accent_highlight).bold()));
+            top_left_spans.push(Span::styled(format!("  {current}/{total} "), Style::default().fg(t.accent_highlight).bold()));
         }
 
         let mut page_spans = Vec::new();
@@ -664,17 +645,15 @@ where
 
         let instructions = Line::from(vec![
             Span::raw(" "),
-            t.key_chip("h / ←"),
-            Span::styled(tr(" Izquierda  ", " Left  "), Style::default().fg(t.text_muted)),
-            t.key_chip("l / →"),
-            Span::styled(tr(" Derecha  ", " Right  "), Style::default().fg(t.text_muted)),
+            t.key_chip("h/l · ←/→"),
+            Span::styled(tr(" Explorar  ", " Browse  "), Style::default().fg(t.text_muted)),
             t.action_chip_secondary("Enter"),
             Span::styled(tr(" Abrir ficha ", " Open manga "), Style::default().fg(t.text_primary).bold()),
         ]);
 
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(t.border))
+            .border_style(Style::default().fg(t.border_secondary))
             .title(Line::from(top_left_spans))
             .title_bottom(instructions);
 
@@ -750,44 +729,44 @@ where
         Line::from(spans)
     }
 
-    fn render_hero(&mut self, area: Rect, buf: &mut Buffer, mode: HeroMode) {
+    fn render_hero(&self, area: Rect, buf: &mut Buffer, mode: HeroMode) {
         if area.width == 0 || area.height == 0 {
             return;
         }
         match mode {
             HeroMode::Full => self.render_full_hero(area, buf),
-            HeroMode::Compact => {
-                self.anime_banner_area = Rect::default();
-                self.render_top_bar(area, buf);
-            },
+            HeroMode::Compact => self.render_top_bar(area, buf),
         }
     }
 
-    fn render_full_hero(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_full_hero(&self, area: Rect, buf: &mut Buffer) {
         let t = theme();
         let (icon, greeting) = greeting_for_hour(chrono::Local::now().hour());
 
         let title_left = Line::from(vec![
-            Span::styled(tr(" 🏠 Inicio ", " 🏠 Home "), Style::default().fg(t.accent_primary).bold()),
-            Span::styled(format!("{icon} {greeting}, "), Style::default().fg(t.status_warning).bold()),
+            Span::styled(tr(" ⛩  MANGA-TUI ", " ⛩  MANGA-TUI "), Style::default().fg(Color::Black).bg(t.accent_primary).bold()),
+            Span::styled(format!("  {icon} {greeting}, "), Style::default().fg(t.status_warning).bold()),
             Span::styled(format!("{} ", tr("lector", "reader")), Style::default().fg(t.text_primary).bold()),
         ]);
 
         let title_right = Line::from(vec![
-            Span::styled("<v> ", Style::default().fg(t.accent_primary).bold()),
-            Span::styled(format!("{} ", self.anime_player.scene.badge()), Style::default().fg(t.text_muted)),
-            Span::styled("<V> ", Style::default().fg(t.accent_secondary).bold()),
-            Span::styled(tr("Cine Anime ", "Anime TV "), Style::default().fg(t.text_muted)),
-            Span::styled("<T> ", Style::default().fg(t.accent_highlight).bold()),
-            Span::styled(format!("{} ", current_theme().label()), Style::default().fg(t.text_muted)),
-            Span::styled("<g> ", Style::default().fg(t.accent_highlight).bold()),
-            Span::styled("GitHub ", Style::default().fg(t.text_muted)),
+            Span::styled(" ⚡ ", Style::default().fg(t.accent_primary).bg(t.chip_bg).bold()),
+            Span::styled(
+                format!("{} ", self.active_provider.badge_label()),
+                Style::default().fg(t.text_primary).bg(t.chip_bg).bold(),
+            ),
+            Span::raw("  "),
+            Span::styled(" T ", Style::default().fg(t.accent_highlight).bg(t.chip_bg).bold()),
+            Span::styled(format!(" {} ", current_theme().label()), Style::default().fg(t.text_muted)),
+            Span::raw("  "),
+            Span::styled(" g ", Style::default().fg(t.accent_secondary).bg(t.chip_bg).bold()),
+            Span::styled(" GitHub ", Style::default().fg(t.text_muted)),
         ])
         .right_aligned();
 
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(t.border))
+            .border_style(Style::default().fg(t.border_accent))
             .title(title_left)
             .title_top(title_right);
 
@@ -801,40 +780,14 @@ where
             return;
         }
 
-        // When the terminal is wide enough (>= 136 cols), show the live animated anime visual card on the right of the hero!
-        let (logo_area, info_area, maybe_anime_area) = if inner.width >= logo_width() + 58 {
-            let [l, i, a] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1), Constraint::Length(24)])
-                .spacing(2)
-                .areas(inner);
-            (l, i, Some(a))
-        } else {
-            let [l, i] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1)])
-                .spacing(3)
-                .areas(inner);
-            (l, i, None)
-        };
+        let [logo_area, info_area] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1)])
+            .spacing(3)
+            .areas(inner);
 
         let logo_lines: Vec<Line<'static>> = build_logo_lines().iter().map(|row| gradient_line(row, false)).collect();
         Paragraph::new(logo_lines).render(logo_area, buf);
 
-        if let Some(anime_area) = maybe_anime_area {
-            self.anime_banner_area = anime_area;
-            let anime_block = Block::bordered()
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(t.border_accent))
-                .title(Line::from(vec![Span::styled(
-                    format!(" {} ", self.anime_player.scene.badge()),
-                    Style::default().fg(t.accent_primary).bold(),
-                )]));
-            let anime_inner = anime_block.inner(anime_area);
-            anime_block.render(anime_area, buf);
-            // Render the live animated character in HD using the terminal's graphics protocol (Sixel / Kitty / iTerm2)
-            self.anime_player.render_hero_canvas(anime_inner, buf, self.picker.as_mut());
-        } else {
-            self.anime_banner_area = Rect::default();
-        }
-
-        let [greeting_area, continue_area, tagline_area, cards_area] =
+        let [greeting_area, continue_area, tagline_area, stats_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(3)])
                 .areas(info_area);
 
@@ -842,43 +795,44 @@ where
             Span::styled(format!("{icon}  "), Style::default().fg(t.status_warning)),
             Span::styled(format!("{greeting}, "), Style::default().fg(t.text_primary).bold()),
             Span::styled(tr("lector", "reader").to_string(), Style::default().fg(t.accent_secondary).bold()),
+            Span::styled("  ·  ", Style::default().fg(t.border_muted)),
+            Span::styled(
+                tr("Tu centro de lectura manga en terminal", "Your terminal manga reading hub"),
+                Style::default().fg(t.text_muted).italic(),
+            ),
         ]))
         .render(greeting_area, buf);
 
         Paragraph::new(self.continue_reading_line(info_area.width)).render(continue_area, buf);
-        Paragraph::new(Line::from(Span::styled(
-            tr("Tu centro de lectura manga en terminal", "Your terminal manga reading hub"),
-            Style::default().fg(t.text_dim).italic(),
-        )))
-        .render(tagline_area, buf);
+        Paragraph::new(Line::default()).render(tagline_area, buf);
 
-        if cards_area.width >= 74 {
-            let card_width = ((cards_area.width.saturating_sub(3)) / 4).min(21);
+        if stats_area.width >= 72 {
+            let card_width = ((stats_area.width.saturating_sub(3)) / 4).min(22);
             let compact_labels = card_width < 20;
             let card_areas = Layout::horizontal([Constraint::Length(card_width); 4])
                 .spacing(1)
                 .flex(Flex::Start)
-                .split(cards_area);
+                .split(stats_area);
             for ((stat_icon, value, label, color), card_area) in
                 self.stat_entries(compact_labels).into_iter().zip(card_areas.iter())
             {
                 let card_block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(t.border_muted));
+                    .border_style(Style::default().fg(color));
                 let card_inner = card_block.inner(*card_area);
                 card_block.render(*card_area, buf);
                 Paragraph::new(Line::from(vec![
                     Span::styled(format!("{stat_icon} "), Style::default().fg(color)),
                     Span::styled(value, Style::default().fg(color).bold()),
-                    Span::styled(format!(" {label}"), Style::default().fg(t.text_muted)),
+                    Span::styled(format!(" {label}"), Style::default().fg(t.text_secondary)),
                 ]))
                 .centered()
                 .render(card_inner, buf);
             }
         } else {
-            let [_gap, row1, row2] =
-                Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).areas(cards_area);
-            let entries = self.stat_entries(cards_area.width < 46);
+            let [row1, row2, _] =
+                Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).areas(stats_area);
+            let entries = self.stat_entries(stats_area.width < 46);
             for (pair, row_area) in entries.chunks(2).zip([row1, row2]) {
                 let [left_col, right_col] =
                     Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(row_area);
@@ -953,15 +907,6 @@ where
     }
 
     fn handle_mouse_events(&mut self, mouse_event: MouseEvent) {
-        if self.anime_player.is_fullscreen_open {
-            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                self.anime_player.next_scene();
-            } else if let MouseEventKind::Down(MouseButton::Right) = mouse_event.kind {
-                self.anime_player.is_fullscreen_open = false;
-            }
-            return;
-        }
-
         let pos = Position::new(mouse_event.column, mouse_event.row);
         let in_popular = self.popular_mangas_area.contains(pos);
 
@@ -981,9 +926,7 @@ where
                 }
             },
             MouseEventKind::Down(MouseButton::Left) => {
-                if self.anime_banner_area.contains(pos) {
-                    self.local_action_tx.send(HomeActions::ToggleAnimeModal).ok();
-                } else if self.top_bar_area.contains(pos) {
+                if self.top_bar_area.contains(pos) {
                     if let Some(tx) = &self.global_event_tx {
                         tx.send(Events::GoFeedPage).ok();
                     }
@@ -1007,11 +950,6 @@ where
     }
 
     pub fn handle_key_events(&mut self, key_event: KeyEvent) {
-        if self.anime_player.is_fullscreen_open {
-            handle_anime_modal_key(&mut self.anime_player, key_event);
-            return;
-        }
-
         match key_event.code {
             KeyCode::Char('w') => {
                 self.local_action_tx.send(HomeActions::SelectNextPopularManga).ok();
@@ -1034,12 +972,6 @@ where
             },
             KeyCode::Char('g') => {
                 self.local_action_tx.send(HomeActions::SupportProject).ok();
-            },
-            KeyCode::Char('v') => {
-                self.local_action_tx.send(HomeActions::NextAnimeScene).ok();
-            },
-            KeyCode::Char('V') => {
-                self.local_action_tx.send(HomeActions::ToggleAnimeModal).ok();
             },
             _ => {},
         }
@@ -1157,7 +1089,13 @@ mod tests {
             if width >= 90 {
                 assert!(text.contains("1.2K"), "expected formatted chapters_read in {width}x{height}");
                 assert!(text.contains("Berserk"), "expected last read title in top bar in {width}x{height}");
-                assert!(text.contains("Populares") || text.contains("Popular"), "expected popular section in {width}x{height}");
+                assert!(
+                    text.contains("DESTACADOS")
+                        || text.contains("SPOTLIGHT")
+                        || text.contains("Populares")
+                        || text.contains("Popular"),
+                    "expected popular section in {width}x{height}"
+                );
             }
         }
     }

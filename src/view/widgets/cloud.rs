@@ -11,6 +11,7 @@ use crate::backend::cloud::{
     CLOUD_ROOT_FOLDER_NAME, CloudBackendKind, CloudConnectionState, CloudSyncMode, CloudSyncProgress, CloudSyncReport,
     DetectedCloudFolder, detect_installed_cloud_folders,
 };
+use crate::backend::tracker::myanimelist::{MAL_APICONFIG_URL, MalConnectionState, MalSyncReport};
 use crate::i18n::tr;
 use crate::theme::theme;
 use crate::utils::centered_rect;
@@ -24,17 +25,21 @@ pub enum CloudActionRow {
     PullDownloads,
     LinkGoogleDriveApi,
     LinkLocalCloudFolder,
+    LinkMyAnimeList,
+    SyncMyAnimeList,
     Disconnect,
 }
 
 impl CloudActionRow {
-    pub const ALL: [CloudActionRow; 7] = [
+    pub const ALL: [CloudActionRow; 9] = [
         CloudActionRow::SyncLibrary,
         CloudActionRow::FullSync,
         CloudActionRow::PushDownloads,
         CloudActionRow::PullDownloads,
         CloudActionRow::LinkGoogleDriveApi,
         CloudActionRow::LinkLocalCloudFolder,
+        CloudActionRow::LinkMyAnimeList,
+        CloudActionRow::SyncMyAnimeList,
         CloudActionRow::Disconnect,
     ];
 
@@ -46,6 +51,8 @@ impl CloudActionRow {
             Self::PullDownloads => "p",
             Self::LinkGoogleDriveApi => "g",
             Self::LinkLocalCloudFolder => "f",
+            Self::LinkMyAnimeList => "m",
+            Self::SyncMyAnimeList => "a",
             Self::Disconnect => "x",
         }
     }
@@ -62,7 +69,14 @@ impl CloudActionRow {
             Self::LinkLocalCloudFolder => {
                 tr("📁 Conectar carpeta de iCloud Drive / Google Drive del PC", "📁 Connect iCloud Drive / Google Drive PC folder")
             },
-            Self::Disconnect => tr("🚪 Cerrar sesión en la nube", "🚪 Sign out from cloud"),
+            Self::LinkMyAnimeList => tr(
+                "🔐 Vincular mi cuenta de MyAnimeList (OAuth 2.0 PKCE privado)",
+                "🔐 Link my MyAnimeList account (Private OAuth 2.0 PKCE)",
+            ),
+            Self::SyncMyAnimeList => {
+                tr("📲 Sincronizar lista con MyAnimeList (Móvil ⇄ PC)", "📲 Sync manga list with MyAnimeList (Mobile ⇄ PC)")
+            },
+            Self::Disconnect => tr("🚪 Cerrar sesión en la nube / MyAnimeList", "🚪 Sign out from cloud / MyAnimeList"),
         }
     }
 
@@ -101,9 +115,17 @@ impl CloudActionRow {
                 "Detecta en 1 clic tu carpeta de iCloud Drive, Google Drive o OneDrive (o pulsa <e> para elegir otra carpeta)",
                 "Detects your iCloud Drive, Google Drive, or OneDrive folder in 1 click (or press <e> to choose a folder)",
             ),
+            Self::LinkMyAnimeList => tr(
+                "Cada usuario vincula su propia cuenta con su Client ID privado (guardado en el Keyring del sistema, sin exponer contraseñas ni proveedores)",
+                "Each user links their own account with their private Client ID (stored in OS Keyring, never exposing passwords or providers)",
+            ),
+            Self::SyncMyAnimeList => tr(
+                "Importa tus mangas del móvil (Reading / Plan to Read) y sube a MyAnimeList tu progreso de capítulos leídos",
+                "Imports your mobile mangas (Reading / Plan to Read) and pushes your read chapter progress to MyAnimeList",
+            ),
             Self::Disconnect => tr(
-                "Cierra la sesión en la nube en este dispositivo sin borrar tus mangas ni tu historial local",
-                "Signs out of the cloud on this device without deleting your local mangas or reading history",
+                "Cierra la sesión en la nube y MyAnimeList en este dispositivo sin borrar tus mangas ni tu historial local",
+                "Signs out of the cloud and MyAnimeList on this device without deleting your local mangas or reading history",
             ),
         }
     }
@@ -113,6 +135,11 @@ impl CloudActionRow {
 pub enum CloudInputPopup {
     None,
     GoogleCredentials {
+        client_id: String,
+        client_secret: String,
+        editing_secret: bool,
+    },
+    MalCredentials {
         client_id: String,
         client_secret: String,
         editing_secret: bool,
@@ -130,7 +157,12 @@ pub enum CloudModalOutcome {
         client_id: String,
         client_secret: Option<String>,
     },
+    StartMalOAuthLogin {
+        client_id: String,
+        client_secret: Option<String>,
+    },
     StartSync(CloudSyncMode),
+    StartMalSync,
     CancelRunningTask,
 }
 
@@ -138,6 +170,7 @@ pub enum CloudModalOutcome {
 pub struct CloudModalState {
     pub selected_index: usize,
     pub connection: CloudConnectionState,
+    pub mal_connection: MalConnectionState,
     pub detected_folders: Vec<DetectedCloudFolder>,
     pub detected_cursor: usize,
     pub input_popup: CloudInputPopup,
@@ -156,11 +189,19 @@ impl Default for CloudModalState {
 impl CloudModalState {
     pub fn new() -> Self {
         let connection = CloudConnectionState::load();
+        let mal_connection = MalConnectionState::load();
         let detected_folders = detect_installed_cloud_folders();
-        let selected_index = if connection.is_connected() { 0 } else { 4 };
+        let selected_index = if connection.is_connected() {
+            0
+        } else if mal_connection.is_connected() {
+            7
+        } else {
+            4
+        };
         Self {
             selected_index,
             connection,
+            mal_connection,
             detected_folders,
             detected_cursor: 0,
             input_popup: CloudInputPopup::None,
@@ -173,8 +214,15 @@ impl CloudModalState {
 
     pub fn refresh_from_disk(&mut self) {
         self.connection = CloudConnectionState::load();
+        self.mal_connection = MalConnectionState::load();
         self.detected_folders = detect_installed_cloud_folders();
-        self.selected_index = if self.connection.is_connected() { 0 } else { 4 };
+        self.selected_index = if self.connection.is_connected() {
+            0
+        } else if self.mal_connection.is_connected() {
+            7
+        } else {
+            4
+        };
     }
 
     pub fn selected_row(&self) -> CloudActionRow {
@@ -246,10 +294,65 @@ impl CloudModalState {
         }
     }
 
+    pub fn on_mal_oauth_finished(&mut self, result: Result<MalConnectionState, String>) {
+        self.is_busy = false;
+        self.progress = None;
+        match result {
+            Ok(new_state) => {
+                self.mal_connection = new_state;
+                let summary = self.mal_connection.connection_summary();
+                self.set_status(
+                    format!("✓ {}: {summary}", tr("Cuenta privada de MyAnimeList vinculada", "Private MyAnimeList account linked")),
+                    false,
+                );
+            },
+            Err(err) => {
+                self.set_status(format!("⚠ {err}"), true);
+            },
+        }
+    }
+
+    pub fn on_mal_sync_finished(&mut self, result: Result<MalSyncReport, String>) {
+        self.is_busy = false;
+        self.progress = None;
+        match result {
+            Ok(report) => {
+                self.mal_connection.last_sync_at = Some(report.synced_at.clone());
+                self.mal_connection.last_sync_report = Some(report.clone());
+                let _ = self.mal_connection.save();
+                let msg = if crate::i18n::is_es() {
+                    format!(
+                        "✓ MyAnimeList sincronizado: {} mangas en lista · ↓{} importados al PC · ↑{} actualizados en MAL",
+                        report.total_mal_entries, report.imported_from_mal, report.pushed_to_mal
+                    )
+                } else {
+                    format!(
+                        "✓ MyAnimeList synced: {} list entries · ↓{} imported to PC · ↑{} updated on MAL",
+                        report.total_mal_entries, report.imported_from_mal, report.pushed_to_mal
+                    )
+                };
+                self.set_status(msg, false);
+            },
+            Err(err) => {
+                self.set_status(format!("⚠ {err}"), true);
+            },
+        }
+    }
+
     fn open_google_credentials_popup(&mut self) {
         let existing_id = self.connection.get_client_id().unwrap_or_default();
         let existing_secret = self.connection.get_client_secret().unwrap_or_default();
         self.input_popup = CloudInputPopup::GoogleCredentials {
+            client_id: existing_id,
+            client_secret: existing_secret,
+            editing_secret: false,
+        };
+    }
+
+    fn open_mal_credentials_popup(&mut self) {
+        let existing_id = self.mal_connection.get_client_id().unwrap_or_default();
+        let existing_secret = self.mal_connection.get_client_secret().unwrap_or_default();
+        self.input_popup = CloudInputPopup::MalCredentials {
             client_id: existing_id,
             client_secret: existing_secret,
             editing_secret: false,
@@ -362,10 +465,35 @@ impl CloudModalState {
                 self.link_detected_or_prompt_folder();
                 CloudModalOutcome::None
             },
+            CloudActionRow::LinkMyAnimeList => {
+                self.open_mal_credentials_popup();
+                CloudModalOutcome::None
+            },
+            CloudActionRow::SyncMyAnimeList => {
+                if !self.mal_connection.is_connected() {
+                    self.set_status(
+                        tr(
+                            "⚠ Primero vincula tu cuenta privada de MyAnimeList pulsando <m>.",
+                            "⚠ Please link your private MyAnimeList account first by pressing <m>.",
+                        ),
+                        true,
+                    );
+                    return CloudModalOutcome::None;
+                }
+                CloudModalOutcome::StartMalSync
+            },
             CloudActionRow::Disconnect => {
                 self.connection.clear_credentials();
                 let _ = self.connection.save();
-                self.set_status(tr("✓ Cuenta de la nube desvinculada.", "✓ Cloud account unlinked."), false);
+                self.mal_connection.clear_credentials();
+                let _ = self.mal_connection.save();
+                self.set_status(
+                    tr(
+                        "✓ Cuentas de la nube y MyAnimeList desvinculadas de forma segura.",
+                        "✓ Cloud and MyAnimeList accounts unlinked safely.",
+                    ),
+                    false,
+                );
                 CloudModalOutcome::None
             },
         }
@@ -422,6 +550,70 @@ impl CloudModalState {
                         let _ = self.connection.save();
                         self.input_popup = CloudInputPopup::None;
                         return CloudModalOutcome::StartOAuthLogin {
+                            client_id: cid,
+                            client_secret: secret_opt,
+                        };
+                    },
+                    KeyCode::Char(ch) => {
+                        if *editing_secret {
+                            client_secret.push(ch);
+                        } else {
+                            client_id.push(ch);
+                        }
+                    },
+                    _ => {},
+                }
+                return CloudModalOutcome::None;
+            },
+            CloudInputPopup::MalCredentials {
+                client_id,
+                client_secret,
+                editing_secret,
+            } => {
+                match key.code {
+                    KeyCode::Esc => {
+                        self.input_popup = CloudInputPopup::None;
+                    },
+                    KeyCode::Tab | KeyCode::Up | KeyCode::Down => {
+                        *editing_secret = !*editing_secret;
+                    },
+                    KeyCode::F(1) => {
+                        #[cfg(not(test))]
+                        let _ = open::that(MAL_APICONFIG_URL);
+                        self.set_status(
+                            tr(
+                                "🌐 Abriendo https://myanimelist.net/apiconfig en tu navegador...",
+                                "🌐 Opening https://myanimelist.net/apiconfig in your browser...",
+                            ),
+                            false,
+                        );
+                    },
+                    KeyCode::Backspace => {
+                        if *editing_secret {
+                            client_secret.pop();
+                        } else {
+                            client_id.pop();
+                        }
+                    },
+                    KeyCode::Enter => {
+                        let cid = client_id.trim().to_string();
+                        let csec = client_secret.trim().to_string();
+                        if cid.is_empty() {
+                            self.set_status(
+                                tr(
+                                    "⚠ Introduce tu Client ID personal de MyAnimeList (pulsa F1 para crearlo en 1 min)",
+                                    "⚠ Enter your personal MyAnimeList Client ID (press F1 to create one in 1 min)",
+                                ),
+                                true,
+                            );
+                            return CloudModalOutcome::None;
+                        }
+                        self.mal_connection.client_id = Some(cid.clone());
+                        let secret_opt = (!csec.is_empty()).then_some(csec);
+                        self.mal_connection.fallback_client_secret = secret_opt.clone();
+                        let _ = self.mal_connection.save();
+                        self.input_popup = CloudInputPopup::None;
+                        return CloudModalOutcome::StartMalOAuthLogin {
                             client_id: cid,
                             client_secret: secret_opt,
                         };
@@ -523,13 +715,22 @@ impl CloudModalState {
                 self.selected_index = 5;
                 self.execute_row_action(CloudActionRow::LinkLocalCloudFolder)
             },
-            KeyCode::Char('x') | KeyCode::Char('X') => {
+            KeyCode::Char('m') | KeyCode::Char('M') => {
                 self.selected_index = 6;
+                self.execute_row_action(CloudActionRow::LinkMyAnimeList)
+            },
+            KeyCode::Char('a') | KeyCode::Char('A') => {
+                self.selected_index = 7;
+                self.execute_row_action(CloudActionRow::SyncMyAnimeList)
+            },
+            KeyCode::Char('x') | KeyCode::Char('X') => {
+                self.selected_index = 8;
                 self.execute_row_action(CloudActionRow::Disconnect)
             },
             KeyCode::Char('e') | KeyCode::Char('E') => {
                 match self.selected_row() {
                     CloudActionRow::LinkLocalCloudFolder => self.open_custom_folder_popup(),
+                    CloudActionRow::LinkMyAnimeList | CloudActionRow::SyncMyAnimeList => self.open_mal_credentials_popup(),
                     _ => self.open_google_credentials_popup(),
                 }
                 CloudModalOutcome::None
@@ -563,12 +764,12 @@ impl Widget for CloudModal<'_> {
             Span::styled(tr(" Mover  ", " Move  "), Style::default().fg(t.text_muted)),
             t.highlight_key_chip("Enter"),
             Span::styled(tr(" Elegir  ", " Select  "), Style::default().fg(t.text_muted)),
+            t.key_chip("m"),
+            Span::styled(" MyAnimeList  ", Style::default().fg(t.text_muted)),
             t.key_chip("g"),
             Span::styled(" Google  ", Style::default().fg(t.text_muted)),
             t.key_chip("f"),
             Span::styled(" iCloud/Drive  ", Style::default().fg(t.text_muted)),
-            t.key_chip("s"),
-            Span::styled(" Sync  ", Style::default().fg(t.text_muted)),
             t.key_chip("Esc/q"),
             Span::styled(tr(" Cerrar ", " Close "), Style::default().fg(t.text_muted)),
         ])
@@ -580,10 +781,13 @@ impl Widget for CloudModal<'_> {
             .style(Style::default().bg(t.bar_bg))
             .title(Line::from(vec![
                 Span::styled(
-                    tr(" ☁  Sincronización en la Nube · Google Drive & iCloud ", " ☁  Cloud Sync · Google Drive & iCloud "),
+                    tr(
+                        " ☁  Nube y Cuentas Privadas · Google Drive, iCloud & MyAnimeList ",
+                        " ☁  Cloud & Private Accounts · Google Drive, iCloud & MyAnimeList ",
+                    ),
                     Style::default().fg(t.accent_primary).add_modifier(Modifier::BOLD),
                 ),
-                Span::styled(tr(" [Multi-dispositivo] ", " [Multi-device] "), Style::default().fg(t.accent_secondary)),
+                Span::styled(tr(" [OAuth 2.0 + Keyring] ", " [OAuth 2.0 + Keyring] "), Style::default().fg(t.accent_secondary)),
             ]))
             .title_bottom(bottom_bar);
 
@@ -662,21 +866,41 @@ impl Widget for CloudModal<'_> {
         let status_inner = status_block.inner(chunks[0]);
         status_block.render(chunks[0], buf);
 
+        let mal_connected = self.state.mal_connection.is_connected();
+        let mal_dot = if mal_connected { "🟢" } else { "⚪" };
+        let mal_color = if mal_connected { t.status_success } else { t.text_muted };
+        let mal_summary = self.state.mal_connection.connection_summary();
+
         let status_lines = vec![
             Line::from(vec![
                 Span::raw(format!("  {status_dot} ")),
-                Span::styled(format!("{}: ", tr("Estado de la nube", "Cloud status")), Style::default().fg(t.text_muted)),
+                Span::styled(format!("{}: ", tr("Nube", "Cloud")), Style::default().fg(t.text_muted)),
                 Span::styled(summary_text, Style::default().fg(status_color).add_modifier(Modifier::BOLD)),
+                Span::styled("   │   ", Style::default().fg(t.border_muted)),
+                Span::raw(format!("{mal_dot} ")),
+                Span::styled("MyAnimeList: ", Style::default().fg(t.text_muted)),
+                Span::styled(mal_summary, Style::default().fg(mal_color).add_modifier(Modifier::BOLD)),
             ]),
             last_sync_line,
         ];
         Paragraph::new(status_lines).render(status_inner, buf);
 
-        // 2. Interactive actions list
+        // 2. Interactive actions list (adapts row spacing automatically to terminal height so all 9 rows always fit)
         let list_area = chunks[1];
-        let row_height = 2u16;
-        for (idx, row) in CloudActionRow::ALL.iter().copied().enumerate() {
-            let y = list_area.y + (idx as u16) * row_height;
+        let total_rows = CloudActionRow::ALL.len() as u16;
+        let row_height = if list_area.height >= total_rows * 2 { 2u16 } else { 1u16 };
+        let visible_capacity = (list_area.height / row_height).max(1) as usize;
+        let scroll_offset =
+            if self.state.selected_index >= visible_capacity { self.state.selected_index + 1 - visible_capacity } else { 0 };
+        for (visible_idx, (idx, row)) in CloudActionRow::ALL
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(scroll_offset)
+            .take(visible_capacity)
+            .enumerate()
+        {
+            let y = list_area.y + (visible_idx as u16) * row_height;
             if y + 1 > list_area.bottom() {
                 break;
             }
@@ -864,6 +1088,109 @@ impl Widget for CloudModal<'_> {
                 ];
                 Paragraph::new(lines).render(p_inner, buf);
             },
+            CloudInputPopup::MalCredentials {
+                client_id,
+                client_secret,
+                editing_secret,
+            } => {
+                let popup_area = centered_rect(modal_area, 86, 68);
+                Clear.render(popup_area, buf);
+                let block = Block::bordered()
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(t.accent_highlight))
+                    .style(Style::default().bg(t.bar_bg))
+                    .title(Line::from(vec![Span::styled(
+                        tr(
+                            " 🔐 Vincular cuenta privada de MyAnimeList (OAuth 2.0 + PKCE + Keyring) ",
+                            " 🔐 Link Private MyAnimeList Account (OAuth 2.0 + PKCE + Keyring) ",
+                        ),
+                        Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD),
+                    )]))
+                    .title_bottom(
+                        Line::from(vec![
+                            Span::raw(" "),
+                            t.key_chip("F1"),
+                            Span::styled(
+                                tr(" Abrir myanimelist.net/apiconfig  ", " Open myanimelist.net/apiconfig  "),
+                                Style::default().fg(t.text_muted),
+                            ),
+                            t.key_chip("Tab"),
+                            Span::styled(tr(" Cambiar campo  ", " Switch field  "), Style::default().fg(t.text_muted)),
+                            t.highlight_key_chip("Enter"),
+                            Span::styled(
+                                tr(" Autorizar en navegador  ", " Authorize in browser  "),
+                                Style::default().fg(t.text_muted),
+                            ),
+                            t.key_chip("Esc"),
+                            Span::styled(tr(" Cancelar ", " Cancel "), Style::default().fg(t.text_muted)),
+                        ])
+                        .alignment(Alignment::Center),
+                    );
+                let p_inner = block.inner(popup_area).inner(Margin {
+                    horizontal: 2,
+                    vertical: 1,
+                });
+                block.render(popup_area, buf);
+
+                let id_style = if !*editing_secret {
+                    Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(t.text_primary)
+                };
+                let sec_style = if *editing_secret {
+                    Style::default().fg(t.accent_highlight).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(t.text_primary)
+                };
+
+                let id_cursor = if !*editing_secret { "█" } else { "" };
+                let sec_cursor = if *editing_secret { "█" } else { "" };
+
+                let lines = vec![
+                    Line::from(Span::styled(
+                        tr(
+                            "100% Privado y Seguro: Cada usuario usa su propio Client ID personal. Tus tokens se cifran en el Keyring del SO.",
+                            "100% Private & Secure: Each user uses their own personal Client ID. Tokens are encrypted in your OS Keyring.",
+                        ),
+                        Style::default().fg(t.status_success).bold(),
+                    )),
+                    Line::from(Span::styled(
+                        tr(
+                            "1. Pulsa <F1> para abrir https://myanimelist.net/apiconfig y haz clic en 'Create ID'.",
+                            "1. Press <F1> to open https://myanimelist.net/apiconfig and click 'Create ID'.",
+                        ),
+                        Style::default().fg(t.text_secondary),
+                    )),
+                    Line::from(Span::styled(
+                        tr(
+                            "2. En 'App Type' elige 'other' y en 'App Redirect URL' pon: http://127.0.0.1:8765/callback",
+                            "2. Set 'App Type' to 'other' and 'App Redirect URL' to: http://127.0.0.1:8765/callback",
+                        ),
+                        Style::default().fg(t.accent_secondary),
+                    )),
+                    Line::from(Span::styled(
+                        tr(
+                            "3. Pega tu Client ID abajo y pulsa <Enter> para iniciar sesión con tu cuenta del móvil/web:",
+                            "3. Paste your Client ID below and press <Enter> to sign in with your mobile/web account:",
+                        ),
+                        Style::default().fg(t.text_muted),
+                    )),
+                    Line::default(),
+                    Line::from(vec![
+                        Span::styled("Client ID:     ", Style::default().fg(t.accent_primary).bold()),
+                        Span::styled(format!("{client_id}{id_cursor}"), id_style),
+                    ]),
+                    Line::default(),
+                    Line::from(vec![
+                        Span::styled(
+                            tr("Client Secret (opcional si elegiste 'other'): ", "Client Secret (optional if 'other'): "),
+                            Style::default().fg(t.accent_secondary).bold(),
+                        ),
+                        Span::styled(format!("{client_secret}{sec_cursor}"), sec_style),
+                    ]),
+                ];
+                Paragraph::new(lines).render(p_inner, buf);
+            },
             CloudInputPopup::CustomFolderPath { path_input } => {
                 let popup_area = centered_rect(modal_area, 76, 42);
                 Clear.render(popup_area, buf);
@@ -925,6 +1252,7 @@ mod tests {
         let mut state = CloudModalState {
             selected_index: 0,
             connection: CloudConnectionState::default(),
+            mal_connection: MalConnectionState::default(),
             detected_folders: Vec::new(),
             detected_cursor: 0,
             input_popup: CloudInputPopup::None,
@@ -968,6 +1296,7 @@ mod tests {
                 client_id: Some("bundled-client.apps.googleusercontent.com".to_string()),
                 ..Default::default()
             },
+            mal_connection: MalConnectionState::default(),
             detected_folders: Vec::new(),
             detected_cursor: 0,
             input_popup: CloudInputPopup::None,

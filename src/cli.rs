@@ -35,6 +35,25 @@ pub enum AnilistCommand {
 }
 
 #[derive(Subcommand, Clone)]
+pub enum MalCommand {
+    /// Link your private MyAnimeList account via official OAuth 2.0 + PKCE (tokens stored in OS keyring)
+    Login {
+        /// Personal MyAnimeList Client ID from https://myanimelist.net/apiconfig
+        #[arg(long)]
+        client_id: Option<String>,
+        /// Optional Client Secret (not required for 'other' PKCE apps)
+        #[arg(long)]
+        client_secret: Option<String>,
+    },
+    /// Show current MyAnimeList account connection status
+    Status,
+    /// Synchronize your MyAnimeList manga list (Mobile ⇄ PC)
+    Sync,
+    /// Unlink your MyAnimeList account and clear tokens from the OS keyring
+    Logout,
+}
+
+#[derive(Subcommand, Clone)]
 pub enum CloudCommand {
     /// Link Google Drive API (OAuth 2.0 PKCE) or a local Google Drive / iCloud Drive folder
     Login {
@@ -79,6 +98,12 @@ pub enum Commands {
     Anilist {
         #[command(subcommand)]
         command: AnilistCommand,
+    },
+
+    /// Link and synchronize your private MyAnimeList account (OAuth 2.0 + PKCE + Keyring)
+    Mal {
+        #[command(subcommand)]
+        command: MalCommand,
     },
 
     /// Cloud synchronization with Google Drive API or iCloud Drive / Google Drive folders
@@ -359,6 +384,14 @@ impl CliArgs {
 
                 Commands::Cloud { command } => {
                     if let Err(err) = run_cli_cloud(command).await {
+                        eprintln!("Error: {err}");
+                        exit(1);
+                    }
+                    exit(0)
+                },
+
+                Commands::Mal { command } => {
+                    if let Err(err) = run_cli_mal(command).await {
                         eprintln!("Error: {err}");
                         exit(1);
                     }
@@ -686,6 +719,120 @@ async fn run_cli_cloud(command: &CloudCommand) -> Result<(), String> {
                 tr("Capítulos descargados de la nube", "Chapters downloaded from cloud"),
                 report.chapters_downloaded,
                 format_byte_size(report.bytes_transferred)
+            );
+            Ok(())
+        },
+    }
+}
+
+async fn run_cli_mal(command: &MalCommand) -> Result<(), String> {
+    use std::io::Write;
+
+    use crate::backend::tracker::myanimelist::{MAL_APICONFIG_URL, MalConnectionState, MyAnimeListClient};
+    use crate::i18n::tr;
+
+    let mut state = MalConnectionState::load();
+
+    match command {
+        MalCommand::Status => {
+            println!(
+                "🔐 MyAnimeList (OAuth 2.0 + PKCE + Keyring) — {}: {}",
+                tr("Estado", "Status"),
+                if state.is_connected() {
+                    format!("🟢 {}", state.connection_summary())
+                } else {
+                    format!("⚪ {}", tr("Sin vincular", "Not linked"))
+                }
+            );
+            if let Some(rep) = &state.last_sync_report {
+                println!(
+                    "   {}: {} · {} mangas · ↓{} importados · ↑{} actualizados",
+                    tr("Última sincronización", "Last sync"),
+                    rep.synced_at,
+                    rep.total_mal_entries,
+                    rep.imported_from_mal,
+                    rep.pushed_to_mal
+                );
+            }
+            Ok(())
+        },
+        MalCommand::Logout => {
+            state.clear_credentials();
+            state.save()?;
+            println!(
+                "{}",
+                tr(
+                    "✓ Cuenta de MyAnimeList desvinculada y tokens eliminados del Keyring.",
+                    "✓ MyAnimeList account unlinked and tokens removed from Keyring."
+                )
+            );
+            Ok(())
+        },
+        MalCommand::Login {
+            client_id,
+            client_secret,
+        } => {
+            let resolved_client_id = match client_id.clone().or_else(|| state.get_client_id()) {
+                Some(id) if !id.trim().is_empty() => id.trim().to_string(),
+                _ => {
+                    println!(
+                        "{}\n  1. {}\n  2. App Type = 'other' | App Redirect URL = http://127.0.0.1:8765/callback",
+                        tr(
+                            "🔐 Configuración privada de MyAnimeList (OAuth 2.0 + PKCE):",
+                            "🔐 Private MyAnimeList setup (OAuth 2.0 + PKCE):"
+                        ),
+                        MAL_APICONFIG_URL
+                    );
+                    print!(
+                        "{}",
+                        tr("Introduce tu Client ID personal de MyAnimeList: ", "Enter your personal MyAnimeList Client ID: ")
+                    );
+                    let _ = std::io::stdout().flush();
+                    let mut input = String::new();
+                    std::io::stdin().read_line(&mut input).map_err(|e| e.to_string())?;
+                    input.trim().to_string()
+                },
+            };
+
+            let resolved_secret = client_secret.clone().or_else(|| state.get_client_secret());
+            let client = MyAnimeListClient::new();
+            let tokens = client
+                .run_loopback_oauth_flow(&resolved_client_id, resolved_secret.as_deref(), |auth_url| {
+                    println!(
+                        "\n{}\n{auth_url}\n",
+                        tr(
+                            "🌐 Abriendo navegador para autorizar tu cuenta de MyAnimeList...",
+                            "🌐 Opening browser to authorize your MyAnimeList account..."
+                        )
+                    );
+                    let _ = open::that(auth_url);
+                })
+                .await?;
+
+            state.save_oauth_tokens(
+                &resolved_client_id,
+                resolved_secret.as_deref(),
+                &tokens.access_token,
+                tokens.refresh_token.as_deref(),
+            );
+            if let Ok(profile) = client.get_my_profile(&tokens.access_token).await {
+                state.username = Some(profile.name);
+                state.user_id = Some(profile.id);
+            }
+            state.save()?;
+            println!("✓ {}: {}", tr("Cuenta vinculada con éxito", "Account linked successfully"), state.connection_summary());
+            Ok(())
+        },
+        MalCommand::Sync => {
+            let client = MyAnimeListClient::new();
+            let db_path = crate::backend::AppDirectories::History.get_full_path();
+            let report = client.sync_with_database(&mut state, &db_path).await?;
+            println!(
+                "✓ {}: {} mangas en MAL · ↓{} importados al PC · ↑{} actualizados en MAL",
+                tr("Sincronización con MyAnimeList completada", "MyAnimeList sync completed"),
+                report.total_mal_entries,
+                report.imported_from_mal,
+                report.pushed_to_mal
             );
             Ok(())
         },

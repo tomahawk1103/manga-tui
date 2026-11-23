@@ -3,6 +3,7 @@ use strum_macros::{Display, EnumCount, EnumIter, FromRepr};
 pub mod feed;
 pub mod home;
 pub mod manga;
+pub mod news;
 pub mod reader;
 pub mod search;
 
@@ -14,4 +15,5 @@ pub enum SelectedPage {
     Home,
     Search,
     Feed,
+    News,
 }

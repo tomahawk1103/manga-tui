@@ -55,7 +55,9 @@ impl CarrouselItemPopularManga {
 
     fn render_cover(&mut self, area: Rect, buf: &mut Buffer, state: &mut ImageState) {
         let t = theme();
-        let cover_block = t.rounded_block();
+        let cover_block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(t.border_accent));
         let inner = cover_block.inner(area);
         cover_block.render(area, buf);
 
@@ -82,19 +84,22 @@ impl CarrouselItemPopularManga {
 
     fn render_details(&mut self, area: Rect, buf: &mut Buffer) {
         let t = theme();
-        let mut block = t.rounded_block().title(Line::from(vec![
-            Span::styled(" ✦ ", Style::default().fg(t.accent_primary).bold()),
-            Span::styled(self.manga.title.clone(), Style::default().fg(t.text_primary).bold()),
-            Span::raw(" "),
-        ]));
+        let mut block = Block::bordered()
+            .border_type(BorderType::Rounded)
+            .border_style(Style::default().fg(t.border))
+            .title(Line::from(vec![
+                Span::styled(" ✦ ", Style::default().fg(t.accent_primary).bold()),
+                Span::styled(self.manga.title.clone(), Style::default().fg(t.text_primary).bold()),
+                Span::raw(" "),
+            ]));
 
         if let Some(status) = self.manga.status {
             block = block.title_top(Line::from(vec![status_pill(status)]).right_aligned());
         }
 
         let inner = block.inner(area).inner(Margin {
-            horizontal: 1,
-            vertical: 0,
+            horizontal: 2,
+            vertical: 1,
         });
         block.render(area, buf);
 
