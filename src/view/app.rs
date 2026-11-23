@@ -566,7 +566,7 @@ where
                 .with_global_sender(global_event_tx.clone())
                 .with_api_client(Arc::clone(&provider)),
             home_page: Home::new(picker, Arc::clone(&provider)).with_global_sender(global_event_tx.clone()),
-            news_page: NewsPage::new(),
+            news_page: NewsPage::new(picker),
             manga_page: None,
             manga_reader_page: None,
             global_action_tx,
@@ -1701,6 +1701,7 @@ where
         let new_picker = crate::backend::tui::picker_for_protocol(proto);
         self.picker = new_picker;
         self.home_page.set_picker(new_picker);
+        self.news_page.set_picker(new_picker);
         self.search_page.set_picker(new_picker);
         if let Some(manga_page) = self.manga_page.as_mut() {
             manga_page.set_picker(new_picker);

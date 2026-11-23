@@ -58,6 +58,74 @@ pub struct NewsItem {
     pub link: String,
     pub summary: String,
     pub published: Option<DateTime<FixedOffset>>,
+    /// Thumbnail / hero image of the article, when the feed provides one.
+    /// If `None`, the article page's `og:image` is looked up lazily.
+    pub image_url: Option<String>,
+}
+
+static MEDIA_URL_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(r#"(?is)<(?:media:content|media:thumbnail|enclosure|itunes:image)\b[^>]*?\b(?:url|href)=["']([^"']+)["']"#).unwrap()
+});
+static IMG_TAG_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r#"(?is)<img\b[^>]*?\bsrc=["']([^"']+)["']"#).unwrap());
+static OG_IMAGE_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?is)<meta\b[^>]*?(?:property|name)=["'](?:og:image(?::secure_url)?|twitter:image(?::src)?)["'][^>]*?content=["']([^"']+)["']"#,
+    )
+    .unwrap()
+});
+static OG_IMAGE_REV_RE: Lazy<Regex> = Lazy::new(|| {
+    Regex::new(
+        r#"(?is)<meta\b[^>]*?content=["']([^"']+)["'][^>]*?(?:property|name)=["'](?:og:image(?::secure_url)?|twitter:image(?::src)?)["']"#,
+    )
+    .unwrap()
+});
+
+/// Turns protocol-relative or root-relative URLs into absolute ones using `base` (the article link).
+pub fn absolutize_url(url: &str, base: &str) -> String {
+    let url = url.trim();
+    if url.starts_with("http://") || url.starts_with("https://") {
+        return url.to_string();
+    }
+    if let Some(rest) = url.strip_prefix("//") {
+        return format!("https://{rest}");
+    }
+    if url.starts_with('/')
+        && let Some(scheme_end) = base.find("://")
+    {
+        let host_end = base[scheme_end + 3..].find('/').map(|i| i + scheme_end + 3).unwrap_or(base.len());
+        return format!("{}{url}", &base[..host_end]);
+    }
+    url.to_string()
+}
+
+fn is_probably_image(url: &str) -> bool {
+    let lower = url.to_ascii_lowercase();
+    // Skip tracking pixels, emojis and feed icons
+    !(lower.contains("feedburner") || lower.contains("/emoji/") || lower.contains("gravatar") || lower.contains("pixel"))
+}
+
+/// Finds the best image in an RSS/Atom item block (media tags first, then the first `<img>` in the HTML body).
+fn extract_item_image(block: &str, link: &str) -> Option<String> {
+    let from_media = MEDIA_URL_RE
+        .captures_iter(block)
+        .map(|c| decode_entities(&c[1]))
+        .find(|u| is_probably_image(u));
+    let candidate = from_media.or_else(|| {
+        let html = decode_entities(&CDATA_RE.replace_all(block, "$1"));
+        IMG_TAG_RE
+            .captures_iter(&html)
+            .map(|c| decode_entities(&c[1]))
+            .find(|u| is_probably_image(u))
+    })?;
+    Some(absolutize_url(&candidate, link))
+}
+
+/// Extracts the `og:image` / `twitter:image` of an article page.
+pub fn extract_og_image(html: &str, page_url: &str) -> Option<String> {
+    OG_IMAGE_RE
+        .captures(html)
+        .or_else(|| OG_IMAGE_REV_RE.captures(html))
+        .map(|c| absolutize_url(&decode_entities(&c[1]), page_url))
 }
 
 static ITEM_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"(?is)<(item|entry)[\s>].*?</(item|entry)>").unwrap());
@@ -133,8 +201,10 @@ pub fn parse_feed(xml: &str, source: NewsSource) -> Vec<NewsItem> {
             let summary = tag_content(block, "description")
                 .or_else(|| tag_content(block, "summary"))
                 .or_else(|| tag_content(block, "content"))
+                .or_else(|| tag_content(block, "content:encoded"))
                 .map(|s| clean_text(&s))
                 .unwrap_or_default();
+            let image_url = extract_item_image(block, &link);
             let published = tag_content(block, "pubDate")
                 .or_else(|| tag_content(block, "published"))
                 .or_else(|| tag_content(block, "updated"))
@@ -146,18 +216,63 @@ pub fn parse_feed(xml: &str, source: NewsSource) -> Vec<NewsItem> {
                 link,
                 summary,
                 published,
+                image_url,
             })
         })
         .collect()
 }
 
-pub async fn fetch_source(source: NewsSource) -> Result<Vec<NewsItem>, String> {
-    let client = reqwest::Client::builder()
+static HTTP_CLIENT: Lazy<reqwest::Client> = Lazy::new(|| {
+    reqwest::Client::builder()
         .timeout(Duration::from_secs(15))
-        .user_agent(concat!("manga-tui/", env!("CARGO_PKG_VERSION"), " (RSS reader)"))
+        .user_agent(concat!("Mozilla/5.0 (compatible; manga-tui/", env!("CARGO_PKG_VERSION"), "; RSS reader)"))
         .build()
-        .map_err(|e| e.to_string())?;
-    let response = client.get(source.feed_url()).send().await.map_err(|e| e.to_string())?;
+        .unwrap_or_default()
+});
+
+/// Max side (px) of decoded news images; keeps memory and Sixel encoding cheap.
+const MAX_IMAGE_SIDE: u32 = 960;
+
+async fn download_image(url: &str) -> Result<image::DynamicImage, String> {
+    let response = HTTP_CLIENT.get(url).send().await.map_err(|e| e.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("HTTP {}", response.status()));
+    }
+    let bytes = response.bytes().await.map_err(|e| e.to_string())?;
+    tokio::task::spawn_blocking(move || {
+        let img = image::load_from_memory(&bytes).map_err(|e| e.to_string())?;
+        Ok(if img.width() > MAX_IMAGE_SIDE || img.height() > MAX_IMAGE_SIDE {
+            img.thumbnail(MAX_IMAGE_SIDE, MAX_IMAGE_SIDE)
+        } else {
+            img
+        })
+    })
+    .await
+    .map_err(|e| e.to_string())?
+}
+
+async fn find_og_image(link: &str) -> Option<String> {
+    let response = HTTP_CLIENT.get(link).send().await.ok()?;
+    if !response.status().is_success() {
+        return None;
+    }
+    let html = response.text().await.ok()?;
+    extract_og_image(&html, link)
+}
+
+/// Downloads the image of a news item: uses the feed image, or falls back to the article's `og:image`.
+pub async fn fetch_news_image(image_url: Option<String>, link: String) -> Result<image::DynamicImage, String> {
+    if let Some(url) = image_url
+        && let Ok(img) = download_image(&url).await
+    {
+        return Ok(img);
+    }
+    let og = find_og_image(&link).await.ok_or_else(|| "no image".to_string())?;
+    download_image(&og).await
+}
+
+pub async fn fetch_source(source: NewsSource) -> Result<Vec<NewsItem>, String> {
+    let response = HTTP_CLIENT.get(source.feed_url()).send().await.map_err(|e| e.to_string())?;
     if !response.status().is_success() {
         return Err(format!("HTTP {}", response.status()));
     }
@@ -214,5 +329,32 @@ mod tests {
         items.reverse();
         sort_newest_first(&mut items);
         assert_eq!(items[0].link, "https://example.com/a");
+    }
+
+    #[test]
+    fn extracts_images_from_media_tags_and_html_body() {
+        let feed = r#"<rss><channel>
+            <item><title>A</title><link>https://site.com/a</link>
+              <media:thumbnail url="https://cdn.site.com/a.jpg" width="100"/></item>
+            <item><title>B</title><link>https://site.com/b</link>
+              <description><![CDATA[<p><img class="x" src="/wp/b.png" /> text</p>]]></description></item>
+            <item><title>C</title><link>https://site.com/c</link>
+              <description>&lt;img src=&quot;//cdn.site.com/c.webp&quot;&gt; hi</description></item>
+            <item><title>D</title><link>https://site.com/d</link><description>no image</description></item>
+            </channel></rss>"#;
+        let items = parse_feed(feed, NewsSource::AnimeNewsNetwork);
+        assert_eq!(items[0].image_url.as_deref(), Some("https://cdn.site.com/a.jpg"));
+        assert_eq!(items[1].image_url.as_deref(), Some("https://site.com/wp/b.png"));
+        assert_eq!(items[2].image_url.as_deref(), Some("https://cdn.site.com/c.webp"));
+        assert_eq!(items[3].image_url, None);
+    }
+
+    #[test]
+    fn extracts_og_image_in_any_attribute_order() {
+        let a = r#"<head><meta property="og:image" content="https://x.com/i.jpg"></head>"#;
+        let b = r#"<head><meta content="/img/j.jpg" name="twitter:image"></head>"#;
+        assert_eq!(extract_og_image(a, "https://x.com/p").as_deref(), Some("https://x.com/i.jpg"));
+        assert_eq!(extract_og_image(b, "https://x.com/p/q").as_deref(), Some("https://x.com/img/j.jpg"));
+        assert_eq!(extract_og_image("<head></head>", "https://x.com"), None);
     }
 }

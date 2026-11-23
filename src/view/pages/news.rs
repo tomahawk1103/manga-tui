@@ -1,19 +1,23 @@
 //! 📰 News page: manga & anime headlines aggregated from public RSS feeds.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
 use crossterm::event::{KeyCode, KeyEvent, MouseEvent, MouseEventKind};
+use image::DynamicImage;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::{Constraint, Layout, Margin, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, BorderType, Borders, Paragraph, Widget, Wrap};
+use ratatui_image::picker::Picker;
+use ratatui_image::protocol::StatefulProtocol;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
-use crate::backend::news::{NewsItem, NewsSource, fetch_source, sort_newest_first};
+use crate::backend::news::{NewsItem, NewsSource, fetch_news_image, fetch_source, sort_newest_first};
 use crate::backend::tui::Events;
+use crate::common::{clear_image_canvas, render_stateful_image_cleared};
 use crate::i18n::tr;
 use crate::theme::theme;
 
@@ -25,6 +29,50 @@ enum SourceStatus {
 }
 
 type FetchResult = (NewsSource, Result<Vec<NewsItem>, String>);
+type ImageResult = (String, Result<DynamicImage, String>);
+
+/// Max decoded images kept in memory (LRU-ish: oldest inserted are evicted first).
+const MAX_CACHED_IMAGES: usize = 30;
+
+/// Per-article image state, keyed by article link.
+#[derive(Default)]
+struct NewsImages {
+    protocols: HashMap<String, Box<dyn StatefulProtocol>>,
+    raw: HashMap<String, DynamicImage>,
+    order: Vec<String>,
+    pending: HashSet<String>,
+    failed: HashSet<String>,
+}
+
+impl NewsImages {
+    fn is_known(&self, key: &str) -> bool {
+        self.raw.contains_key(key) || self.pending.contains(key) || self.failed.contains(key)
+    }
+
+    fn insert(&mut self, key: String, img: DynamicImage, picker: Option<&mut Picker>) {
+        self.pending.remove(&key);
+        if let Some(picker) = picker {
+            self.protocols.insert(key.clone(), picker.new_resize_protocol(img.clone()));
+        }
+        self.raw.insert(key.clone(), img);
+        self.order.retain(|k| *k != key);
+        self.order.push(key);
+        while self.order.len() > MAX_CACHED_IMAGES {
+            let old = self.order.remove(0);
+            self.raw.remove(&old);
+            self.protocols.remove(&old);
+        }
+    }
+
+    fn rebuild(&mut self, picker: Option<&mut Picker>) {
+        self.protocols.clear();
+        if let Some(picker) = picker {
+            for (k, img) in &self.raw {
+                self.protocols.insert(k.clone(), picker.new_resize_protocol(img.clone()));
+            }
+        }
+    }
+}
 
 pub struct NewsPage {
     items: Vec<NewsItem>,
@@ -37,17 +85,22 @@ pub struct NewsPage {
     result_tx: UnboundedSender<FetchResult>,
     result_rx: UnboundedReceiver<FetchResult>,
     has_loaded: bool,
+    picker: Option<Picker>,
+    images: NewsImages,
+    image_tx: UnboundedSender<ImageResult>,
+    image_rx: UnboundedReceiver<ImageResult>,
 }
 
 impl Default for NewsPage {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
 impl NewsPage {
-    pub fn new() -> Self {
+    pub fn new(picker: Option<Picker>) -> Self {
         let (result_tx, result_rx) = unbounded_channel();
+        let (image_tx, image_rx) = unbounded_channel();
         Self {
             items: Vec::new(),
             statuses: HashMap::new(),
@@ -58,6 +111,56 @@ impl NewsPage {
             result_tx,
             result_rx,
             has_loaded: false,
+            picker,
+            images: NewsImages::default(),
+            image_tx,
+            image_rx,
+        }
+    }
+
+    pub fn set_picker(&mut self, picker: Option<Picker>) {
+        self.picker = picker;
+        self.images.rebuild(self.picker.as_mut());
+    }
+
+    /// Lazily downloads the image of the selected article and prefetches the next one.
+    fn request_images(&mut self) {
+        if self.picker.is_none() {
+            return;
+        }
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        let targets: Vec<(String, Option<String>)> = self
+            .visible()
+            .iter()
+            .skip(self.selected)
+            .take(2)
+            .filter(|i| !i.link.is_empty())
+            .map(|i| (i.link.clone(), i.image_url.clone()))
+            .collect();
+        for (link, image_url) in targets {
+            if self.images.is_known(&link) {
+                continue;
+            }
+            self.images.pending.insert(link.clone());
+            let tx = self.image_tx.clone();
+            handle.spawn(async move {
+                let result = fetch_news_image(image_url, link.clone()).await;
+                tx.send((link, result)).ok();
+            });
+        }
+    }
+
+    fn receive_images(&mut self) {
+        while let Ok((link, result)) = self.image_rx.try_recv() {
+            match result {
+                Ok(img) => self.images.insert(link, img, self.picker.as_mut()),
+                Err(_) => {
+                    self.images.pending.remove(&link);
+                    self.images.failed.insert(link);
+                },
+            }
         }
     }
 
@@ -155,6 +258,7 @@ impl NewsPage {
 
     pub fn handle_events(&mut self, events: Events) {
         self.receive_results();
+        self.receive_images();
         match events {
             Events::Key(key) => self.handle_key(key),
             Events::Mouse(mouse) => self.handle_mouse(mouse),
@@ -171,7 +275,10 @@ impl NewsPage {
             KeyCode::Home | KeyCode::Char('g') => self.selected = 0,
             KeyCode::End | KeyCode::Char('G') => self.move_selection(isize::MAX / 2),
             KeyCode::Enter | KeyCode::Char('r') => self.open_selected(),
-            KeyCode::Char('R') => self.refresh(),
+            KeyCode::Char('R') => {
+                self.images.failed.clear();
+                self.refresh();
+            },
             KeyCode::Tab | KeyCode::Char('l') | KeyCode::Right => self.cycle_filter(true),
             KeyCode::BackTab | KeyCode::Char('h') | KeyCode::Left => self.cycle_filter(false),
             KeyCode::Char('1') => self.set_filter(None),
@@ -205,6 +312,8 @@ impl NewsPage {
 
     pub fn render(&mut self, area: Rect, frame: &mut Frame<'_>) {
         self.receive_results();
+        self.receive_images();
+        self.request_images();
         let buf = frame.buffer_mut();
         if area.height < 6 || area.width < 30 {
             return;
@@ -379,7 +488,7 @@ impl NewsPage {
         }
     }
 
-    fn render_preview(&self, area: Rect, buf: &mut Buffer) {
+    fn render_preview(&mut self, area: Rect, buf: &mut Buffer) {
         let t = theme();
         let block = Block::default()
             .borders(Borders::ALL)
@@ -399,10 +508,36 @@ impl NewsPage {
         });
         block.render(area, buf);
 
-        let items = self.visible();
-        let Some(item) = items.get(self.selected) else {
+        let Some(item) = self.visible().get(self.selected).map(|i| (*i).clone()) else {
             return;
         };
+
+        // 🖼 Article image on top of the summary (only with a graphics-capable terminal)
+        let has_failed = self.images.failed.contains(&item.link);
+        let inner = if self.picker.is_some() && inner.height >= 12 && inner.width >= 20 && !has_failed {
+            let img_h = (inner.height * 45 / 100).clamp(6, 18);
+            let [img_area, _gap, text_area] =
+                Layout::vertical([Constraint::Length(img_h), Constraint::Length(1), Constraint::Fill(1)]).areas(inner);
+            match self.images.protocols.get_mut(&item.link) {
+                Some(proto) => render_stateful_image_cleared(proto, img_area, img_area, buf, Color::Rgb(1, 1, 1)),
+                None => {
+                    clear_image_canvas(img_area, buf, Color::Rgb(1, 1, 1));
+                    let mid = Rect {
+                        y: img_area.y + img_area.height / 2,
+                        height: 1,
+                        ..img_area
+                    };
+                    Paragraph::new(Line::styled(tr("🖼  Cargando imagen…", "🖼  Loading image…"), Style::default().fg(t.text_muted)))
+                        .centered()
+                        .render(mid, buf);
+                },
+            }
+            text_area
+        } else {
+            inner
+        };
+
+        let item = &item;
         let color = Self::source_color(item.source);
         let date = item
             .published
@@ -481,12 +616,31 @@ mod tests {
             link: link.to_string(),
             summary: String::new(),
             published: Some((Utc::now() - chrono::Duration::hours(hours_ago)).fixed_offset()),
+            image_url: None,
         }
     }
 
     #[test]
+    fn image_cache_evicts_oldest_and_tracks_failures() {
+        let mut images = NewsImages::default();
+        for i in 0..(MAX_CACHED_IMAGES + 5) {
+            images.insert(format!("l{i}"), DynamicImage::new_rgb8(2, 2), None);
+        }
+        assert_eq!(images.raw.len(), MAX_CACHED_IMAGES);
+        assert!(!images.is_known("l0"));
+        assert!(images.is_known(&format!("l{}", MAX_CACHED_IMAGES + 4)));
+
+        let mut page = NewsPage::new(None);
+        page.images.pending.insert("x".into());
+        page.image_tx.send(("x".into(), Err("boom".into()))).unwrap();
+        page.receive_images();
+        assert!(page.images.failed.contains("x"));
+        assert!(!page.images.pending.contains("x"));
+    }
+
+    #[test]
     fn merges_sources_sorted_and_filters() {
-        let mut page = NewsPage::new();
+        let mut page = NewsPage::new(None);
         page.apply_result(NewsSource::AnimeNewsNetwork, Ok(vec![item(NewsSource::AnimeNewsNetwork, "a", 5)]));
         page.apply_result(NewsSource::RamenParaDos, Ok(vec![item(NewsSource::RamenParaDos, "b", 1)]));
         assert_eq!(page.visible()[0].link, "b");
@@ -502,7 +656,7 @@ mod tests {
 
     #[test]
     fn keeps_selection_when_new_feed_arrives() {
-        let mut page = NewsPage::new();
+        let mut page = NewsPage::new(None);
         page.apply_result(NewsSource::AnimeNewsNetwork, Ok(vec![item(NewsSource::AnimeNewsNetwork, "a", 5)]));
         assert_eq!(page.selected, 0);
         page.apply_result(NewsSource::RamenParaDos, Ok(vec![item(NewsSource::RamenParaDos, "b", 1)]));
@@ -511,7 +665,7 @@ mod tests {
 
     #[test]
     fn failed_source_is_reported() {
-        let mut page = NewsPage::new();
+        let mut page = NewsPage::new(None);
         page.apply_result(NewsSource::MyAnimeList, Err("x".into()));
         assert!(matches!(page.statuses.get(&NewsSource::MyAnimeList), Some(SourceStatus::Failed(_))));
     }
