@@ -885,11 +885,22 @@ impl Widget for CloudModal<'_> {
         ];
         Paragraph::new(status_lines).render(status_inner, buf);
 
-        // 2. Interactive actions list
+        // 2. Interactive actions list (adapts row spacing automatically to terminal height so all 9 rows always fit)
         let list_area = chunks[1];
-        let row_height = 2u16;
-        for (idx, row) in CloudActionRow::ALL.iter().copied().enumerate() {
-            let y = list_area.y + (idx as u16) * row_height;
+        let total_rows = CloudActionRow::ALL.len() as u16;
+        let row_height = if list_area.height >= total_rows * 2 { 2u16 } else { 1u16 };
+        let visible_capacity = (list_area.height / row_height).max(1) as usize;
+        let scroll_offset =
+            if self.state.selected_index >= visible_capacity { self.state.selected_index + 1 - visible_capacity } else { 0 };
+        for (visible_idx, (idx, row)) in CloudActionRow::ALL
+            .iter()
+            .copied()
+            .enumerate()
+            .skip(scroll_offset)
+            .take(visible_capacity)
+            .enumerate()
+        {
+            let y = list_area.y + (visible_idx as u16) * row_height;
             if y + 1 > list_area.bottom() {
                 break;
             }
