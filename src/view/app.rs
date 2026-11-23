@@ -1381,24 +1381,17 @@ where
 
         Paragraph::new(Line::from(spans)).render(left_area, buf);
 
-        // Second row: subtle neon gradient underline with animated scanning pulse on active tab
+        // Second row: clean neon underline on active tab (static, zero redraw jitter)
         if area.height >= 2 {
             let divider_y = area.y + 1;
             let rule_style = Style::default().fg(t.border_muted);
             let active_rule_style = Style::default().fg(active_pill_bg).bold();
-            let pulse_style = Style::default().fg(t.accent_secondary).bold();
             for x in area.left()..area.right() {
                 if let Some((start_x, end_x)) = active_tab_range
                     && x >= start_x
                     && x < end_x
                 {
-                    let tab_len = (end_x - start_x).max(1) as usize;
-                    let rel = (x - start_x) as usize;
-                    let shimmer_pos = self.ui_tick % tab_len;
-                    let is_pulse = rel == shimmer_pos || rel == (shimmer_pos + 1) % tab_len;
-                    buf[(x, divider_y)]
-                        .set_symbol("━")
-                        .set_style(if is_pulse { pulse_style } else { active_rule_style });
+                    buf[(x, divider_y)].set_symbol("━").set_style(active_rule_style);
                 } else {
                     buf[(x, divider_y)].set_symbol("─").set_style(rule_style);
                 }

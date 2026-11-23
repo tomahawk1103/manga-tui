@@ -92,31 +92,28 @@ fn color_to_rgb(color: Color, fallback: (f32, f32, f32)) -> (f32, f32, f32) {
     }
 }
 
-/// Theme-aware animated horizontal wave gradient (`accent_primary` → `accent_secondary` → `status_error`).
-fn animated_gradient_color(index: usize, total: usize, tick: usize) -> Color {
+/// Theme-aware smooth static horizontal gradient (`accent_primary` → `accent_secondary` → `status_error`).
+fn gradient_color(index: usize, total: usize) -> Color {
     let t_pal = theme();
     let stops = [
         color_to_rgb(t_pal.accent_primary, (0.0, 232.0, 255.0)),
         color_to_rgb(t_pal.accent_secondary, (192.0, 118.0, 255.0)),
         color_to_rgb(t_pal.status_error, (255.0, 92.0, 142.0)),
     ];
-    let base_t = if total <= 1 { 0.0 } else { index.min(total - 1) as f32 / (total - 1) as f32 };
-    let shift = (tick % 48) as f32 / 48.0;
-    let phase = (base_t + shift) % 1.0;
-    let wave = if phase < 0.5 { phase * 2.0 } else { (1.0 - phase) * 2.0 };
-    let (from, to, local_t) = if wave < 0.5 { (stops[0], stops[1], wave * 2.0) } else { (stops[1], stops[2], (wave - 0.5) * 2.0) };
+    let t = if total <= 1 { 0.0 } else { index.min(total - 1) as f32 / (total - 1) as f32 };
+    let (from, to, local_t) = if t < 0.5 { (stops[0], stops[1], t * 2.0) } else { (stops[1], stops[2], (t - 0.5) * 2.0) };
     let lerp = |a: f32, b: f32| (a + (b - a) * local_t).round().clamp(0.0, 255.0) as u8;
     Color::Rgb(lerp(from.0, to.0), lerp(from.1, to.1), lerp(from.2, to.2))
 }
 
-/// Colors every visible character of `text` with the live animated neon gradient.
-fn animated_gradient_line(text: &str, bold: bool, tick: usize) -> Line<'static> {
+/// Colors every visible character of `text` with the clean Neo-Tokyo gradient.
+fn gradient_line(text: &str, bold: bool) -> Line<'static> {
     let total = text.chars().count();
     let spans: Vec<Span<'static>> = text
         .chars()
         .enumerate()
         .map(|(idx, ch)| {
-            let mut style = Style::default().fg(animated_gradient_color(idx, total, tick));
+            let mut style = Style::default().fg(gradient_color(idx, total));
             if bold {
                 style = style.bold();
             }
@@ -124,12 +121,6 @@ fn animated_gradient_line(text: &str, bold: bool, tick: usize) -> Line<'static> 
         })
         .collect();
     Line::from(spans)
-}
-
-/// Animated 3-bar activity equalizer glyph for live Neo-Tokyo badges.
-fn live_pulse_bars(tick: usize) -> &'static str {
-    const FRAMES: [&str; 6] = ["▂▄▆", "▄▆█", "▆█▄", "█▄▂", "▄▂▆", "▂▆▄"];
-    FRAMES[tick % FRAMES.len()]
 }
 
 /// Which hero header variant fits in the available area.
@@ -238,9 +229,9 @@ where
 
         let hero_mode = HeroMode::for_area(area);
         let top_bar_height = hero_mode.height(area.height);
-        // Neo-Tokyo layout: dedicated Hero HUD on top, balanced Popular Spotlight + Recently Added showcase below
+        // Balanced 50/50 split below the Hero header so both Popular and Recently Added covers have ample room
         let [top_bar_area, carrousel_popular_mangas_area, latest_updates_area] =
-            Layout::vertical([Constraint::Length(top_bar_height), Constraint::Percentage(46), Constraint::Min(8)]).areas(area);
+            Layout::vertical([Constraint::Length(top_bar_height), Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
 
         self.top_bar_area = top_bar_area;
         self.popular_mangas_area = carrousel_popular_mangas_area;
@@ -368,13 +359,10 @@ where
         let total = self.carrousel_popular_mangas.items.len();
         let current = if total == 0 { 0 } else { self.carrousel_popular_mangas.current_item_visible_index + 1 };
 
-        let mut top_left_spans = vec![
-            Span::styled(" ▍", Style::default().fg(t.accent_primary).bold()),
-            Span::styled(
-                tr(" DESTACADOS · NEO-TOKYO ", " SPOTLIGHT · POPULAR "),
-                Style::default().fg(t.accent_primary).bg(t.title_chip_primary_bg).bold(),
-            ),
-        ];
+        let mut top_left_spans = vec![Span::styled(
+            tr(" 🔥 Títulos Populares ", " 🔥 Popular New Titles "),
+            Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
+        )];
         if total > 0 {
             top_left_spans.push(Span::styled(format!("  {current}/{total} "), Style::default().fg(t.accent_highlight).bold()));
         }
@@ -481,8 +469,10 @@ where
     }
 
     pub fn tick(&mut self) {
-        self.ui_tick = self.ui_tick.wrapping_add(1);
-        self.anime_player.tick();
+        // Only advance Frieren animation when the fullscreen Cine modal is open so Home stays 100% lag-free
+        if self.anime_player.is_fullscreen_open {
+            self.anime_player.tick();
+        }
         self.carrousel_popular_mangas.tick();
         self.carrousel_recently_added.tick();
         while let Ok(local_event) = self.local_event_rx.try_recv() {
@@ -657,13 +647,10 @@ where
         let total = self.carrousel_recently_added.items.len();
         let current = if total == 0 { 0 } else { self.carrousel_recently_added.selected_item_index + 1 };
 
-        let mut top_left_spans = vec![
-            Span::styled(" ▍", Style::default().fg(t.accent_secondary).bold()),
-            Span::styled(
-                tr(" RECIÉN AÑADIDOS ", " RECENTLY ADDED "),
-                Style::default().fg(t.accent_secondary).bg(t.title_chip_secondary_bg).bold(),
-            ),
-        ];
+        let mut top_left_spans = vec![Span::styled(
+            tr(" ✨ Añadidos Recientemente ", " ✨ Recently Added "),
+            Style::default().fg(Color::Black).bg(t.accent_secondary).bold(),
+        )];
         if total > 0 {
             top_left_spans.push(Span::styled(format!("  {current}/{total} "), Style::default().fg(t.accent_highlight).bold()));
         }
@@ -782,29 +769,31 @@ where
         let t = theme();
         let (icon, greeting) = greeting_for_hour(chrono::Local::now().hour());
 
-        let pulse = live_pulse_bars(self.ui_tick);
-
         let title_left = Line::from(vec![
-            Span::styled(format!(" {pulse} "), Style::default().fg(t.accent_primary).bold()),
-            Span::styled("NEO-TOKYO HUB", Style::default().fg(t.accent_primary).bold()),
-            Span::styled("  ·  ", Style::default().fg(t.border_muted)),
-            Span::styled(format!("{icon} {greeting} "), Style::default().fg(t.text_secondary)),
+            Span::styled(tr(" ⛩  MANGA-TUI ", " ⛩  MANGA-TUI "), Style::default().fg(Color::Black).bg(t.accent_primary).bold()),
+            Span::styled(format!("  {icon} {greeting}, "), Style::default().fg(t.status_warning).bold()),
+            Span::styled(format!("{} ", tr("lector", "reader")), Style::default().fg(t.text_primary).bold()),
         ]);
 
         let title_right = Line::from(vec![
-            Span::styled(" <v> ", Style::default().fg(t.accent_primary).bg(t.chip_bg).bold()),
-            Span::styled(format!(" {}  ", self.anime_player.scene.badge()), Style::default().fg(t.text_secondary)),
-            Span::styled(" <V> ", Style::default().fg(Color::Black).bg(t.accent_secondary).bold()),
-            Span::styled(tr(" Cine ", " TV "), Style::default().fg(t.text_primary).bold()),
+            Span::styled(" ⚡ ", Style::default().fg(t.accent_primary).bg(t.chip_bg).bold()),
+            Span::styled(
+                format!("{} ", self.active_provider.badge_label()),
+                Style::default().fg(t.text_primary).bg(t.chip_bg).bold(),
+            ),
+            Span::raw("  "),
+            Span::styled(" V ", Style::default().fg(Color::Black).bg(t.accent_secondary).bold()),
+            Span::styled(tr(" Frieren GIF ", " Frieren GIF "), Style::default().fg(t.accent_secondary).bg(t.chip_bg).bold()),
+            Span::raw("  "),
+            Span::styled(" T ", Style::default().fg(t.accent_highlight).bg(t.chip_bg).bold()),
+            Span::styled(format!(" {} ", current_theme().label()), Style::default().fg(t.text_muted)),
             Span::raw(" "),
         ])
         .right_aligned();
 
-        // Deep cyberpunk Neo-Tokyo panel background
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
             .border_style(Style::default().fg(t.border_accent))
-            .style(Style::default().bg(t.bar_bg))
             .title(title_left)
             .title_top(title_right);
 
@@ -818,71 +807,38 @@ where
             return;
         }
 
-        // Wide Cyberpunk Showcase: Sleek Logo + Clean Reading HUD + Larger Frieren Live Anime Frame
-        let (logo_area, info_area, maybe_anime_area) = if inner.width >= logo_width() + 54 {
-            let [l, i, a] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1), Constraint::Length(28)])
-                .spacing(2)
-                .areas(inner);
-            (l, i, Some(a))
-        } else {
-            let [l, i] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1)])
-                .spacing(3)
-                .areas(inner);
-            (l, i, None)
-        };
+        // Clean 2-column Hero (Big Neon Gradient Logo + Spacious Reading Dashboard & 4 Stat Cards)
+        // We do NOT render a tiny squished Sixel inside the 6-row header so there is zero Sixel lag or clutter.
+        self.anime_banner_area = Rect::default();
+        let [logo_area, info_area] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1)])
+            .spacing(3)
+            .areas(inner);
 
-        let logo_lines: Vec<Line<'static>> = build_logo_lines()
-            .iter()
-            .enumerate()
-            .map(|(row_idx, row)| animated_gradient_line(row, false, self.ui_tick.wrapping_add(row_idx * 2)))
-            .collect();
+        let logo_lines: Vec<Line<'static>> = build_logo_lines().iter().map(|row| gradient_line(row, false)).collect();
         Paragraph::new(logo_lines).render(logo_area, buf);
 
-        if let Some(anime_area) = maybe_anime_area {
-            self.anime_banner_area = anime_area;
-            let live_dot = if self.ui_tick % 4 < 2 { "●" } else { "◉" };
-            let anime_block = Block::bordered()
-                .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(t.accent_secondary))
-                .style(Style::default().bg(Color::Rgb(12, 14, 24)))
-                .title(Line::from(vec![
-                    Span::styled(format!(" {live_dot} "), Style::default().fg(t.status_error).bold()),
-                    Span::styled(format!("{} ", self.anime_player.scene.badge()), Style::default().fg(t.accent_primary).bold()),
-                ]))
-                .title_bottom(
-                    Line::from(vec![Span::styled(tr(" ▸ Clic o <V> ", " ▸ Click or <V> "), Style::default().fg(t.text_dim))])
-                        .right_aligned(),
-                );
-            let anime_inner = anime_block.inner(anime_area);
-            anime_block.render(anime_area, buf);
-            // Render Frieren real anime clip in HD (Sixel / Kitty / iTerm2)
-            self.anime_player.render_hero_canvas(anime_inner, buf, self.picker.as_mut());
-        } else {
-            self.anime_banner_area = Rect::default();
-        }
-
-        let [header_line_area, continue_area, _spacer, stats_area] =
+        let [greeting_area, continue_area, tagline_area, stats_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(3)])
                 .areas(info_area);
 
-        // Clean Neo-Tokyo status & quick greeting line
         Paragraph::new(Line::from(vec![
-            Span::styled("⚡ ", Style::default().fg(t.accent_primary).bold()),
-            Span::styled(
-                format!("{} ", self.active_provider.badge_label()),
-                Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
-            ),
-            Span::styled("  ·  ", Style::default().fg(t.border_muted)),
-            Span::styled(format!("{icon} {greeting}, "), Style::default().fg(t.text_primary).bold()),
+            Span::styled(format!("{icon}  "), Style::default().fg(t.status_warning)),
+            Span::styled(format!("{greeting}, "), Style::default().fg(t.text_primary).bold()),
             Span::styled(tr("lector", "reader").to_string(), Style::default().fg(t.accent_secondary).bold()),
+            Span::styled("  ·  ", Style::default().fg(t.border_muted)),
+            Span::styled(
+                tr("Tu centro de lectura manga en terminal", "Your terminal manga reading hub"),
+                Style::default().fg(t.text_muted).italic(),
+            ),
         ]))
-        .render(header_line_area, buf);
+        .render(greeting_area, buf);
 
         Paragraph::new(self.continue_reading_line(info_area.width)).render(continue_area, buf);
+        Paragraph::new(Line::default()).render(tagline_area, buf);
 
-        if stats_area.width >= 68 {
-            let card_width = ((stats_area.width.saturating_sub(3)) / 4).min(20);
-            let compact_labels = card_width < 19;
+        if stats_area.width >= 72 {
+            let card_width = ((stats_area.width.saturating_sub(3)) / 4).min(22);
+            let compact_labels = card_width < 20;
             let card_areas = Layout::horizontal([Constraint::Length(card_width); 4])
                 .spacing(1)
                 .flex(Flex::Start)
@@ -892,14 +848,13 @@ where
             {
                 let card_block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(t.border_muted))
-                    .style(Style::default().bg(t.chip_bg));
+                    .border_style(Style::default().fg(color));
                 let card_inner = card_block.inner(*card_area);
                 card_block.render(*card_area, buf);
                 Paragraph::new(Line::from(vec![
                     Span::styled(format!("{stat_icon} "), Style::default().fg(color)),
                     Span::styled(value, Style::default().fg(color).bold()),
-                    Span::styled(format!(" {label}"), Style::default().fg(t.text_muted)),
+                    Span::styled(format!(" {label}"), Style::default().fg(t.text_secondary)),
                 ]))
                 .centered()
                 .render(card_inner, buf);

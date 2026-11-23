@@ -57,8 +57,7 @@ impl CarrouselItemPopularManga {
         let t = theme();
         let cover_block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(t.accent_primary))
-            .style(Style::default().bg(t.bar_bg));
+            .border_style(Style::default().fg(t.border_accent));
         let inner = cover_block.inner(area);
         cover_block.render(area, buf);
 
@@ -68,10 +67,10 @@ impl CarrouselItemPopularManga {
 
         match state.get_image_state(&self.manga.id) {
             Some(image_state) => {
-                render_stateful_image_cleared(image_state, inner, inner, buf, Color::Rgb(12, 14, 24));
+                render_stateful_image_cleared(image_state, inner, inner, buf, Color::Rgb(1, 1, 1));
             },
             None => {
-                clear_image_canvas(inner, buf, Color::Rgb(12, 14, 24));
+                clear_image_canvas(inner, buf, Color::Rgb(1, 1, 1));
                 let loader = Throbber::default()
                     .label(tr("Cargando portada...", "Loading cover..."))
                     .style(Style::default().fg(t.accent_primary))
@@ -87,10 +86,9 @@ impl CarrouselItemPopularManga {
         let t = theme();
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(t.border_muted))
-            .style(Style::default().bg(t.bar_bg))
+            .border_style(Style::default().fg(t.border))
             .title(Line::from(vec![
-                Span::styled(" ◈ ", Style::default().fg(t.accent_primary).bold()),
+                Span::styled(" ✦ ", Style::default().fg(t.accent_primary).bold()),
                 Span::styled(self.manga.title.clone(), Style::default().fg(t.text_primary).bold()),
                 Span::raw(" "),
             ]));
@@ -332,20 +330,15 @@ impl StatefulWidget for RecentlyAddedCarrousel {
                         Block::bordered()
                             .border_type(BorderType::Rounded)
                             .border_style(Style::default().fg(t.accent_primary).bold())
-                            .style(Style::default().bg(t.row_selected_bg))
                             .title(Line::from(vec![Span::styled(
                                 format!(" ▸ #{} ", item_index + 1),
                                 Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
                             )]))
                     } else {
-                        Block::bordered()
-                            .border_type(BorderType::Rounded)
-                            .border_style(Style::default().fg(t.border_muted))
-                            .style(Style::default().bg(t.bar_bg))
-                            .title(Line::from(vec![Span::styled(
-                                format!(" #{} ", item_index + 1),
-                                Style::default().fg(t.text_dim),
-                            )]))
+                        t.rounded_block().title(Line::from(vec![Span::styled(
+                            format!(" #{} ", item_index + 1),
+                            Style::default().fg(t.text_muted),
+                        )]))
                     };
 
                     let inner_card = card_block.inner(*area_manga);
