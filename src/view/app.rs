@@ -205,6 +205,7 @@ where
     pub needs_terminal_clear: bool,
     top_tabs_area: Rect,
     tab_hit_boxes: Vec<(u16, u16, SelectedPage)>,
+    ui_tick: usize,
 }
 
 impl<T, S> Component for App<T, S>
@@ -607,6 +608,7 @@ where
             tab_hit_boxes: Vec::new(),
             is_stats_modal_open: false,
             stats_state: None,
+            ui_tick: 0,
         }
     }
 
@@ -1379,17 +1381,24 @@ where
 
         Paragraph::new(Line::from(spans)).render(left_area, buf);
 
-        // Second row: subtle horizontal rule with active tab highlight bar
+        // Second row: subtle neon gradient underline with animated scanning pulse on active tab
         if area.height >= 2 {
             let divider_y = area.y + 1;
             let rule_style = Style::default().fg(t.border_muted);
             let active_rule_style = Style::default().fg(active_pill_bg).bold();
+            let pulse_style = Style::default().fg(t.accent_secondary).bold();
             for x in area.left()..area.right() {
                 if let Some((start_x, end_x)) = active_tab_range
                     && x >= start_x
                     && x < end_x
                 {
-                    buf[(x, divider_y)].set_symbol("━").set_style(active_rule_style);
+                    let tab_len = (end_x - start_x).max(1) as usize;
+                    let rel = (x - start_x) as usize;
+                    let shimmer_pos = self.ui_tick % tab_len;
+                    let is_pulse = rel == shimmer_pos || rel == (shimmer_pos + 1) % tab_len;
+                    buf[(x, divider_y)]
+                        .set_symbol("━")
+                        .set_style(if is_pulse { pulse_style } else { active_rule_style });
                 } else {
                     buf[(x, divider_y)].set_symbol("─").set_style(rule_style);
                 }
@@ -2295,6 +2304,10 @@ where
         let was_displaying_modal = self.is_displaying_modal();
 
         self.handle_events(event.clone());
+
+        if event == Events::Tick {
+            self.ui_tick = self.ui_tick.wrapping_add(1);
+        }
 
         if event == Events::Tick && self.last_new_chapter_check.elapsed() >= NEW_CHAPTER_CHECK_INTERVAL {
             self.global_event_tx.send(Events::CheckForNewDownloadedChapters).ok();

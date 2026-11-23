@@ -92,28 +92,31 @@ fn color_to_rgb(color: Color, fallback: (f32, f32, f32)) -> (f32, f32, f32) {
     }
 }
 
-/// Theme-aware horizontal gradient (`accent_primary` → `accent_secondary` → `status_error`).
-fn gradient_color(index: usize, total: usize) -> Color {
+/// Theme-aware animated horizontal wave gradient (`accent_primary` → `accent_secondary` → `status_error`).
+fn animated_gradient_color(index: usize, total: usize, tick: usize) -> Color {
     let t_pal = theme();
     let stops = [
-        color_to_rgb(t_pal.accent_primary, (0.0, 210.0, 255.0)),
-        color_to_rgb(t_pal.accent_secondary, (168.0, 128.0, 255.0)),
-        color_to_rgb(t_pal.status_error, (255.0, 95.0, 200.0)),
+        color_to_rgb(t_pal.accent_primary, (0.0, 232.0, 255.0)),
+        color_to_rgb(t_pal.accent_secondary, (192.0, 118.0, 255.0)),
+        color_to_rgb(t_pal.status_error, (255.0, 92.0, 142.0)),
     ];
-    let t = if total <= 1 { 0.0 } else { index.min(total - 1) as f32 / (total - 1) as f32 };
-    let (from, to, local_t) = if t < 0.5 { (stops[0], stops[1], t * 2.0) } else { (stops[1], stops[2], (t - 0.5) * 2.0) };
+    let base_t = if total <= 1 { 0.0 } else { index.min(total - 1) as f32 / (total - 1) as f32 };
+    let shift = (tick % 48) as f32 / 48.0;
+    let phase = (base_t + shift) % 1.0;
+    let wave = if phase < 0.5 { phase * 2.0 } else { (1.0 - phase) * 2.0 };
+    let (from, to, local_t) = if wave < 0.5 { (stops[0], stops[1], wave * 2.0) } else { (stops[1], stops[2], (wave - 0.5) * 2.0) };
     let lerp = |a: f32, b: f32| (a + (b - a) * local_t).round().clamp(0.0, 255.0) as u8;
     Color::Rgb(lerp(from.0, to.0), lerp(from.1, to.1), lerp(from.2, to.2))
 }
 
-/// Colors every visible character of `text` with the hero gradient.
-fn gradient_line(text: &str, bold: bool) -> Line<'static> {
+/// Colors every visible character of `text` with the live animated neon gradient.
+fn animated_gradient_line(text: &str, bold: bool, tick: usize) -> Line<'static> {
     let total = text.chars().count();
     let spans: Vec<Span<'static>> = text
         .chars()
         .enumerate()
         .map(|(idx, ch)| {
-            let mut style = Style::default().fg(gradient_color(idx, total));
+            let mut style = Style::default().fg(animated_gradient_color(idx, total, tick));
             if bold {
                 style = style.bold();
             }
@@ -121,6 +124,12 @@ fn gradient_line(text: &str, bold: bool) -> Line<'static> {
         })
         .collect();
     Line::from(spans)
+}
+
+/// Animated 3-bar activity equalizer glyph for live Neo-Tokyo badges.
+fn live_pulse_bars(tick: usize) -> &'static str {
+    const FRAMES: [&str; 6] = ["▂▄▆", "▄▆█", "▆█▄", "█▄▂", "▄▂▆", "▂▆▄"];
+    FRAMES[tick % FRAMES.len()]
 }
 
 /// Which hero header variant fits in the available area.
@@ -215,6 +224,7 @@ where
     recently_added_area: Rect,
     stats: HomeStats,
     pub anime_player: AnimePlayerState,
+    ui_tick: usize,
 }
 
 impl<T> Component for Home<T>
@@ -313,6 +323,7 @@ where
             recently_added_area: Rect::default(),
             stats: load_home_stats(),
             anime_player: AnimePlayerState::new(),
+            ui_tick: 0,
         }
     }
 
@@ -470,6 +481,7 @@ where
     }
 
     pub fn tick(&mut self) {
+        self.ui_tick = self.ui_tick.wrapping_add(1);
         self.anime_player.tick();
         self.carrousel_popular_mangas.tick();
         self.carrousel_recently_added.tick();
@@ -770,8 +782,10 @@ where
         let t = theme();
         let (icon, greeting) = greeting_for_hour(chrono::Local::now().hour());
 
+        let pulse = live_pulse_bars(self.ui_tick);
+
         let title_left = Line::from(vec![
-            Span::styled(" ◈ ", Style::default().fg(t.accent_primary).bold()),
+            Span::styled(format!(" {pulse} "), Style::default().fg(t.accent_primary).bold()),
             Span::styled("NEO-TOKYO HUB", Style::default().fg(t.accent_primary).bold()),
             Span::styled("  ·  ", Style::default().fg(t.border_muted)),
             Span::styled(format!("{icon} {greeting} "), Style::default().fg(t.text_secondary)),
@@ -817,19 +831,24 @@ where
             (l, i, None)
         };
 
-        let logo_lines: Vec<Line<'static>> = build_logo_lines().iter().map(|row| gradient_line(row, false)).collect();
+        let logo_lines: Vec<Line<'static>> = build_logo_lines()
+            .iter()
+            .enumerate()
+            .map(|(row_idx, row)| animated_gradient_line(row, false, self.ui_tick.wrapping_add(row_idx * 2)))
+            .collect();
         Paragraph::new(logo_lines).render(logo_area, buf);
 
         if let Some(anime_area) = maybe_anime_area {
             self.anime_banner_area = anime_area;
+            let live_dot = if self.ui_tick % 4 < 2 { "●" } else { "◉" };
             let anime_block = Block::bordered()
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(t.accent_secondary))
                 .style(Style::default().bg(Color::Rgb(12, 14, 24)))
-                .title(Line::from(vec![Span::styled(
-                    format!(" {} ", self.anime_player.scene.badge()),
-                    Style::default().fg(t.accent_primary).bold(),
-                )]))
+                .title(Line::from(vec![
+                    Span::styled(format!(" {live_dot} "), Style::default().fg(t.status_error).bold()),
+                    Span::styled(format!("{} ", self.anime_player.scene.badge()), Style::default().fg(t.accent_primary).bold()),
+                ]))
                 .title_bottom(
                     Line::from(vec![Span::styled(tr(" ▸ Clic o <V> ", " ▸ Click or <V> "), Style::default().fg(t.text_dim))])
                         .right_aligned(),
