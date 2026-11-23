@@ -25,7 +25,9 @@ use backend::manga_provider::weebcentral::filter_state::WeebcentralFilterState;
 use backend::manga_provider::weebcentral::{WEEBCENTRAL_BASE_URL, WeebcentralProvider};
 use backend::manga_provider::{ChapterFilters, GetChapterPages, MangaPageProvider, MangaProviders, Pagination, SearchPageProvider};
 use backend::secrets::keyring::KeyringStorage;
+use backend::tracker::UnifiedTracker;
 use backend::tracker::anilist::{Anilist, BASE_ANILIST_API_URL};
+use backend::tracker::myanimelist::MyAnimeListClient;
 use clap::Parser;
 use cli::{Credentials, check_anilist_credentials_are_stored};
 use crossterm::ExecutableCommand;
@@ -93,7 +95,7 @@ mod tests {
         assert!(!should_relaunch_in_windows_terminal(true, false, true, &exe));
 
         // Non-interactive CLI arguments should run directly without opening a new tab
-        for flag in ["-h", "--help", "-V", "--version", "lang", "anilist", "update", "cloud"] {
+        for flag in ["-h", "--help", "-V", "--version", "lang", "anilist", "mal", "update", "cloud"] {
             let args = vec!["manga-tui.exe".to_string(), flag.to_string()];
             assert!(!should_relaunch_in_windows_terminal(true, false, false, &args), "expected no relaunch for CLI arg {flag}");
         }
@@ -219,7 +221,7 @@ fn should_relaunch_in_windows_terminal(
         return false;
     }
 
-    const NON_INTERACTIVE_TOKENS: [&str; 8] = ["-h", "--help", "-V", "--version", "lang", "anilist", "update", "cloud"];
+    const NON_INTERACTIVE_TOKENS: [&str; 9] = ["-h", "--help", "-V", "--version", "lang", "anilist", "mal", "update", "cloud"];
     !args.iter().skip(1).any(|arg| NON_INTERACTIVE_TOKENS.iter().any(|token| arg == token))
 }
 
@@ -408,12 +410,21 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
     }
     .filter(|_| config.track_reading_history);
 
-    if anilist_client.is_some() {
+    let mal_client = MyAnimeListClient::from_saved_state().filter(|_| config.track_reading_history);
+
+    if mal_client.is_some() {
         logger.inform(tr(
-            "Anilist configurado, se sincronizará el historial de lectura",
-            "Anilist is setup, tracking reading history",
+            "MyAnimeList configurado (OAuth 2.0 PKCE), se sincronizará el progreso de lectura",
+            "MyAnimeList is setup (OAuth 2.0 PKCE), tracking reading progress",
         ));
     }
+
+    let unified_tracker: Option<UnifiedTracker> = match (anilist_client, mal_client) {
+        (Some(a), Some(m)) => Some(UnifiedTracker::Both(a, m)),
+        (Some(a), None) => Some(UnifiedTracker::Anilist(a)),
+        (None, Some(m)) => Some(UnifiedTracker::MyAnimeList(m)),
+        (None, None) => None,
+    };
 
     let mut connection = Database::get_connection()?;
     let database = Database::new(&connection);
@@ -445,7 +456,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             run_app(
                 terminal,
                 mangadex_client,
-                anilist_client,
+                unified_tracker,
                 MangadexFilterProvider::from(get_cached_filters()),
                 MangadexFilterWidget::new(),
             )
@@ -456,7 +467,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             run_app(
                 terminal,
                 WeebcentralProvider::new(WEEBCENTRAL_BASE_URL.parse().unwrap(), cache_provider),
-                anilist_client,
+                unified_tracker,
                 WeebcentralFiltersProvider::new(WeebcentralFilterState::default()),
                 WeebcentralFilterWidget::new(),
             )
@@ -467,7 +478,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             run_app(
                 terminal,
                 MangaPillProvider::init(cache_provider),
-                anilist_client,
+                unified_tracker,
                 MangaPillFiltersProvider::new(backend::manga_provider::mangapill::filter_state::MangaPillFilterState::default()),
                 MangaPillFilterWidget::new(),
             )
@@ -478,7 +489,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             run_app(
                 terminal,
                 InmangaProvider::new(cache_provider),
-                anilist_client,
+                unified_tracker,
                 InmangaFiltersProvider::new(InmangaFilterState::default()),
                 InmangaFilterWidget::new(),
             )
@@ -489,7 +500,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             run_app(
                 terminal,
                 MangaoniProvider::new(cache_provider),
-                anilist_client,
+                unified_tracker,
                 MangaoniFiltersProvider::new(MangaoniFilterState::default()),
                 MangaoniFilterWidget::new(),
             )
@@ -500,7 +511,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             run_app(
                 terminal,
                 LeercapituloProvider::new(cache_provider),
-                anilist_client,
+                unified_tracker,
                 LeercapituloFiltersProvider::new(LeercapituloFilterState::default()),
                 LeercapituloFilterWidget::new(),
             )
@@ -511,7 +522,7 @@ async fn async_main() -> Result<(), Box<dyn std::error::Error>> {
             run_app(
                 terminal,
                 ComizyProvider::new(cache_provider),
-                anilist_client,
+                unified_tracker,
                 ComizyFiltersProvider::new(ComizyFilterState::default()),
                 ComizyFilterWidget::new(),
             )

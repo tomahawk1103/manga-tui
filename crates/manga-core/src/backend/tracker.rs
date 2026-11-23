@@ -6,6 +6,83 @@ use serde::{Deserialize, Serialize};
 use crate::SearchTerm;
 
 pub mod anilist;
+pub mod myanimelist;
+
+#[derive(Debug, Clone)]
+pub enum UnifiedTracker {
+    Anilist(anilist::Anilist),
+    MyAnimeList(myanimelist::MyAnimeListClient),
+    Both(anilist::Anilist, myanimelist::MyAnimeListClient),
+}
+
+impl MangaTracker for UnifiedTracker {
+    async fn search_manga_by_title(&self, title: SearchTerm) -> Result<Option<MangaToTrack>, Box<dyn std::error::Error>> {
+        match self {
+            Self::Anilist(a) => a.search_manga_by_title(title).await,
+            Self::MyAnimeList(m) => m.search_manga_by_title(title).await,
+            Self::Both(a, m) => {
+                let second_title = SearchTerm::trimmed(title.get());
+                let a_id = a.search_manga_by_title(title).await.ok().flatten().map(|t| t.id);
+                let m_id = match second_title {
+                    Some(t) => m.search_manga_by_title(t).await.ok().flatten().map(|t| t.id),
+                    None => None,
+                };
+                match (a_id, m_id) {
+                    (None, None) => Ok(None),
+                    (a_opt, m_opt) => Ok(Some(MangaToTrack {
+                        id: format!("{}|{}", a_opt.unwrap_or_default(), m_opt.unwrap_or_default()),
+                    })),
+                }
+            },
+        }
+    }
+
+    async fn mark_manga_as_read_with_chapter_count(&self, manga: MarkAsRead<'_>) -> Result<(), Box<dyn Error>> {
+        match self {
+            Self::Anilist(a) => a.mark_manga_as_read_with_chapter_count(manga).await,
+            Self::MyAnimeList(m) => m.mark_manga_as_read_with_chapter_count(manga).await,
+            Self::Both(a, m) => {
+                let (a_id, m_id) = manga.id.split_once('|').unwrap_or((manga.id, ""));
+                if !a_id.is_empty() {
+                    let _ = a
+                        .mark_manga_as_read_with_chapter_count(MarkAsRead {
+                            id: a_id,
+                            chapter_number: manga.chapter_number,
+                            volume_number: manga.volume_number,
+                        })
+                        .await;
+                }
+                if !m_id.is_empty() {
+                    let _ = m
+                        .mark_manga_as_read_with_chapter_count(MarkAsRead {
+                            id: m_id,
+                            chapter_number: manga.chapter_number,
+                            volume_number: manga.volume_number,
+                        })
+                        .await;
+                }
+                Ok(())
+            },
+        }
+    }
+
+    async fn mark_manga_as_plan_to_read(&self, manga_to_plan_to_read: PlanToReadArgs<'_>) -> Result<(), Box<dyn Error>> {
+        match self {
+            Self::Anilist(a) => a.mark_manga_as_plan_to_read(manga_to_plan_to_read).await,
+            Self::MyAnimeList(m) => m.mark_manga_as_plan_to_read(manga_to_plan_to_read).await,
+            Self::Both(a, m) => {
+                let (a_id, m_id) = manga_to_plan_to_read.id.split_once('|').unwrap_or((manga_to_plan_to_read.id, ""));
+                if !a_id.is_empty() {
+                    let _ = a.mark_manga_as_plan_to_read(PlanToReadArgs { id: a_id }).await;
+                }
+                if !m_id.is_empty() {
+                    let _ = m.mark_manga_as_plan_to_read(PlanToReadArgs { id: m_id }).await;
+                }
+                Ok(())
+            },
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Default)]
 pub struct Credentials {

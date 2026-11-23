@@ -458,6 +458,22 @@ where
                 self.cloud_task = None;
                 self.cloud_state.on_oauth_finished(result);
             },
+            Events::MalOAuthFinished(result) => {
+                self.cloud_task = None;
+                self.cloud_state.on_mal_oauth_finished(result);
+            },
+            Events::MalSyncFinished(result) => {
+                self.cloud_task = None;
+                let ok = result.is_ok();
+                self.cloud_state.on_mal_sync_finished(result);
+                if ok {
+                    self.home_page.refresh_stats();
+                    self.search_page.refresh_personal_discovery();
+                    if self.current_tab == SelectedPage::Feed {
+                        self.feed_page.init_search();
+                    }
+                }
+            },
             Events::ProviderCheckFinished {
                 active_provider,
                 switched_from,
@@ -886,6 +902,93 @@ where
             })
             .await;
             let _ = event_tx.send(Events::CloudSyncFinished(res));
+        });
+        self.cloud_task = Some(handle);
+    }
+
+    pub fn spawn_mal_oauth_login(&mut self, client_id: String, client_secret: Option<String>) {
+        if let Some(handle) = self.cloud_task.take() {
+            handle.abort();
+        }
+        self.cloud_state.is_busy = true;
+        self.cloud_state.progress = Some(crate::backend::cloud::CloudSyncProgress {
+            step_label: tr(
+                "Abriendo navegador para autorizar tu cuenta privada de MyAnimeList (OAuth 2.0 + PKCE)...",
+                "Opening browser to authorize your private MyAnimeList account (OAuth 2.0 + PKCE)...",
+            )
+            .to_string(),
+            completed_items: 1,
+            total_items: 3,
+        });
+
+        let event_tx = self.global_event_tx.clone();
+        let handle = tokio::spawn(async move {
+            let client = crate::backend::tracker::myanimelist::MyAnimeListClient::new();
+            let tx_url = event_tx.clone();
+            let token_res = client
+                .run_loopback_oauth_flow(&client_id, client_secret.as_deref(), move |auth_url| {
+                    #[cfg(not(test))]
+                    let _ = open::that(auth_url);
+                    #[cfg(test)]
+                    let _ = auth_url;
+                    let _ = tx_url.send(Events::CloudSyncProgress(crate::backend::cloud::CloudSyncProgress {
+                        step_label: tr(
+                            "Esperando que autorices MyAnimeList en tu navegador...",
+                            "Waiting for you to authorize MyAnimeList in your browser...",
+                        )
+                        .to_string(),
+                        completed_items: 2,
+                        total_items: 3,
+                    }));
+                })
+                .await;
+
+            match token_res {
+                Ok(tokens) => {
+                    let mut state = crate::backend::tracker::myanimelist::MalConnectionState::load();
+                    state.save_oauth_tokens(
+                        &client_id,
+                        client_secret.as_deref(),
+                        &tokens.access_token,
+                        tokens.refresh_token.as_deref(),
+                    );
+                    if let Ok(profile) = client.get_my_profile(&tokens.access_token).await {
+                        state.username = Some(profile.name);
+                        state.user_id = Some(profile.id);
+                    }
+                    let _ = state.save();
+                    let _ = event_tx.send(Events::MalOAuthFinished(Ok(state)));
+                },
+                Err(err) => {
+                    let _ = event_tx.send(Events::MalOAuthFinished(Err(err)));
+                },
+            }
+        });
+        self.cloud_task = Some(handle);
+    }
+
+    pub fn spawn_mal_sync(&mut self) {
+        if let Some(handle) = self.cloud_task.take() {
+            handle.abort();
+        }
+        self.cloud_state.is_busy = true;
+        self.cloud_state.progress = Some(crate::backend::cloud::CloudSyncProgress {
+            step_label: tr(
+                "Sincronizando tu lista de mangas con MyAnimeList (Móvil ⇄ PC)...",
+                "Syncing your manga list with MyAnimeList (Mobile ⇄ PC)...",
+            )
+            .to_string(),
+            completed_items: 1,
+            total_items: 2,
+        });
+
+        let mut state = self.cloud_state.mal_connection.clone();
+        let event_tx = self.global_event_tx.clone();
+        let handle = tokio::spawn(async move {
+            let client = crate::backend::tracker::myanimelist::MyAnimeListClient::new();
+            let db_path = crate::backend::AppDirectories::History.get_full_path();
+            let res = client.sync_with_database(&mut state, &db_path).await;
+            let _ = event_tx.send(Events::MalSyncFinished(res));
         });
         self.cloud_task = Some(handle);
     }
@@ -1728,8 +1831,17 @@ where
                 } => {
                     self.spawn_cloud_oauth_login(client_id, client_secret);
                 },
+                CloudModalOutcome::StartMalOAuthLogin {
+                    client_id,
+                    client_secret,
+                } => {
+                    self.spawn_mal_oauth_login(client_id, client_secret);
+                },
                 CloudModalOutcome::StartSync(mode) => {
                     self.spawn_cloud_sync(mode);
+                },
+                CloudModalOutcome::StartMalSync => {
+                    self.spawn_mal_sync();
                 },
                 CloudModalOutcome::CancelRunningTask => {
                     if let Some(handle) = self.cloud_task.take() {
