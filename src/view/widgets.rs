@@ -551,6 +551,7 @@ impl Widget for HelpModal {
             Self::key_line("u / F1", tr("Ir a Inicio", "Go to Home")),
             Self::key_line("i / F2", tr("Ir a Buscar", "Go to Search")),
             Self::key_line("o / F3", tr("Ir a Seguimiento (Biblioteca)", "Go to Feed (Library)")),
+            Self::key_line("p / F8", tr("Ir a Noticias de Manga y Anime", "Go to Manga & Anime News")),
             Self::key_line("c / F5", tr("Abrir menú de Ajustes", "Open Settings menu")),
             Self::key_line("C / F6", tr("Abrir Nube y Sincronización (Drive/iCloud)", "Open Cloud Sync (Drive/iCloud)")),
             Self::key_line("S / F7", tr("Abrir Dashboard de Estadísticas de Lectura", "Open Reading Stats Dashboard")),

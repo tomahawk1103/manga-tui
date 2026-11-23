@@ -16,6 +16,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use self::feed::Feed;
 use self::home::Home;
 use self::manga::MangaPage;
+use self::news::NewsPage;
 use self::reader::MangaReader;
 use self::search::{InputMode, SearchPage};
 use super::widgets::Component;
@@ -175,6 +176,7 @@ where
     pub search_page: SearchPage<T, S>,
     pub home_page: Home<T>,
     pub feed_page: Feed<T>,
+    pub news_page: NewsPage,
     manga_provider: Arc<T>,
     pub active_provider: MangaProviders,
     pub is_checking_provider: bool,
@@ -564,6 +566,7 @@ where
                 .with_global_sender(global_event_tx.clone())
                 .with_api_client(Arc::clone(&provider)),
             home_page: Home::new(picker, Arc::clone(&provider)).with_global_sender(global_event_tx.clone()),
+            news_page: NewsPage::new(),
             manga_page: None,
             manga_reader_page: None,
             global_action_tx,
@@ -1331,6 +1334,7 @@ where
             (SelectedPage::Home, tr(" 🏠 Inicio <u/F1> ", " 🏠 Home <u/F1> ").to_string()),
             (SelectedPage::Search, tr(" 🔍 Buscar <i/F2> ", " 🔍 Search <i/F2> ").to_string()),
             (SelectedPage::Feed, tr(" 📚 Seguimiento <o/F3> ", " 📚 Feed <o/F3> ").to_string()),
+            (SelectedPage::News, tr(" 📰 Noticias <p/F8> ", " 📰 News <p/F8> ").to_string()),
         ];
 
         if self.current_tab == SelectedPage::MangaTab {
@@ -1438,6 +1442,7 @@ where
                 SelectedPage::Home => (tr(" 🏠 INICIO ", " 🏠 HOME "), t.accent_primary),
                 SelectedPage::Search => (tr(" 🔍 EXPLORAR ", " 🔍 SEARCH "), t.accent_primary),
                 SelectedPage::Feed => (tr(" 📚 BIBLIOTECA ", " 📚 LIBRARY "), t.status_success),
+                SelectedPage::News => (tr(" 📰 NOTICIAS ", " 📰 NEWS "), t.accent_highlight),
                 SelectedPage::MangaTab => (tr(" 📖 FICHA ", " 📖 MANGA "), t.accent_secondary),
                 SelectedPage::ReaderTab => (tr(" 👁 LECTOR ", " 👁 READER "), t.accent_highlight),
             }
@@ -1458,6 +1463,12 @@ where
                     ("i", tr("Buscar", "Search")),
                     ("o", tr("Biblioteca", "Library")),
                     ("g", "GitHub"),
+                ],
+                SelectedPage::News => vec![
+                    ("j/k", tr("Mover", "Move")),
+                    ("Enter", tr("Abrir en navegador", "Open in browser")),
+                    ("Tab/1-4", tr("Fuente", "Source")),
+                    ("R", tr("Actualizar", "Refresh")),
                 ],
                 SelectedPage::Search => vec![
                     ("s", tr("Buscar", "Search")),
@@ -1708,6 +1719,7 @@ where
             SelectedPage::MangaTab => self.render_manga_page(area, frame),
             SelectedPage::Home => self.render_home_page(area, frame),
             SelectedPage::Feed => self.render_feed_page(area, frame),
+            SelectedPage::News => self.news_page.render(area, frame),
             // Reader tab should be on full screen
             SelectedPage::ReaderTab => {},
         }
@@ -2111,6 +2123,16 @@ where
                 KeyCode::Char('o') | KeyCode::F(3) if self.current_tab != SelectedPage::ReaderTab => {
                     self.global_event_tx.send(Events::GoFeedPage).ok();
                 },
+                KeyCode::F(8) if self.current_tab != SelectedPage::ReaderTab => self.go_news_page(),
+                // `p` is used by Search (plan) and Manga (provider) pages, so only map it elsewhere
+                KeyCode::Char('p')
+                    if !matches!(
+                        self.current_tab,
+                        SelectedPage::ReaderTab | SelectedPage::Search | SelectedPage::MangaTab | SelectedPage::News
+                    ) =>
+                {
+                    self.go_news_page();
+                },
 
                 _ => {},
             }
@@ -2138,6 +2160,7 @@ where
                         SelectedPage::Feed => {
                             self.global_event_tx.send(Events::GoFeedPage).ok();
                         },
+                        SelectedPage::News => self.go_news_page(),
                         _ => {},
                     }
                     return;
@@ -2291,6 +2314,16 @@ where
         self.current_tab = SelectedPage::Feed;
     }
 
+    fn go_news_page(&mut self) {
+        if self.manga_page.is_some() {
+            self.manga_page.as_mut().unwrap().clean_up();
+            self.manga_page = None;
+        }
+        self.feed_page.clean_up();
+        self.news_page.ensure_loaded();
+        self.current_tab = SelectedPage::News;
+    }
+
     pub fn process_global_event(&mut self, event: Events) {
         let was_displaying_modal = self.is_displaying_modal();
 
@@ -2334,6 +2367,9 @@ where
             },
             SelectedPage::Feed => {
                 self.feed_page.handle_events(event);
+            },
+            SelectedPage::News => {
+                self.news_page.handle_events(event);
             },
         };
     }
@@ -2396,6 +2432,7 @@ where
                     self.feed_page.update(feed_event);
                 }
             },
+            SelectedPage::News => {},
         };
     }
 
@@ -2668,7 +2705,7 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(app.tab_hit_boxes.len(), 3);
+        assert_eq!(app.tab_hit_boxes.len(), 4);
 
         // Sending 'n' again while modal is open closes it
         app.global_event_tx.send(Events::Key(KeyCode::Char('n').into())).unwrap();
@@ -2958,7 +2995,7 @@ mod tests {
         let area = Rect::new(0, 0, 100, 30);
         terminal.draw(|f| app.render(area, f)).unwrap();
 
-        assert_eq!(app.tab_hit_boxes.len(), 3);
+        assert_eq!(app.tab_hit_boxes.len(), 4);
         let (home_start, home_end, _) = app.tab_hit_boxes[0];
         let (search_start, search_end, _) = app.tab_hit_boxes[1];
         let (feed_start, feed_end, _) = app.tab_hit_boxes[2];
