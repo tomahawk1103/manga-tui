@@ -20,8 +20,8 @@ use crate::backend::tui::Events;
 use crate::common::ImageState;
 use crate::i18n::tr;
 use crate::theme::{current_theme, theme};
+use crate::view::widgets::Component;
 use crate::view::widgets::home::{CarrouselItemPopularManga, CarrouselState, PopularMangaCarrousel, RecentlyAddedCarrousel};
-use crate::view::widgets::{AnimePlayerState, AnimeVisualModal, Component, handle_anime_modal_key};
 
 #[derive(PartialEq, Eq)]
 pub enum HomeState {
@@ -49,8 +49,6 @@ pub enum HomeActions {
     SelectNextRecentlyAddedManga,
     SelectPreviousRecentlyAddedManga,
     SupportProject,
-    NextAnimeScene,
-    ToggleAnimeModal,
 }
 
 /// "ANSI Shadow" glyphs used to compose the big `MANGA-TUI` hero logo.
@@ -210,12 +208,9 @@ where
     manga_provider: Arc<T>,
     pub active_provider: MangaProviders,
     top_bar_area: Rect,
-    anime_banner_area: Rect,
     popular_mangas_area: Rect,
     recently_added_area: Rect,
     stats: HomeStats,
-    pub anime_player: AnimePlayerState,
-    ui_tick: usize,
 }
 
 impl<T> Component for Home<T>
@@ -240,10 +235,6 @@ where
         self.render_hero(top_bar_area, buf, hero_mode);
         self.render_popular_mangas_carrousel(carrousel_popular_mangas_area, buf);
         self.render_recently_added_mangas_area(latest_updates_area, buf);
-
-        if self.anime_player.is_fullscreen_open {
-            AnimeVisualModal::new(&mut self.anime_player, self.picker.as_mut()).render(area, buf);
-        }
     }
 
     fn update(&mut self, action: Self::Actions) {
@@ -260,8 +251,6 @@ where
                 self.go_to_manga_page_recently_added();
             },
             HomeActions::SupportProject => self.support_project(),
-            HomeActions::NextAnimeScene => self.anime_player.next_scene(),
-            HomeActions::ToggleAnimeModal => self.anime_player.toggle_fullscreen(),
         }
     }
 
@@ -309,17 +298,10 @@ where
             manga_provider,
             active_provider,
             top_bar_area: Rect::default(),
-            anime_banner_area: Rect::default(),
             popular_mangas_area: Rect::default(),
             recently_added_area: Rect::default(),
             stats: load_home_stats(),
-            anime_player: AnimePlayerState::new(),
-            ui_tick: 0,
         }
-    }
-
-    pub fn is_overlay_open(&self) -> bool {
-        self.anime_player.is_fullscreen_open
     }
 
     pub fn set_picker(&mut self, picker: Option<Picker>) {
@@ -329,7 +311,6 @@ where
         self.carrousel_recently_added.can_display_images = can_display;
         self.popular_manga_carrousel_state.rebuild_protocols(self.picker.as_mut());
         self.recently_added_manga_state.rebuild_protocols(self.picker.as_mut());
-        self.anime_player.invalidate_protocols();
         if can_display {
             if !self.carrousel_popular_mangas.items.is_empty() && self.popular_manga_carrousel_state.is_empty() {
                 self.init_search_popular_mangas_cover();
@@ -469,10 +450,6 @@ where
     }
 
     pub fn tick(&mut self) {
-        // Only advance Frieren animation when the fullscreen Cine modal is open so Home stays 100% lag-free
-        if self.anime_player.is_fullscreen_open {
-            self.anime_player.tick();
-        }
         self.carrousel_popular_mangas.tick();
         self.carrousel_recently_added.tick();
         while let Ok(local_event) = self.local_event_rx.try_recv() {
@@ -752,20 +729,17 @@ where
         Line::from(spans)
     }
 
-    fn render_hero(&mut self, area: Rect, buf: &mut Buffer, mode: HeroMode) {
+    fn render_hero(&self, area: Rect, buf: &mut Buffer, mode: HeroMode) {
         if area.width == 0 || area.height == 0 {
             return;
         }
         match mode {
             HeroMode::Full => self.render_full_hero(area, buf),
-            HeroMode::Compact => {
-                self.anime_banner_area = Rect::default();
-                self.render_top_bar(area, buf);
-            },
+            HeroMode::Compact => self.render_top_bar(area, buf),
         }
     }
 
-    fn render_full_hero(&mut self, area: Rect, buf: &mut Buffer) {
+    fn render_full_hero(&self, area: Rect, buf: &mut Buffer) {
         let t = theme();
         let (icon, greeting) = greeting_for_hour(chrono::Local::now().hour());
 
@@ -782,12 +756,11 @@ where
                 Style::default().fg(t.text_primary).bg(t.chip_bg).bold(),
             ),
             Span::raw("  "),
-            Span::styled(" V ", Style::default().fg(Color::Black).bg(t.accent_secondary).bold()),
-            Span::styled(tr(" Frieren GIF ", " Frieren GIF "), Style::default().fg(t.accent_secondary).bg(t.chip_bg).bold()),
-            Span::raw("  "),
             Span::styled(" T ", Style::default().fg(t.accent_highlight).bg(t.chip_bg).bold()),
             Span::styled(format!(" {} ", current_theme().label()), Style::default().fg(t.text_muted)),
-            Span::raw(" "),
+            Span::raw("  "),
+            Span::styled(" g ", Style::default().fg(t.accent_secondary).bg(t.chip_bg).bold()),
+            Span::styled(" GitHub ", Style::default().fg(t.text_muted)),
         ])
         .right_aligned();
 
@@ -807,9 +780,6 @@ where
             return;
         }
 
-        // Clean 2-column Hero (Big Neon Gradient Logo + Spacious Reading Dashboard & 4 Stat Cards)
-        // We do NOT render a tiny squished Sixel inside the 6-row header so there is zero Sixel lag or clutter.
-        self.anime_banner_area = Rect::default();
         let [logo_area, info_area] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1)])
             .spacing(3)
             .areas(inner);
@@ -937,15 +907,6 @@ where
     }
 
     fn handle_mouse_events(&mut self, mouse_event: MouseEvent) {
-        if self.anime_player.is_fullscreen_open {
-            if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
-                self.anime_player.next_scene();
-            } else if let MouseEventKind::Down(MouseButton::Right) = mouse_event.kind {
-                self.anime_player.is_fullscreen_open = false;
-            }
-            return;
-        }
-
         let pos = Position::new(mouse_event.column, mouse_event.row);
         let in_popular = self.popular_mangas_area.contains(pos);
 
@@ -965,9 +926,7 @@ where
                 }
             },
             MouseEventKind::Down(MouseButton::Left) => {
-                if self.anime_banner_area.contains(pos) {
-                    self.local_action_tx.send(HomeActions::ToggleAnimeModal).ok();
-                } else if self.top_bar_area.contains(pos) {
+                if self.top_bar_area.contains(pos) {
                     if let Some(tx) = &self.global_event_tx {
                         tx.send(Events::GoFeedPage).ok();
                     }
@@ -991,11 +950,6 @@ where
     }
 
     pub fn handle_key_events(&mut self, key_event: KeyEvent) {
-        if self.anime_player.is_fullscreen_open {
-            handle_anime_modal_key(&mut self.anime_player, key_event);
-            return;
-        }
-
         match key_event.code {
             KeyCode::Char('w') => {
                 self.local_action_tx.send(HomeActions::SelectNextPopularManga).ok();
@@ -1018,12 +972,6 @@ where
             },
             KeyCode::Char('g') => {
                 self.local_action_tx.send(HomeActions::SupportProject).ok();
-            },
-            KeyCode::Char('v') => {
-                self.local_action_tx.send(HomeActions::NextAnimeScene).ok();
-            },
-            KeyCode::Char('V') => {
-                self.local_action_tx.send(HomeActions::ToggleAnimeModal).ok();
             },
             _ => {},
         }

@@ -12,7 +12,6 @@ use crate::i18n::tr;
 use crate::theme::theme;
 use crate::utils::centered_rect;
 
-pub mod anime_player;
 pub mod cloud;
 pub mod feed;
 pub mod home;
@@ -22,7 +21,6 @@ pub mod search;
 pub mod settings;
 pub mod updater;
 
-pub use anime_player::{AnimePlayerState, AnimeSceneKind, AnimeVisualModal, handle_anime_modal_key};
 pub use cloud::{CloudModal, CloudModalOutcome, CloudModalState};
 pub use settings::{SettingsModal, SettingsModalState, SettingsOutcome};
 pub use updater::{AppUpdateModal, AppUpdateModalState, AppUpdateStage};
@@ -551,10 +549,6 @@ impl Widget for HelpModal {
         let left_lines = vec![
             Self::section_title(tr("Navegación Global", "Global Navigation")),
             Self::key_line("u / F1", tr("Ir a Inicio", "Go to Home")),
-            Self::key_line(
-                "v / V",
-                tr("Cambiar escena anime / Abrir Cine Visual (Inicio)", "Switch anime scene / Open Anime TV (Home)"),
-            ),
             Self::key_line("i / F2", tr("Ir a Buscar", "Go to Search")),
             Self::key_line("o / F3", tr("Ir a Seguimiento (Biblioteca)", "Go to Feed (Library)")),
             Self::key_line("c / F5", tr("Abrir menú de Ajustes", "Open Settings menu")),

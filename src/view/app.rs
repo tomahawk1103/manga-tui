@@ -1455,7 +1455,6 @@ where
                     ("w/b", tr("Popular", "Popular")),
                     ("h/l", tr("Recientes", "Recent")),
                     ("r/Enter", tr("Abrir", "Open")),
-                    ("v/V", tr("Escena/Cine", "Scene/TV")),
                     ("i", tr("Buscar", "Search")),
                     ("o", tr("Biblioteca", "Library")),
                     ("g", "GitHub"),
@@ -1677,7 +1676,6 @@ where
     /// Returns `true` when any global modal or page-level popup overlay is currently open.
     pub fn is_overlay_open(&self) -> bool {
         self.is_displaying_modal()
-            || self.home_page.is_overlay_open()
             || self.search_page.is_filter_open()
             || self.feed_page.is_overlay_open()
             || self.manga_page.as_ref().is_some_and(|page| {
