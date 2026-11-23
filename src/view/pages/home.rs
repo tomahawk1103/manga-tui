@@ -228,8 +228,9 @@ where
 
         let hero_mode = HeroMode::for_area(area);
         let top_bar_height = hero_mode.height(area.height);
+        // Neo-Tokyo layout: dedicated Hero HUD on top, balanced Popular Spotlight + Recently Added showcase below
         let [top_bar_area, carrousel_popular_mangas_area, latest_updates_area] =
-            Layout::vertical([Constraint::Length(top_bar_height), Constraint::Fill(1), Constraint::Fill(1)]).areas(area);
+            Layout::vertical([Constraint::Length(top_bar_height), Constraint::Percentage(46), Constraint::Min(8)]).areas(area);
 
         self.top_bar_area = top_bar_area;
         self.popular_mangas_area = carrousel_popular_mangas_area;
@@ -356,22 +357,25 @@ where
         let total = self.carrousel_popular_mangas.items.len();
         let current = if total == 0 { 0 } else { self.carrousel_popular_mangas.current_item_visible_index + 1 };
 
-        let mut top_left_spans = vec![Span::styled(
-            tr(" 🔥 Títulos Populares ", " 🔥 Popular New Titles "),
-            Style::default().fg(t.accent_primary).bg(t.title_chip_primary_bg).bold(),
-        )];
+        let mut top_left_spans = vec![
+            Span::styled(" ▍", Style::default().fg(t.accent_primary).bold()),
+            Span::styled(
+                tr(" DESTACADOS · NEO-TOKYO ", " SPOTLIGHT · POPULAR "),
+                Style::default().fg(t.accent_primary).bg(t.title_chip_primary_bg).bold(),
+            ),
+        ];
         if total > 0 {
-            top_left_spans.push(Span::styled(format!(" ({current}/{total}) "), Style::default().fg(t.accent_highlight).bold()));
+            top_left_spans.push(Span::styled(format!("  {current}/{total} "), Style::default().fg(t.accent_highlight).bold()));
         }
 
         let mut dot_spans = Vec::new();
         if total > 0 {
             dot_spans.push(Span::raw(" "));
-            let max_dots = total.min(15);
+            let max_dots = total.min(12);
             let active_dot = self.carrousel_popular_mangas.current_item_visible_index % max_dots;
             for idx in 0..max_dots {
                 if idx == active_dot {
-                    dot_spans.push(Span::styled("● ", Style::default().fg(t.accent_primary).bold()));
+                    dot_spans.push(Span::styled("━ ", Style::default().fg(t.accent_primary).bold()));
                 } else {
                     dot_spans.push(Span::styled("· ", Style::default().fg(t.border_muted)));
                 }
@@ -380,17 +384,15 @@ where
 
         let instructions = Line::from(vec![
             Span::raw(" "),
-            t.key_chip("b"),
-            Span::styled(tr(" Anterior  ", " Previous  "), Style::default().fg(t.text_muted)),
-            t.key_chip("w"),
-            Span::styled(tr(" Siguiente  ", " Next  "), Style::default().fg(t.text_muted)),
+            t.key_chip("b/w"),
+            Span::styled(tr(" Cambiar  ", " Switch  "), Style::default().fg(t.text_muted)),
             t.action_chip_primary("r"),
-            Span::styled(tr(" Leer manga ", " Read manga "), Style::default().fg(t.text_primary).bold()),
+            Span::styled(tr(" Leer ahora ", " Read now "), Style::default().fg(t.text_primary).bold()),
         ]);
 
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(t.border))
+            .border_style(Style::default().fg(t.border_accent))
             .title(Line::from(top_left_spans))
             .title_bottom(instructions);
 
@@ -643,12 +645,15 @@ where
         let total = self.carrousel_recently_added.items.len();
         let current = if total == 0 { 0 } else { self.carrousel_recently_added.selected_item_index + 1 };
 
-        let mut top_left_spans = vec![Span::styled(
-            tr(" ✨ Añadidos Recientemente ", " ✨ Recently Added "),
-            Style::default().fg(t.accent_secondary).bg(t.title_chip_secondary_bg).bold(),
-        )];
+        let mut top_left_spans = vec![
+            Span::styled(" ▍", Style::default().fg(t.accent_secondary).bold()),
+            Span::styled(
+                tr(" RECIÉN AÑADIDOS ", " RECENTLY ADDED "),
+                Style::default().fg(t.accent_secondary).bg(t.title_chip_secondary_bg).bold(),
+            ),
+        ];
         if total > 0 {
-            top_left_spans.push(Span::styled(format!(" ({current}/{total}) "), Style::default().fg(t.accent_highlight).bold()));
+            top_left_spans.push(Span::styled(format!("  {current}/{total} "), Style::default().fg(t.accent_highlight).bold()));
         }
 
         let mut page_spans = Vec::new();
@@ -664,17 +669,15 @@ where
 
         let instructions = Line::from(vec![
             Span::raw(" "),
-            t.key_chip("h / ←"),
-            Span::styled(tr(" Izquierda  ", " Left  "), Style::default().fg(t.text_muted)),
-            t.key_chip("l / →"),
-            Span::styled(tr(" Derecha  ", " Right  "), Style::default().fg(t.text_muted)),
+            t.key_chip("h/l · ←/→"),
+            Span::styled(tr(" Explorar  ", " Browse  "), Style::default().fg(t.text_muted)),
             t.action_chip_secondary("Enter"),
             Span::styled(tr(" Abrir ficha ", " Open manga "), Style::default().fg(t.text_primary).bold()),
         ]);
 
         let mut block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(t.border))
+            .border_style(Style::default().fg(t.border_secondary))
             .title(Line::from(top_left_spans))
             .title_bottom(instructions);
 
@@ -768,26 +771,26 @@ where
         let (icon, greeting) = greeting_for_hour(chrono::Local::now().hour());
 
         let title_left = Line::from(vec![
-            Span::styled(tr(" 🏠 Inicio ", " 🏠 Home "), Style::default().fg(t.accent_primary).bold()),
-            Span::styled(format!("{icon} {greeting}, "), Style::default().fg(t.status_warning).bold()),
-            Span::styled(format!("{} ", tr("lector", "reader")), Style::default().fg(t.text_primary).bold()),
+            Span::styled(" ◈ ", Style::default().fg(t.accent_primary).bold()),
+            Span::styled("NEO-TOKYO HUB", Style::default().fg(t.accent_primary).bold()),
+            Span::styled("  ·  ", Style::default().fg(t.border_muted)),
+            Span::styled(format!("{icon} {greeting} "), Style::default().fg(t.text_secondary)),
         ]);
 
         let title_right = Line::from(vec![
-            Span::styled("<v> ", Style::default().fg(t.accent_primary).bold()),
-            Span::styled(format!("{} ", self.anime_player.scene.badge()), Style::default().fg(t.text_muted)),
-            Span::styled("<V> ", Style::default().fg(t.accent_secondary).bold()),
-            Span::styled(tr("Cine Anime ", "Anime TV "), Style::default().fg(t.text_muted)),
-            Span::styled("<T> ", Style::default().fg(t.accent_highlight).bold()),
-            Span::styled(format!("{} ", current_theme().label()), Style::default().fg(t.text_muted)),
-            Span::styled("<g> ", Style::default().fg(t.accent_highlight).bold()),
-            Span::styled("GitHub ", Style::default().fg(t.text_muted)),
+            Span::styled(" <v> ", Style::default().fg(t.accent_primary).bg(t.chip_bg).bold()),
+            Span::styled(format!(" {}  ", self.anime_player.scene.badge()), Style::default().fg(t.text_secondary)),
+            Span::styled(" <V> ", Style::default().fg(Color::Black).bg(t.accent_secondary).bold()),
+            Span::styled(tr(" Cine ", " TV "), Style::default().fg(t.text_primary).bold()),
+            Span::raw(" "),
         ])
         .right_aligned();
 
+        // Deep cyberpunk Neo-Tokyo panel background
         let block = Block::bordered()
             .border_type(BorderType::Rounded)
-            .border_style(Style::default().fg(t.border))
+            .border_style(Style::default().fg(t.border_accent))
+            .style(Style::default().bg(t.bar_bg))
             .title(title_left)
             .title_top(title_right);
 
@@ -801,9 +804,9 @@ where
             return;
         }
 
-        // When the terminal is wide enough (>= 136 cols), show the live animated anime visual card on the right of the hero!
-        let (logo_area, info_area, maybe_anime_area) = if inner.width >= logo_width() + 58 {
-            let [l, i, a] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1), Constraint::Length(24)])
+        // Wide Cyberpunk Showcase: Sleek Logo + Clean Reading HUD + Larger Frieren Live Anime Frame
+        let (logo_area, info_area, maybe_anime_area) = if inner.width >= logo_width() + 54 {
+            let [l, i, a] = Layout::horizontal([Constraint::Length(logo_width()), Constraint::Fill(1), Constraint::Length(28)])
                 .spacing(2)
                 .areas(inner);
             (l, i, Some(a))
@@ -821,50 +824,57 @@ where
             self.anime_banner_area = anime_area;
             let anime_block = Block::bordered()
                 .border_type(BorderType::Rounded)
-                .border_style(Style::default().fg(t.border_accent))
+                .border_style(Style::default().fg(t.accent_secondary))
+                .style(Style::default().bg(Color::Rgb(12, 14, 24)))
                 .title(Line::from(vec![Span::styled(
                     format!(" {} ", self.anime_player.scene.badge()),
                     Style::default().fg(t.accent_primary).bold(),
-                )]));
+                )]))
+                .title_bottom(
+                    Line::from(vec![Span::styled(tr(" ▸ Clic o <V> ", " ▸ Click or <V> "), Style::default().fg(t.text_dim))])
+                        .right_aligned(),
+                );
             let anime_inner = anime_block.inner(anime_area);
             anime_block.render(anime_area, buf);
-            // Render the live animated character in HD using the terminal's graphics protocol (Sixel / Kitty / iTerm2)
+            // Render Frieren real anime clip in HD (Sixel / Kitty / iTerm2)
             self.anime_player.render_hero_canvas(anime_inner, buf, self.picker.as_mut());
         } else {
             self.anime_banner_area = Rect::default();
         }
 
-        let [greeting_area, continue_area, tagline_area, cards_area] =
+        let [header_line_area, continue_area, _spacer, stats_area] =
             Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1), Constraint::Length(3)])
                 .areas(info_area);
 
+        // Clean Neo-Tokyo status & quick greeting line
         Paragraph::new(Line::from(vec![
-            Span::styled(format!("{icon}  "), Style::default().fg(t.status_warning)),
-            Span::styled(format!("{greeting}, "), Style::default().fg(t.text_primary).bold()),
+            Span::styled("⚡ ", Style::default().fg(t.accent_primary).bold()),
+            Span::styled(
+                format!("{} ", self.active_provider.badge_label()),
+                Style::default().fg(Color::Black).bg(t.accent_primary).bold(),
+            ),
+            Span::styled("  ·  ", Style::default().fg(t.border_muted)),
+            Span::styled(format!("{icon} {greeting}, "), Style::default().fg(t.text_primary).bold()),
             Span::styled(tr("lector", "reader").to_string(), Style::default().fg(t.accent_secondary).bold()),
         ]))
-        .render(greeting_area, buf);
+        .render(header_line_area, buf);
 
         Paragraph::new(self.continue_reading_line(info_area.width)).render(continue_area, buf);
-        Paragraph::new(Line::from(Span::styled(
-            tr("Tu centro de lectura manga en terminal", "Your terminal manga reading hub"),
-            Style::default().fg(t.text_dim).italic(),
-        )))
-        .render(tagline_area, buf);
 
-        if cards_area.width >= 74 {
-            let card_width = ((cards_area.width.saturating_sub(3)) / 4).min(21);
-            let compact_labels = card_width < 20;
+        if stats_area.width >= 68 {
+            let card_width = ((stats_area.width.saturating_sub(3)) / 4).min(20);
+            let compact_labels = card_width < 19;
             let card_areas = Layout::horizontal([Constraint::Length(card_width); 4])
                 .spacing(1)
                 .flex(Flex::Start)
-                .split(cards_area);
+                .split(stats_area);
             for ((stat_icon, value, label, color), card_area) in
                 self.stat_entries(compact_labels).into_iter().zip(card_areas.iter())
             {
                 let card_block = Block::bordered()
                     .border_type(BorderType::Rounded)
-                    .border_style(Style::default().fg(t.border_muted));
+                    .border_style(Style::default().fg(t.border_muted))
+                    .style(Style::default().bg(t.chip_bg));
                 let card_inner = card_block.inner(*card_area);
                 card_block.render(*card_area, buf);
                 Paragraph::new(Line::from(vec![
@@ -876,9 +886,9 @@ where
                 .render(card_inner, buf);
             }
         } else {
-            let [_gap, row1, row2] =
-                Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).areas(cards_area);
-            let entries = self.stat_entries(cards_area.width < 46);
+            let [row1, row2, _] =
+                Layout::vertical([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)]).areas(stats_area);
+            let entries = self.stat_entries(stats_area.width < 46);
             for (pair, row_area) in entries.chunks(2).zip([row1, row2]) {
                 let [left_col, right_col] =
                     Layout::horizontal([Constraint::Percentage(50), Constraint::Percentage(50)]).areas(row_area);
@@ -1157,7 +1167,13 @@ mod tests {
             if width >= 90 {
                 assert!(text.contains("1.2K"), "expected formatted chapters_read in {width}x{height}");
                 assert!(text.contains("Berserk"), "expected last read title in top bar in {width}x{height}");
-                assert!(text.contains("Populares") || text.contains("Popular"), "expected popular section in {width}x{height}");
+                assert!(
+                    text.contains("DESTACADOS")
+                        || text.contains("SPOTLIGHT")
+                        || text.contains("Populares")
+                        || text.contains("Popular"),
+                    "expected popular section in {width}x{height}"
+                );
             }
         }
     }
