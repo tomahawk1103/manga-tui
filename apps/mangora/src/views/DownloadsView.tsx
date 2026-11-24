@@ -1,14 +1,16 @@
 import { FolderOpen } from "lucide-react";
 import type { InitialAppState } from "../types/mangora";
 import { getTranslations } from "../lib/i18n";
+import { isTauriRuntime } from "../lib/tauri";
 
 interface DownloadsViewProps {
   appState: InitialAppState;
-  onOpenDataFolder: () => Promise<void>;
+  onOpenDownloadsFolder: () => Promise<void>;
 }
 
-export function DownloadsView({ appState, onOpenDataFolder }: DownloadsViewProps) {
+export function DownloadsView({ appState, onOpenDownloadsFolder }: DownloadsViewProps) {
   const t = getTranslations(appState.uiLanguage);
+  const desktop = isTauriRuntime();
 
   return (
     <div className="space-y-8">
@@ -39,12 +41,14 @@ export function DownloadsView({ appState, onOpenDataFolder }: DownloadsViewProps
           </div>
           <button
             type="button"
-            onClick={() => void onOpenDataFolder()}
+            disabled={!desktop}
+            onClick={() => void onOpenDownloadsFolder()}
             className="editorial-btn-primary text-xs"
           >
             <FolderOpen className="h-4 w-4" aria-hidden="true" />
             <span>{t.downloads.openFolderBtn}</span>
           </button>
+          {!desktop && <p className="mt-2 text-xs text-[var(--muted)]">{t.folderDesktopOnly}</p>}
         </section>
 
         <section className="editorial-card-muted p-5">

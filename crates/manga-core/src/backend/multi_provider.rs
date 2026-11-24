@@ -26,10 +26,11 @@ use crate::backend::manga_provider::mangapill::filter_state::MangaPillFilterStat
 use crate::backend::manga_provider::weebcentral::filter_state::WeebcentralFilterState;
 use crate::backend::manga_provider::weebcentral::{WEEBCENTRAL_BASE_URL, WeebcentralProvider};
 use crate::backend::manga_provider::{
-    Chapter, ChapterFilters, ChapterPage, ChapterPageUrl, ChapterToRead, DecodeBytesToImage, FeedPageProvider, FetchChapterBookmarked,
-    GetChapterPages, GetChaptersResponse, GetMangasResponse, GetRawImage, GoToReadChapter, HomePageMangaProvider, Languages,
-    LatestChapter, ListOfChapters, Manga, MangaPageProvider, MangaPanel, MangaProviders, Pagination, PopularManga, ProviderError,
-    RecentlyAddedManga, SearchChapterById, SearchManga, SearchMangaById, SearchMangaPanel, SearchPageProvider,
+    Chapter, ChapterFilters, ChapterPage, ChapterPageUrl, ChapterToRead, DecodeBytesToImage, FeedPageProvider,
+    FetchChapterBookmarked, GetChapterPages, GetChaptersResponse, GetMangasResponse, GetRawImage, GoToReadChapter,
+    HomePageMangaProvider, Languages, LatestChapter, ListOfChapters, Manga, MangaPageProvider, MangaPanel, MangaProviders,
+    Pagination, PopularManga, ProviderError, RecentlyAddedManga, SearchChapterById, SearchManga, SearchMangaById, SearchMangaPanel,
+    SearchPageProvider,
 };
 use crate::config::{ImageQuality, MangaTuiConfig};
 
@@ -1404,7 +1405,11 @@ pub async fn get_chapter_pages_url_for_provider(
     let res = match provider {
         MangaProviders::Mangadex => pool.mangadex.get_chapter_pages_url_with_extension(chapter_id, manga_id, quality).await,
         MangaProviders::Inmanga => pool.inmanga.get_chapter_pages_url_with_extension(chapter_id, manga_id, quality).await,
-        MangaProviders::Leercapitulo => pool.leercapitulo.get_chapter_pages_url_with_extension(chapter_id, manga_id, quality).await,
+        MangaProviders::Leercapitulo => {
+            pool.leercapitulo
+                .get_chapter_pages_url_with_extension(chapter_id, manga_id, quality)
+                .await
+        },
         MangaProviders::Mangaoni => pool.mangaoni.get_chapter_pages_url_with_extension(chapter_id, manga_id, quality).await,
         MangaProviders::Weebcentral => pool.weebcentral.get_chapter_pages_url_with_extension(chapter_id, manga_id, quality).await,
         MangaProviders::Mangapill => pool.mangapill.get_chapter_pages_url_with_extension(chapter_id, manga_id, quality).await,

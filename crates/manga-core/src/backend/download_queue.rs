@@ -17,9 +17,7 @@ use crate::backend::manga_downloader::raw_images::RawImagesDownloader;
 use crate::backend::manga_downloader::{ChapterToDownloadSanitized, MangaDownloader};
 use crate::backend::manga_provider::{Chapter, ChapterPage, ChapterPageUrl, Languages, MangaProvider, MangaProviders};
 use crate::config::{DownloadType, MangaTuiConfig};
-use crate::runtime_settings::{
-    active_download_type, download_type_toml_value, persist_setting_in_dir, set_active_download_type,
-};
+use crate::runtime_settings::{active_download_type, download_type_toml_value, persist_setting_in_dir, set_active_download_type};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct EnqueueChapterItem {
@@ -498,11 +496,7 @@ fn build_snapshot(inner: &ManagedQueueInner) -> ManagedQueueSnapshot {
         }
     }
 
-    let overall_progress_percent = if progress_items > 0 {
-        (progress_sum / progress_items as f64).clamp(0.0, 100.0)
-    } else {
-        0.0
-    };
+    let overall_progress_percent = if progress_items > 0 { (progress_sum / progress_items as f64).clamp(0.0, 100.0) } else { 0.0 };
 
     ManagedQueueSnapshot {
         is_paused: inner.is_paused,
@@ -1045,7 +1039,10 @@ impl ManagedDownloadQueue {
                 };
 
                 partial.bytes_downloaded = partial.bytes_downloaded.saturating_add(bytes.len() as u64);
-                partial.downloaded_pages.push(ChapterPage { bytes, extension: ext });
+                partial.downloaded_pages.push(ChapterPage {
+                    bytes,
+                    extension: ext,
+                });
                 partial.next_page_index += 1;
 
                 let done = partial.next_page_index;

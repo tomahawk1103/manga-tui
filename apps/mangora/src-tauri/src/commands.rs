@@ -14,6 +14,7 @@ use crate::state::{AppState, InitialAppState, OnboardingPreferencesPayload};
 pub struct CatalogItem {
     id: String,
     title: String,
+    description: Option<String>,
     cover_url: String,
     genres: Vec<String>,
     languages: Vec<String>,
@@ -50,6 +51,7 @@ pub async fn search_catalog(provider: String, query: String, page: u32) -> Resul
             .map(|item| CatalogItem {
                 id: item.id,
                 title: item.title,
+                description: item.description,
                 cover_url: item.cover_img_url,
                 genres: item.genres.into_iter().map(|genre| genre.title).collect(),
                 languages: item
@@ -115,6 +117,13 @@ pub fn open_external_url(url: String) -> Result<(), String> {
 pub fn open_data_folder(state: State<'_, AppState>) -> Result<(), String> {
     let dir = state.data_dir()?;
     open::that(&dir).map_err(|e| format!("Could not open data folder {}: {e}", dir.display()))
+}
+
+#[tauri::command]
+pub fn open_downloads_folder(state: State<'_, AppState>) -> Result<(), String> {
+    let dir = state.downloads_dir()?;
+    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create downloads folder {}: {e}", dir.display()))?;
+    open::that(&dir).map_err(|e| format!("Could not open downloads folder {}: {e}", dir.display()))
 }
 
 #[cfg(test)]

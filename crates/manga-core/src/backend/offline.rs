@@ -512,10 +512,23 @@ impl LocalChapterSource {
 }
 
 enum LocalChapterHandleKind {
-    Cbz { path: PathBuf, entries: Vec<String> },
-    Epub { path: PathBuf, entries: Vec<String> },
-    Directory { dir: PathBuf, paths: Vec<PathBuf> },
-    Pdf { path: PathBuf, doc: std::sync::Mutex<Document>, page_ids: Vec<ObjectId> },
+    Cbz {
+        path: PathBuf,
+        entries: Vec<String>,
+    },
+    Epub {
+        path: PathBuf,
+        entries: Vec<String>,
+    },
+    Directory {
+        dir: PathBuf,
+        paths: Vec<PathBuf>,
+    },
+    Pdf {
+        path: PathBuf,
+        doc: std::sync::Mutex<Document>,
+        page_ids: Vec<ObjectId>,
+    },
 }
 
 /// Cached handle for fast random-access local page loading across CBZ, EPUB, PDF, and RAW.
@@ -607,9 +620,7 @@ impl LocalChapterHandle {
                 Ok(std::fs::read(page_path)?)
             },
             LocalChapterHandleKind::Pdf { doc, page_ids, .. } => {
-                let &page_id = page_ids
-                    .get(index)
-                    .ok_or_else(|| format!("Page index {index} out of bounds in PDF"))?;
+                let &page_id = page_ids.get(index).ok_or_else(|| format!("Page index {index} out of bounds in PDF"))?;
                 let guard = doc.lock().map_err(|_| "PDF document lock poisoned")?;
                 let stream = extract_page_image_stream(&guard, page_id)
                     .ok_or_else(|| format!("Page index {index} image stream missing in PDF"))?;
@@ -1937,18 +1948,12 @@ mod tests {
             )
             .unwrap();
         RawImagesDownloader::new()
-            .save_chapter_in_file_system(
-                root,
-                sample_chapter_sanitized("h_raw", "4", vec![p0, p1], DownloadType::Raw),
-            )
+            .save_chapter_in_file_system(root, sample_chapter_sanitized("h_raw", "4", vec![p0, p1], DownloadType::Raw))
             .unwrap();
 
-        for (id, expected_label, expected_dims) in [
-            ("h_cbz", "CBZ", (8, 10)),
-            ("h_epub", "EPUB", (8, 10)),
-            ("h_pdf", "PDF", (8, 10)),
-            ("h_raw", "RAW", (8, 10)),
-        ] {
+        for (id, expected_label, expected_dims) in
+            [("h_cbz", "CBZ", (8, 10)), ("h_epub", "EPUB", (8, 10)), ("h_pdf", "PDF", (8, 10)), ("h_raw", "RAW", (8, 10))]
+        {
             let src = LocalChapterSource::find_in_dir(root, "Test Offline Manga", id).expect("local source exists");
             let handle = LocalChapterHandle::open(&src).expect("handle opens");
             assert_eq!(handle.format_label(), expected_label);

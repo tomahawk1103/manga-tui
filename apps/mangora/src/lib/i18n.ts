@@ -94,6 +94,7 @@ export interface Translations {
   themePaper: string;
   themeInk: string;
   themeToggleLabel: string;
+  folderDesktopOnly: string;
   sharedStorageBadge: string;
   topBar: {
     providerPrefix: string;
@@ -175,6 +176,10 @@ export interface Translations {
     loading: string;
     empty: string;
     unavailable: string;
+    chooseAnotherSource: string;
+    providerLabel: string;
+    closeDetails: string;
+    noSynopsis: string;
     desktopOnly: string;
     previous: string;
     next: string;
@@ -257,6 +262,7 @@ const ES: Translations = {
   themePaper: "Modo Papel",
   themeInk: "Modo Tinta",
   themeToggleLabel: "Tema visual",
+  folderDesktopOnly: "Disponible en la aplicación de escritorio.",
   sharedStorageBadge: "Base compartida con manga-tui",
   topBar: {
     providerPrefix: "Servidor",
@@ -345,7 +351,7 @@ const ES: Translations = {
     emptyBannerTitle: "Listo para tu primera serie",
     emptyBannerDesc:
       "Tu biblioteca local todavía no tiene lecturas registradas. Pasa por Explorar para añadir tus primeros mangas o abre tus archivos offline.",
-    ctaExplore: "Ir a Explorar",
+    ctaExplore: "Buscar manga",
     ctaTour: "Ver guía rápida",
     statSeries: "Series",
     statChaptersRead: "Capítulos leídos",
@@ -368,16 +374,20 @@ const ES: Translations = {
     forYouTitle: "Tus géneros favoritos",
     noGenresHint: "Aún no has elegido géneros favoritos. Márcalos en Ajustes para personalizar esta zona.",
     editGenresBtn: "Editar gustos en Ajustes",
-    providerSelectorTitle: "Servidor activo",
+    providerSelectorTitle: "Dónde buscar",
     providerSelectorDesc:
       "Al cambiar el servidor aquí se guarda automáticamente en config.toml y lo comparte con manga-tui.",
     activeTag: "Activo",
     recommendedTag: "Recomendado",
     search: "Buscar",
-    searchTitle: "Título de la serie",
+    searchTitle: "Título del manga",
     loading: "Buscando en el catálogo…",
     empty: "No hay coincidencias en esta página.",
-    unavailable: "El servidor no ha respondido. Vuelve a buscar o elige otro servidor.",
+    unavailable: "La fuente no ha respondido.",
+    chooseAnotherSource: "Buscar en otra fuente",
+    providerLabel: "Fuente",
+    closeDetails: "Cerrar",
+    noSynopsis: "Esta fuente no incluye una sinopsis en el resultado.",
     desktopOnly: "Abre Mangora en el escritorio para buscar en el catálogo.",
     previous: "Página anterior",
     next: "Página siguiente",
@@ -395,7 +405,7 @@ const ES: Translations = {
     folderCardTitle: "Carpeta compartida de descargas",
     folderCardDesc:
       "Los capítulos descargados desde manga-tui o Mangora conviven en la misma ubicación local.",
-    openFolderBtn: "Abrir carpeta de datos en el Explorador",
+    openFolderBtn: "Abrir carpeta de descargas en el Explorador",
     detectedOfflineTitle: "Escáner local conectado",
     detectedOfflineCount: (count) =>
       count === 1
@@ -472,6 +482,7 @@ const EN: Translations = {
   themePaper: "Paper Mode",
   themeInk: "Ink Mode",
   themeToggleLabel: "Visual theme",
+  folderDesktopOnly: "Available in the desktop app.",
   sharedStorageBadge: "Shared storage with manga-tui",
   topBar: {
     providerPrefix: "Source",
@@ -560,7 +571,7 @@ const EN: Translations = {
     emptyBannerTitle: "Ready for your first series",
     emptyBannerDesc:
       "No reading history is recorded yet. Head to Explore to browse sources or open your local offline downloads folder.",
-    ctaExplore: "Go to Explore",
+    ctaExplore: "Find manga",
     ctaTour: "Open quick tour",
     statSeries: "Series",
     statChaptersRead: "Chapters read",
@@ -583,16 +594,20 @@ const EN: Translations = {
     forYouTitle: "Your favorite genres",
     noGenresHint: "No favorite genres chosen yet. Select a few in Settings to personalize this section.",
     editGenresBtn: "Edit genres in Settings",
-    providerSelectorTitle: "Active source",
+    providerSelectorTitle: "Where to search",
     providerSelectorDesc:
       "Switching the source here persists straight to config.toml and stays shared with manga-tui.",
     activeTag: "Active",
     recommendedTag: "Recommended",
     search: "Search",
-    searchTitle: "Series title",
+    searchTitle: "Manga title",
     loading: "Searching the catalog…",
     empty: "No matches on this page.",
-    unavailable: "The source did not respond. Search again or choose another source.",
+    unavailable: "The source didn’t respond.",
+    chooseAnotherSource: "Search another source",
+    providerLabel: "Source",
+    closeDetails: "Close",
+    noSynopsis: "This source doesn’t include a synopsis in the result.",
     desktopOnly: "Open the Mangora desktop app to search the catalog.",
     previous: "Previous page",
     next: "Next page",
@@ -610,7 +625,7 @@ const EN: Translations = {
     folderCardTitle: "Shared downloads folder",
     folderCardDesc:
       "Chapters downloaded from manga-tui or Mangora live together in the same folder.",
-    openFolderBtn: "Open data folder in Explorer",
+    openFolderBtn: "Open downloads folder in Explorer",
     detectedOfflineTitle: "Local scanner connected",
     detectedOfflineCount: (count) =>
       count === 1

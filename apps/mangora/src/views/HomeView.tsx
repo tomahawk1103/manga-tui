@@ -1,14 +1,14 @@
 import { Compass, RotateCcw } from "lucide-react";
-import type { InitialAppState, NavSection } from "../types/mangora";
+import type { InitialAppState } from "../types/mangora";
 import { getGenreLabel, getTranslations } from "../lib/i18n";
 
 interface HomeViewProps {
   appState: InitialAppState;
-  onNavigate: (section: NavSection) => void;
+  onSearch: () => void;
   onRelaunchTour: () => void;
 }
 
-export function HomeView({ appState, onNavigate, onRelaunchTour }: HomeViewProps) {
+export function HomeView({ appState, onSearch, onRelaunchTour }: HomeViewProps) {
   const t = getTranslations(appState.uiLanguage);
   const activeProvider = appState.availableProviders.find((p) => p.id === appState.activeProvider);
 
@@ -27,7 +27,7 @@ export function HomeView({ appState, onNavigate, onRelaunchTour }: HomeViewProps
           <div className="flex flex-wrap gap-3">
             <button
               type="button"
-              onClick={() => onNavigate("explore")}
+              onClick={onSearch}
               className="editorial-btn-primary text-sm"
             >
               <Compass className="h-4 w-4" aria-hidden="true" />

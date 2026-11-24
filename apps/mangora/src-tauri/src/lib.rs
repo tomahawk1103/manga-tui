@@ -24,6 +24,7 @@ pub fn run() {
             commands::set_onboarding_completed,
             commands::open_external_url,
             commands::open_data_folder,
+            commands::open_downloads_folder,
         ])
         .run(tauri::generate_context!())
         .expect("error while running mangora tauri application");

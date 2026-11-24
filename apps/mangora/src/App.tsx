@@ -6,6 +6,7 @@ import { getTranslations } from "./lib/i18n";
 import {
   getInitialState,
   openDataFolder,
+  openDownloadsFolder,
   openExternalUrl,
   saveOnboardingPreferences,
   setDefaultProvider,
@@ -13,7 +14,7 @@ import {
   setThemeMode,
   setUiLanguage,
 } from "./lib/tauri";
-import type { InitialAppState, NavSection, ThemeMode, UiLanguage } from "./types/mangora";
+import type { InitialAppState, NavSection, ThemeMode } from "./types/mangora";
 import { DownloadsView } from "./views/DownloadsView";
 import { ExploreView } from "./views/ExploreView";
 import { HomeView } from "./views/HomeView";
@@ -23,6 +24,7 @@ import { SupportView } from "./views/SupportView";
 export function App() {
   const [appState, setAppState] = useState<InitialAppState | null>(null);
   const [activeSection, setActiveSection] = useState<NavSection>("home");
+  const [navigationTarget, setNavigationTarget] = useState<"genres" | "search" | null>(null);
   const [replayOnboarding, setReplayOnboarding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -115,12 +117,6 @@ export function App() {
         isReplay={replayOnboarding}
         isSaving={isSaving}
         errorMessage={errorMessage}
-        onLanguagePreview={async (lang: UiLanguage) => {
-          await runMutation(() => setUiLanguage(lang));
-        }}
-        onThemePreview={async (mode: ThemeMode) => {
-          await runMutation(() => setThemeMode(mode));
-        }}
         onComplete={async ({ uiLanguage, favoriteGenres, provider, themeMode }) => {
           await runMutation(async () => {
             const next = await saveOnboardingPreferences({
@@ -138,11 +134,16 @@ export function App() {
 
   const nextTheme: ThemeMode = appState.themeMode === "paper" ? "ink" : "paper";
 
+  const navigate = (section: NavSection) => {
+    setNavigationTarget(null);
+    setActiveSection(section);
+  };
+
   return (
     <div className="flex h-screen overflow-hidden bg-[var(--paper)] text-[var(--ink)]">
       <Sidebar
         activeSection={activeSection}
-        onSelectSection={setActiveSection}
+        onSelectSection={navigate}
         themeMode={appState.themeMode}
         onToggleTheme={() => void runMutation(() => setThemeMode(nextTheme), true)}
         uiLanguage={appState.uiLanguage}
@@ -171,7 +172,10 @@ export function App() {
             {activeSection === "home" && (
               <HomeView
                 appState={appState}
-                onNavigate={setActiveSection}
+                onSearch={() => {
+                  setNavigationTarget("search");
+                  setActiveSection("explore");
+                }}
                 onRelaunchTour={() => setReplayOnboarding(true)}
               />
             )}
@@ -180,19 +184,23 @@ export function App() {
               <ExploreView
                 appState={appState}
                 isSaving={isSaving}
+                focusSearch={navigationTarget === "search"}
                 onSelectProvider={(provider) =>
                   runMutation(() => setDefaultProvider(provider), true)
                 }
-                onNavigate={setActiveSection}
+                onEditGenres={() => {
+                  setNavigationTarget("genres");
+                  setActiveSection("settings");
+                }}
               />
             )}
 
             {activeSection === "downloads" && (
               <DownloadsView
                 appState={appState}
-                onOpenDataFolder={async () => {
+                onOpenDownloadsFolder={async () => {
                   try {
-                    await openDataFolder();
+                    await openDownloadsFolder();
                   } catch (err) {
                     setErrorMessage(err instanceof Error ? err.message : String(err));
                   }
@@ -203,6 +211,7 @@ export function App() {
             {activeSection === "settings" && (
               <SettingsView
                 appState={appState}
+                focusGenres={navigationTarget === "genres"}
                 isSaving={isSaving}
                 onChangeLanguage={(lang) => runMutation(() => setUiLanguage(lang), true)}
                 onChangeTheme={(mode) => runMutation(() => setThemeMode(mode), true)}

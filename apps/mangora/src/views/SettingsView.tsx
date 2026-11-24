@@ -1,10 +1,12 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Check, FolderOpen, Moon, RotateCcw, Sun } from "lucide-react";
 import type { InitialAppState, ThemeMode, UiLanguage } from "../types/mangora";
 import { GENRE_OPTIONS, getTranslations } from "../lib/i18n";
+import { isTauriRuntime } from "../lib/tauri";
 
 interface SettingsViewProps {
   appState: InitialAppState;
+  focusGenres: boolean;
   isSaving: boolean;
   onChangeLanguage: (lang: UiLanguage) => Promise<void>;
   onChangeTheme: (mode: ThemeMode) => Promise<void>;
@@ -16,6 +18,7 @@ interface SettingsViewProps {
 
 export function SettingsView({
   appState,
+  focusGenres,
   isSaving,
   onChangeLanguage,
   onChangeTheme,
@@ -25,11 +28,20 @@ export function SettingsView({
   onOpenDataFolder,
 }: SettingsViewProps) {
   const t = getTranslations(appState.uiLanguage);
+  const desktop = isTauriRuntime();
+  const genresHeading = useRef<HTMLHeadingElement>(null);
   const [draftGenres, setDraftGenres] = useState<string[]>(appState.favoriteGenres);
 
   useEffect(() => {
     setDraftGenres(appState.favoriteGenres);
   }, [appState.favoriteGenres]);
+
+  useEffect(() => {
+    if (focusGenres) {
+      genresHeading.current?.scrollIntoView({ block: "start" });
+      genresHeading.current?.focus({ preventScroll: true });
+    }
+  }, [focusGenres]);
 
   const toggleDraftGenre = (id: string) => {
     setDraftGenres((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
@@ -100,7 +112,7 @@ export function SettingsView({
                 </div>
                 <div
                   className={`text-xs ${
-                    appState.themeMode === "paper" ? "text-[#d5d4cb]" : "text-[var(--muted)]"
+                    appState.themeMode === "paper" ? "text-[var(--paper)]" : "text-[var(--muted)]"
                   }`}
                 >
                   {t.settings.paperDesc}
@@ -123,7 +135,7 @@ export function SettingsView({
                 </div>
                 <div
                   className={`text-xs ${
-                    appState.themeMode === "ink" ? "text-[#d5d4cb]" : "text-[var(--muted)]"
+                    appState.themeMode === "ink" ? "text-[var(--paper)]" : "text-[var(--muted)]"
                   }`}
                 >
                   {t.settings.inkDesc}
@@ -155,7 +167,7 @@ export function SettingsView({
                   }`}
                 >
                   <span>{prov.badge}</span>
-                  {active && <Check className="h-3.5 w-3.5 text-[#ff8a76]" />}
+                  {active && <Check className="h-3.5 w-3.5 text-[var(--paper)]" />}
                 </button>
               );
             })}
@@ -163,7 +175,9 @@ export function SettingsView({
         </section>
 
         <section className="editorial-card-muted p-6">
-          <h2 className="font-display mb-1 text-2xl">{t.settings.genresTitle}</h2>
+          <h2 ref={genresHeading} tabIndex={-1} className="font-display mb-1 scroll-mt-6 text-2xl">
+            {t.settings.genresTitle}
+          </h2>
           <p className="mb-4 text-sm text-[var(--muted)]">{t.settings.genresDesc}</p>
           <div className="mb-4 flex flex-wrap gap-2">
             {GENRE_OPTIONS.map((genre) => {
@@ -224,12 +238,14 @@ export function SettingsView({
 
           <button
             type="button"
+            disabled={!desktop}
             onClick={() => void onOpenDataFolder()}
             className="editorial-btn-secondary mt-5 text-xs"
           >
             <FolderOpen className="h-4 w-4" aria-hidden="true" />
             <span>{t.settings.openFolderBtn}</span>
           </button>
+          {!desktop && <p className="mt-2 text-xs text-[var(--muted)]">{t.folderDesktopOnly}</p>}
         </section>
 
         <section className="editorial-callout flex flex-col justify-between p-6">

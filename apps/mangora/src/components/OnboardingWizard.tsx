@@ -8,8 +8,6 @@ interface OnboardingWizardProps {
   isReplay: boolean;
   isSaving: boolean;
   errorMessage: string | null;
-  onLanguagePreview: (lang: UiLanguage) => Promise<void>;
-  onThemePreview: (themeMode: ThemeMode) => Promise<void>;
   onComplete: (payload: {
     uiLanguage: UiLanguage;
     favoriteGenres: string[];
@@ -29,13 +27,12 @@ export function OnboardingWizard({
   isReplay,
   isSaving,
   errorMessage,
-  onLanguagePreview,
-  onThemePreview,
   onComplete,
   onCancelReplay,
 }: OnboardingWizardProps) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [selectedLang, setSelectedLang] = useState<UiLanguage>(appState.uiLanguage);
+  const [selectedTheme, setSelectedTheme] = useState<ThemeMode>(appState.themeMode);
   const [selectedGenres, setSelectedGenres] = useState<string[]>(appState.favoriteGenres);
   const [selectedProvider, setSelectedProvider] = useState<string>(
     isReplay ? appState.activeProvider : recommendedForLang(appState.uiLanguage),
@@ -47,10 +44,9 @@ export function OnboardingWizard({
   const recommendedId = recommendedForLang(selectedLang);
   const activeProviderObj = appState.availableProviders.find((p) => p.id === selectedProvider);
 
-  const handleSelectLanguage = async (lang: UiLanguage) => {
+  const handleSelectLanguage = (lang: UiLanguage) => {
     setSelectedLang(lang);
     setSelectedProvider(recommendedForLang(lang));
-    await onLanguagePreview(lang);
   };
 
   const toggleGenre = (genreId: string) => {
@@ -64,14 +60,14 @@ export function OnboardingWizard({
       uiLanguage: selectedLang,
       favoriteGenres: selectedGenres,
       provider: selectedProvider,
-      themeMode: appState.themeMode,
+      themeMode: selectedTheme,
     });
   };
 
-  const nextTheme: ThemeMode = appState.themeMode === "paper" ? "ink" : "paper";
+  const nextTheme: ThemeMode = selectedTheme === "paper" ? "ink" : "paper";
 
   return (
-    <div className="min-h-screen bg-[var(--paper)] px-4 py-6 text-[var(--ink)] md:px-8 md:py-10">
+    <div data-theme={selectedTheme} lang={selectedLang} className="min-h-screen bg-[var(--paper)] px-4 py-6 text-[var(--ink)] md:px-8 md:py-10">
       <div className="mx-auto max-w-4xl">
         {/* Editorial header bar */}
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b-2 border-[var(--ink)] pb-4">
@@ -90,16 +86,16 @@ export function OnboardingWizard({
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={() => void onThemePreview(nextTheme)}
+              onClick={() => setSelectedTheme(nextTheme)}
               disabled={isSaving}
               className="editorial-btn-secondary px-3 py-1.5 text-xs"
             >
-              {appState.themeMode === "paper" ? (
+              {selectedTheme === "paper" ? (
                 <Moon className="h-3.5 w-3.5" aria-hidden="true" />
               ) : (
                 <Sun className="h-3.5 w-3.5" aria-hidden="true" />
               )}
-              <span>{appState.themeMode === "paper" ? t.themePaper : t.themeInk}</span>
+              <span>{selectedTheme === "paper" ? t.themePaper : t.themeInk}</span>
             </button>
 
             {isReplay && (
@@ -169,7 +165,7 @@ export function OnboardingWizard({
                   <div className="grid gap-4 md:grid-cols-2">
                     <button
                       type="button"
-                      onClick={() => void handleSelectLanguage("es")}
+                      onClick={() => handleSelectLanguage("es")}
                       disabled={isSaving}
                       className={`cursor-pointer border-2 border-[var(--ink)] p-5 text-left transition-colors ${
                         selectedLang === "es"
@@ -190,7 +186,7 @@ export function OnboardingWizard({
                       <div className="font-display mb-1.5 text-2xl">{t.onboarding.esCardTitle}</div>
                       <p
                         className={`text-sm ${
-                          selectedLang === "es" ? "text-[#d5d4cb]" : "text-[var(--muted)]"
+                          selectedLang === "es" ? "text-[var(--paper)]" : "text-[var(--muted)]"
                         }`}
                       >
                         {t.onboarding.esCardDesc}
@@ -199,7 +195,7 @@ export function OnboardingWizard({
 
                     <button
                       type="button"
-                      onClick={() => void handleSelectLanguage("en")}
+                      onClick={() => handleSelectLanguage("en")}
                       disabled={isSaving}
                       className={`cursor-pointer border-2 border-[var(--ink)] p-5 text-left transition-colors ${
                         selectedLang === "en"
@@ -220,7 +216,7 @@ export function OnboardingWizard({
                       <div className="font-display mb-1.5 text-2xl">{t.onboarding.enCardTitle}</div>
                       <p
                         className={`text-sm ${
-                          selectedLang === "en" ? "text-[#d5d4cb]" : "text-[var(--muted)]"
+                          selectedLang === "en" ? "text-[var(--paper)]" : "text-[var(--muted)]"
                         }`}
                       >
                         {t.onboarding.enCardDesc}
@@ -322,7 +318,7 @@ export function OnboardingWizard({
                               </div>
                               <div
                                 className={`mt-1 text-xs ${
-                                  isSelected ? "text-[#d5d4cb]" : "text-[var(--muted)]"
+                                  isSelected ? "text-[var(--paper)]" : "text-[var(--muted)]"
                                 }`}
                               >
                                 {selectedLang === "en" ? prov.descriptionEn : prov.descriptionEs}

@@ -9,8 +9,17 @@ import type {
 
 const BROWSER_STORAGE_KEY = "mangora_browser_fallback_v1";
 
+export interface CatalogItem {
+  id: string;
+  title: string;
+  description: string | null;
+  coverUrl: string;
+  genres: string[];
+  languages: string[];
+}
+
 export interface CatalogPage {
-  items: { id: string; title: string; coverUrl: string; genres: string[]; languages: string[] }[];
+  items: CatalogItem[];
   hasNext: boolean;
 }
 
@@ -217,5 +226,11 @@ export async function openExternalUrl(url: string): Promise<void> {
 export async function openDataFolder(): Promise<void> {
   if (isTauriRuntime()) {
     await invoke<void>("open_data_folder");
+  }
+}
+
+export async function openDownloadsFolder(): Promise<void> {
+  if (isTauriRuntime()) {
+    await invoke<void>("open_downloads_folder");
   }
 }

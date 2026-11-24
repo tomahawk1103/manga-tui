@@ -1,22 +1,26 @@
+import { useRef } from "react";
 import { Check, SlidersHorizontal } from "lucide-react";
 import { CatalogSearch } from "../components/CatalogSearch";
-import type { InitialAppState, NavSection } from "../types/mangora";
+import type { InitialAppState } from "../types/mangora";
 import { getGenreLabel, getTranslations } from "../lib/i18n";
 
 interface ExploreViewProps {
   appState: InitialAppState;
   isSaving: boolean;
+  focusSearch: boolean;
   onSelectProvider: (providerId: string) => Promise<void>;
-  onNavigate: (section: NavSection) => void;
+  onEditGenres: () => void;
 }
 
 export function ExploreView({
   appState,
   isSaving,
+  focusSearch,
   onSelectProvider,
-  onNavigate,
+  onEditGenres,
 }: ExploreViewProps) {
   const t = getTranslations(appState.uiLanguage);
+  const sourcesHeading = useRef<HTMLHeadingElement>(null);
   const providers = [...appState.availableProviders].sort((a, b) =>
     Number(b.id === appState.recommendedProvider) - Number(a.id === appState.recommendedProvider));
   const active = providers.find(provider => provider.id === appState.activeProvider);
@@ -29,7 +33,17 @@ export function ExploreView({
         <p className="max-w-2xl text-base text-[var(--muted)]">{t.explore.subtitle}</p>
       </div>
 
-      {active && <CatalogSearch provider={active} language={appState.uiLanguage} />}
+      {active && (
+        <CatalogSearch
+          provider={active}
+          language={appState.uiLanguage}
+          focusSearch={focusSearch}
+          onChooseSource={providers.length > 1 ? () => {
+            sourcesHeading.current?.scrollIntoView({ block: "start" });
+            sourcesHeading.current?.focus({ preventScroll: true });
+          } : undefined}
+        />
+      )}
 
       {/* For you genres */}
       <section className="editorial-callout p-5">
@@ -37,7 +51,7 @@ export function ExploreView({
           <h2 className="font-display text-2xl">{t.explore.forYouTitle}</h2>
           <button
             type="button"
-            onClick={() => onNavigate("settings")}
+            onClick={onEditGenres}
             className="editorial-btn-secondary px-3 py-1.5 text-xs"
           >
             <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden="true" />
@@ -63,7 +77,9 @@ export function ExploreView({
       {/* Provider selector */}
       <section className="space-y-4">
         <div>
-          <h2 className="font-display text-2xl">{t.explore.providerSelectorTitle}</h2>
+          <h2 ref={sourcesHeading} tabIndex={-1} className="font-display scroll-mt-6 text-2xl">
+            {t.explore.providerSelectorTitle}
+          </h2>
           <p className="text-sm text-[var(--muted)]">{t.explore.providerSelectorDesc}</p>
         </div>
 
@@ -76,6 +92,7 @@ export function ExploreView({
                 key={prov.id}
                 type="button"
                 disabled={isSaving}
+                aria-pressed={isActive}
                 onClick={() => void onSelectProvider(prov.id)}
                 className={`cursor-pointer border-2 border-[var(--ink)] p-4 text-left transition-colors ${
                   isActive
@@ -100,7 +117,7 @@ export function ExploreView({
                 </div>
                 <p
                   className={`text-xs ${
-                    isActive ? "text-[#d5d4cb]" : "text-[var(--muted)]"
+                    isActive ? "text-[var(--paper)]" : "text-[var(--muted)]"
                   }`}
                 >
                   {appState.uiLanguage === "en" ? prov.descriptionEn : prov.descriptionEs}
