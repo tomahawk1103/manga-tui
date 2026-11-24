@@ -1,13 +1,18 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
   InitialAppState,
+  LibraryEntry,
+  LibraryOverview,
   OnboardingPreferencesPayload,
   ProviderOption,
   ThemeMode,
+  ToggleFavoritePayload,
+  ToggleFavoriteResult,
   UiLanguage,
 } from "../types/mangora";
 
 const BROWSER_STORAGE_KEY = "mangora_browser_fallback_v1";
+const BROWSER_FAVORITES_KEY = "mangora_browser_favorites_v1";
 
 export interface CatalogItem {
   id: string;
@@ -237,4 +242,108 @@ export async function openDownloadsFolder(): Promise<void> {
   if (isTauriRuntime()) {
     await invoke<void>("open_downloads_folder");
   }
+}
+
+function readBrowserFavorites(): LibraryEntry[] {
+  try {
+    const raw = window.localStorage.getItem(BROWSER_FAVORITES_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as LibraryEntry[]) : [];
+  } catch {
+    return [];
+  }
+}
+
+function writeBrowserFavorites(entries: LibraryEntry[]): LibraryEntry[] {
+  try {
+    window.localStorage.setItem(BROWSER_FAVORITES_KEY, JSON.stringify(entries));
+  } catch {
+    // Ignore storage quota errors in fallback mode
+  }
+  return entries;
+}
+
+function buildBrowserOverview(entries: LibraryEntry[], search?: string): LibraryOverview {
+  const needle = search?.trim().toLowerCase() ?? "";
+  const filtered = needle
+    ? entries.filter((item) => item.title.toLowerCase().includes(needle))
+    : entries;
+  return {
+    continueReading: [],
+    favorites: filtered,
+    recentHistory: [],
+    totalContinueReading: 0,
+    totalFavorites: filtered.length,
+    totalRecent: 0,
+  };
+}
+
+export async function getLibraryOverview(search?: string): Promise<LibraryOverview> {
+  if (isTauriRuntime()) {
+    return invoke<LibraryOverview>("get_library_overview", {
+      search: search?.trim() || null,
+    });
+  }
+  return buildBrowserOverview(readBrowserFavorites(), search);
+}
+
+export async function toggleLibraryFavorite(
+  payload: ToggleFavoritePayload,
+): Promise<ToggleFavoriteResult> {
+  if (isTauriRuntime()) {
+    return invoke<ToggleFavoriteResult>("toggle_library_favorite", { payload });
+  }
+  const currentState = readBrowserState();
+  const providerMeta = FALLBACK_PROVIDERS.find((p) => p.id === payload.provider);
+  const existing = readBrowserFavorites();
+  const matchIdx = existing.findIndex(
+    (item) => item.id === payload.mangaId && item.provider === payload.provider,
+  );
+
+  let isFavorite = false;
+  let nextFavorites: LibraryEntry[];
+  if (matchIdx >= 0) {
+    nextFavorites = existing.filter((_, idx) => idx !== matchIdx);
+  } else {
+    isFavorite = true;
+    nextFavorites = [
+      {
+        id: payload.mangaId,
+        title: payload.title,
+        provider: payload.provider,
+        providerLabel: providerMeta?.badge ?? payload.provider,
+        coverUrl: payload.coverUrl ?? null,
+        lastRead: null,
+        lastReadChapter: null,
+        totalReadCount: 0,
+        bookmarkChapter: null,
+        bookmarkPage: null,
+        isFavorite: true,
+        isPlanToRead: false,
+        downloadedCount: 0,
+        shelfName: null,
+      },
+      ...existing,
+    ];
+  }
+
+  writeBrowserFavorites(nextFavorites);
+  const appState = writeBrowserState({
+    ...currentState,
+    library: {
+      ...currentState.library,
+      hasExistingData:
+        nextFavorites.length > 0 ||
+        currentState.library.chaptersRead > 0 ||
+        currentState.library.libraryMangas > 0,
+      favorites: nextFavorites.length,
+    },
+  });
+
+  return {
+    isFavorite,
+    appState,
+    library: buildBrowserOverview(nextFavorites),
+  };
 }

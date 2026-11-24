@@ -1,13 +1,15 @@
 import { useRef } from "react";
 import { Check, SlidersHorizontal } from "lucide-react";
 import { CatalogSearch } from "../components/CatalogSearch";
-import type { InitialAppState } from "../types/mangora";
+import type { InitialAppState, ToggleFavoritePayload } from "../types/mangora";
 import { getGenreLabel, getTranslations } from "../lib/i18n";
 
 interface ExploreViewProps {
   appState: InitialAppState;
   isSaving: boolean;
   focusSearch: boolean;
+  favoriteKeys: Set<string>;
+  onToggleFavorite: (payload: ToggleFavoritePayload) => Promise<void>;
   onSelectProvider: (providerId: string) => Promise<void>;
   onEditGenres: () => void;
 }
@@ -16,6 +18,8 @@ export function ExploreView({
   appState,
   isSaving,
   focusSearch,
+  favoriteKeys,
+  onToggleFavorite,
   onSelectProvider,
   onEditGenres,
 }: ExploreViewProps) {
@@ -38,6 +42,9 @@ export function ExploreView({
           provider={active}
           language={appState.uiLanguage}
           focusSearch={focusSearch}
+          isMutating={isSaving}
+          favoriteKeys={favoriteKeys}
+          onToggleFavorite={onToggleFavorite}
           onChooseSource={providers.length > 1 ? () => {
             sourcesHeading.current?.scrollIntoView({ block: "start" });
             sourcesHeading.current?.focus({ preventScroll: true });

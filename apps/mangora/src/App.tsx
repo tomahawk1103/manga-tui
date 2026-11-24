@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { BottomNav } from "./components/BottomNav";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { Sidebar } from "./components/Sidebar";
@@ -6,6 +6,7 @@ import { TopBar } from "./components/TopBar";
 import { getTranslations } from "./lib/i18n";
 import {
   getInitialState,
+  getLibraryOverview,
   openDataFolder,
   openDownloadsFolder,
   openExternalUrl,
@@ -14,8 +15,16 @@ import {
   setFavoriteGenres,
   setThemeMode,
   setUiLanguage,
+  toggleLibraryFavorite,
 } from "./lib/tauri";
-import type { InitialAppState, NavSection, ThemeMode } from "./types/mangora";
+import {
+  type InitialAppState,
+  type LibraryOverview,
+  type NavSection,
+  type ThemeMode,
+  type ToggleFavoritePayload,
+  libraryKey,
+} from "./types/mangora";
 import { DownloadsView } from "./views/DownloadsView";
 import { ExploreView } from "./views/ExploreView";
 import { HomeView } from "./views/HomeView";
@@ -24,6 +33,8 @@ import { SupportView } from "./views/SupportView";
 
 export function App() {
   const [appState, setAppState] = useState<InitialAppState | null>(null);
+  const [libraryOverview, setLibraryOverview] = useState<LibraryOverview | null>(null);
+  const [libraryLoading, setLibraryLoading] = useState(false);
   const [activeSection, setActiveSection] = useState<NavSection>("home");
   const [navigationTarget, setNavigationTarget] = useState<"genres" | "search" | null>(null);
   const [replayOnboarding, setReplayOnboarding] = useState(false);
@@ -31,11 +42,29 @@ export function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
+  const loadLibrary = useCallback(async (search?: string) => {
+    setLibraryLoading(true);
+    try {
+      const overview = await getLibraryOverview(search);
+      setLibraryOverview(overview);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setLibraryLoading(false);
+    }
+  }, []);
+
   const loadInitial = useCallback(async () => {
     setErrorMessage(null);
     try {
-      const next = await getInitialState();
+      const [next, overview] = await Promise.all([
+        getInitialState(),
+        getLibraryOverview().catch(() => null),
+      ]);
       setAppState(next);
+      if (overview) {
+        setLibraryOverview(overview);
+      }
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : String(err));
     }
@@ -44,6 +73,27 @@ export function App() {
   useEffect(() => {
     void loadInitial();
   }, [loadInitial]);
+
+  useEffect(() => {
+    if (appState?.onboardingCompleted && activeSection === "home") {
+      void loadLibrary();
+    }
+  }, [activeSection, appState?.onboardingCompleted, loadLibrary]);
+
+  const favoriteKeys = useMemo(() => {
+    const keys = new Set<string>();
+    if (!libraryOverview) return keys;
+    for (const entry of [
+      ...libraryOverview.favorites,
+      ...libraryOverview.continueReading,
+      ...libraryOverview.recentHistory,
+    ]) {
+      if (entry.isFavorite) {
+        keys.add(libraryKey(entry.id, entry.provider));
+      }
+    }
+    return keys;
+  }, [libraryOverview]);
 
   useEffect(() => {
     if (!appState) return;
@@ -71,6 +121,22 @@ export function App() {
       if (announceSave) {
         showToast(getTranslations(next.uiLanguage).settings.savedToast);
       }
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleToggleFavorite = async (payload: ToggleFavoritePayload) => {
+    setIsSaving(true);
+    setErrorMessage(null);
+    try {
+      const result = await toggleLibraryFavorite(payload);
+      setAppState(result.appState);
+      setLibraryOverview(result.library);
+      const copy = getTranslations(result.appState.uiLanguage).library;
+      showToast(result.isFavorite ? copy.favoriteAdded : copy.favoriteRemoved);
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : String(err));
     } finally {
@@ -177,6 +243,12 @@ export function App() {
             {activeSection === "home" && (
               <HomeView
                 appState={appState}
+                library={libraryOverview}
+                libraryLoading={libraryLoading}
+                isSaving={isSaving}
+                favoriteKeys={favoriteKeys}
+                onRefreshLibrary={loadLibrary}
+                onToggleFavorite={handleToggleFavorite}
                 onSearch={() => {
                   setNavigationTarget("search");
                   setActiveSection("explore");
@@ -190,6 +262,8 @@ export function App() {
                 appState={appState}
                 isSaving={isSaving}
                 focusSearch={navigationTarget === "search"}
+                favoriteKeys={favoriteKeys}
+                onToggleFavorite={handleToggleFavorite}
                 onSelectProvider={(provider) =>
                   runMutation(() => setDefaultProvider(provider), true)
                 }

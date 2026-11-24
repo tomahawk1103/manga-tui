@@ -51,3 +51,46 @@ export interface OnboardingPreferencesPayload {
   onboardingCompleted: boolean;
   themeMode?: ThemeMode;
 }
+
+export interface LibraryEntry {
+  id: string;
+  title: string;
+  provider: string;
+  providerLabel: string;
+  coverUrl: string | null;
+  lastRead: string | null;
+  lastReadChapter: string | null;
+  totalReadCount: number;
+  bookmarkChapter: string | null;
+  bookmarkPage: number | null;
+  isFavorite: boolean;
+  isPlanToRead: boolean;
+  downloadedCount: number;
+  shelfName: string | null;
+}
+
+export interface LibraryOverview {
+  continueReading: LibraryEntry[];
+  favorites: LibraryEntry[];
+  recentHistory: LibraryEntry[];
+  totalContinueReading: number;
+  totalFavorites: number;
+  totalRecent: number;
+}
+
+export interface ToggleFavoritePayload {
+  mangaId: string;
+  provider: string;
+  title: string;
+  coverUrl?: string | null;
+}
+
+export interface ToggleFavoriteResult {
+  isFavorite: boolean;
+  appState: InitialAppState;
+  library: LibraryOverview;
+}
+
+export function libraryKey(mangaId: string, provider: string): string {
+  return `${provider.trim().toLowerCase()}::${mangaId.trim()}`;
+}

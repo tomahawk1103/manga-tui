@@ -8,7 +8,9 @@ use serde::Serialize;
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::state::{AppState, InitialAppState, OnboardingPreferencesPayload};
+use crate::state::{
+    AppState, InitialAppState, LibraryOverview, OnboardingPreferencesPayload, ToggleFavoritePayload, ToggleFavoriteResult,
+};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -70,6 +72,16 @@ pub async fn search_catalog(provider: String, query: String, page: u32) -> Resul
 #[tauri::command]
 pub fn get_initial_state(state: State<'_, AppState>) -> Result<InitialAppState, String> {
     state.snapshot()
+}
+
+#[tauri::command]
+pub fn get_library_overview(state: State<'_, AppState>, search: Option<String>) -> Result<LibraryOverview, String> {
+    state.get_library_overview(search.as_deref())
+}
+
+#[tauri::command]
+pub fn toggle_library_favorite(state: State<'_, AppState>, payload: ToggleFavoritePayload) -> Result<ToggleFavoriteResult, String> {
+    state.toggle_library_favorite(payload)
 }
 
 #[tauri::command]

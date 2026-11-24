@@ -39,8 +39,8 @@ El trabajo de Mangora está reunido en `manga-tui/`, rama local `MANGORA`. La ap
 | :--- | :--- | :--- |
 | Base y navegación | Proyecto Tauri v2 multiplataforma (escritorio + base Android/iOS) con React, TypeScript, Vite (`TAURI_DEV_HOST`) y Tailwind; `Sidebar` en escritorio y `BottomNav` táctil en móvil con `viewport-fit=cover`, `safe-area-inset-*`, `h-dvh`, objetivos `>= 44px` y temas Papel/Tinta. | Validar la ventana nativa en Windows y ejecutar `tauri android init` / `tauri ios init` con los SDKs de cada plataforma. |
 | Primer inicio | Selección de idioma, géneros y proveedor recomendado; detección de biblioteca previa; tour que se puede repetir desde Ajustes. Un fallo al guardar muestra el error y permite reintentar. | Validación manual completa en la app nativa. |
-| Explorar | Búsqueda por título en el proveedor activo mediante `search_catalog` y `multi_provider`; portadas, paginación, filtros por idioma y género de los resultados visibles, orden del proveedor recomendado primero y mensajes de error. | Buscar contra un proveedor real en red; recomendaciones según gustos y filtros aplicados a todo el catálogo. |
-| Biblioteca y lector | Detección y recuentos de la biblioteca compartida; preferencias de lector persistidas en el backend; motor Rust con lectura local y cola de descargas. | Biblioteca visual interactiva, ficha, lector dentro de Mangora, progreso de lectura y controles de la cola en la interfaz. |
+| Explorar | Búsqueda por título en el proveedor activo mediante `search_catalog` y `multi_provider`; portadas, paginación, filtros por idioma y género de los resultados visibles, modal de detalle con sinopsis y favorito en 1 clic (`toggle_library_favorite`). | Buscar contra un proveedor real en red; bloque «Para ti según tus gustos» y filtros aplicados a todo el catálogo. |
+| Biblioteca y lector | Biblioteca visual interactiva conectada a `history/manga-tui-history.db` (`get_library_overview`, `toggle_library_favorite`) con pestañas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente**, filtro por título y compatibilidad bidireccional con `manga-tui`; motor Rust con lectura local y cola de descargas. | Ficha de serie completa con capítulos + AniList, lector HD dentro de Mangora, progreso de lectura y controles de cola en la interfaz. |
 | Ajustes y apoyo | Cambio de idioma, tema, proveedor y géneros; apertura de la carpeta de datos; enlaces a Discord y GitHub. | Drive y trackers guiados, buzón de opiniones, donaciones activas y paquete instalable. |
 | Apariencia y métricas | Módulos, migración y componentes del hito 5 presentes en el repositorio. | Registrar sus comandos Tauri e incorporar sus componentes a las pantallas. |
 
@@ -158,7 +158,7 @@ El ejecutable de Windows compila. El asistente permite reintentar un guardado fa
 
 - **Estado:** `En curso`
 
-La pantalla **Explorar** ya busca títulos por proveedor con el comando `search_catalog`, muestra portadas y permite recorrer páginas y filtrar sus resultados por idioma o género cuando la fuente facilita esos datos. Quedan pendientes las recomendaciones por gustos, las acciones de biblioteca y la ficha de serie con AniList y Discord.
+La pantalla **Explorar** ya busca títulos por proveedor con `search_catalog`, muestra portadas, detalle en modal con sinopsis y permite marcar/desmarcar favoritos en 1 clic (`toggle_library_favorite`). En **Inicio**, `LibraryShelf` ya muestra las pestañas interactivas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente** conectadas al SQLite compartido (`get_library_overview`). Quedan pendientes las recomendaciones *"Para ti"*, abrir capítulo siguiente desde Biblioteca y la Ficha de serie con capítulos + AniList y Discord.
 
 Se verificaron paginación, filtros y errores en Chromium con respuestas simuladas. La prueba de conexión real a MangaDex está en `apps/mangora/src-tauri/src/commands.rs` y requiere acceso de red.
 

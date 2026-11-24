@@ -1,14 +1,35 @@
 import { Compass, RotateCcw } from "lucide-react";
-import type { InitialAppState } from "../types/mangora";
+import { LibraryShelf } from "../components/LibraryShelf";
+import type {
+  InitialAppState,
+  LibraryOverview,
+  ToggleFavoritePayload,
+} from "../types/mangora";
 import { getGenreLabel, getTranslations } from "../lib/i18n";
 
 interface HomeViewProps {
   appState: InitialAppState;
+  library: LibraryOverview | null;
+  libraryLoading: boolean;
+  isSaving: boolean;
+  favoriteKeys: Set<string>;
+  onRefreshLibrary: (search?: string) => Promise<void>;
+  onToggleFavorite: (payload: ToggleFavoritePayload) => Promise<void>;
   onSearch: () => void;
   onRelaunchTour: () => void;
 }
 
-export function HomeView({ appState, onSearch, onRelaunchTour }: HomeViewProps) {
+export function HomeView({
+  appState,
+  library,
+  libraryLoading,
+  isSaving,
+  favoriteKeys,
+  onRefreshLibrary,
+  onToggleFavorite,
+  onSearch,
+  onRelaunchTour,
+}: HomeViewProps) {
   const t = getTranslations(appState.uiLanguage);
   const activeProvider = appState.availableProviders.find((p) => p.id === appState.activeProvider);
 
@@ -98,6 +119,18 @@ export function HomeView({ appState, onSearch, onRelaunchTour }: HomeViewProps) 
           </div>
         </div>
       </section>
+
+      {/* Interactive Shared SQLite Library */}
+      <LibraryShelf
+        library={library}
+        language={appState.uiLanguage}
+        isLoading={libraryLoading}
+        isMutating={isSaving}
+        favoriteKeys={favoriteKeys}
+        onRefresh={onRefreshLibrary}
+        onToggleFavorite={onToggleFavorite}
+        onExplore={onSearch}
+      />
 
       {/* Shared library status callout */}
       <section className="editorial-callout p-5 sm:p-6">

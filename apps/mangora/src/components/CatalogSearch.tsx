@@ -1,8 +1,13 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight } from "lucide-react";
+import { ArrowRight, Heart } from "lucide-react";
 import { getTranslations } from "../lib/i18n";
 import { isTauriRuntime, searchCatalog, type CatalogItem, type CatalogPage } from "../lib/tauri";
-import type { ProviderOption, UiLanguage } from "../types/mangora";
+import {
+  type ProviderOption,
+  type ToggleFavoritePayload,
+  type UiLanguage,
+  libraryKey,
+} from "../types/mangora";
 
 interface SearchRequest {
   provider: string;
@@ -14,10 +19,21 @@ interface CatalogSearchProps {
   provider: ProviderOption;
   language: UiLanguage;
   focusSearch: boolean;
+  isMutating?: boolean;
+  favoriteKeys?: Set<string>;
+  onToggleFavorite?: (payload: ToggleFavoritePayload) => Promise<void>;
   onChooseSource?: () => void;
 }
 
-export function CatalogSearch({ provider, language, focusSearch, onChooseSource }: CatalogSearchProps) {
+export function CatalogSearch({
+  provider,
+  language,
+  focusSearch,
+  isMutating = false,
+  favoriteKeys,
+  onToggleFavorite,
+  onChooseSource,
+}: CatalogSearchProps) {
   const translations = getTranslations(language);
   const t = translations.explore;
   const searchInput = useRef<HTMLInputElement>(null);
@@ -135,32 +151,56 @@ export function CatalogSearch({ provider, language, focusSearch, onChooseSource 
         onClose={() => setSelected(null)}
         className="editorial-card fixed inset-0 m-auto max-h-[85vh] w-[calc(100%-2rem)] max-w-2xl overflow-y-auto p-5 text-[var(--ink)] backdrop:bg-black/65"
       >
-        {selected && (
-          <div className="space-y-4">
-            <div className="flex items-start justify-between gap-4">
-              <h2 id="catalog-details-title" className="font-display text-2xl">{selected.title}</h2>
-              <form method="dialog">
-                <button type="submit" className="editorial-btn-secondary text-xs">{t.closeDetails}</button>
-              </form>
+        {selected && (() => {
+          const selectedIsFavorite = favoriteKeys?.has(libraryKey(selected.id, provider.id)) ?? false;
+          return (
+            <div className="space-y-4">
+              <div className="flex items-start justify-between gap-4">
+                <h2 id="catalog-details-title" className="font-display text-2xl">{selected.title}</h2>
+                <form method="dialog">
+                  <button type="submit" className="editorial-btn-secondary text-xs">{t.closeDetails}</button>
+                </form>
+              </div>
+              {/^https?:\/\//i.test(selected.coverUrl) && (
+                <img src={selected.coverUrl} alt="" className="max-h-64 max-w-full object-contain"
+                  onError={event => { event.currentTarget.hidden = true; }} />
+              )}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <p className="text-sm text-[var(--muted)]">{t.providerLabel}: {provider.name}</p>
+                {onToggleFavorite && (
+                  <button
+                    type="button"
+                    disabled={isMutating}
+                    aria-pressed={selectedIsFavorite}
+                    onClick={() =>
+                      void onToggleFavorite({
+                        mangaId: selected.id,
+                        provider: provider.id,
+                        title: selected.title,
+                        coverUrl: selected.coverUrl || null,
+                      })
+                    }
+                    className={selectedIsFavorite ? "editorial-btn-primary text-xs" : "editorial-btn-secondary text-xs"}
+                  >
+                    <Heart className={`h-4 w-4 ${selectedIsFavorite ? "fill-current" : ""}`} aria-hidden="true" />
+                    <span>{selectedIsFavorite ? translations.library.removeFavorite : translations.library.addFavorite}</span>
+                  </button>
+                )}
+              </div>
+              <p className="whitespace-pre-line">{selected.description?.trim() || t.noSynopsis}</p>
+              {selected.genres.length > 0 && <p>{t.genre}: {selected.genres.join(", ")}</p>}
+              {selected.languages.length > 0 && (
+                <p>{t.language}: {selected.languages.map(code => {
+                  try {
+                    return languageNames.of(code) ?? code;
+                  } catch {
+                    return code;
+                  }
+                }).join(", ")}</p>
+              )}
             </div>
-            {/^https?:\/\//i.test(selected.coverUrl) && (
-              <img src={selected.coverUrl} alt="" className="max-h-64 max-w-full object-contain"
-                onError={event => { event.currentTarget.hidden = true; }} />
-            )}
-            <p className="text-sm text-[var(--muted)]">{t.providerLabel}: {provider.name}</p>
-            <p className="whitespace-pre-line">{selected.description?.trim() || t.noSynopsis}</p>
-            {selected.genres.length > 0 && <p>{t.genre}: {selected.genres.join(", ")}</p>}
-            {selected.languages.length > 0 && (
-              <p>{t.language}: {selected.languages.map(code => {
-                try {
-                  return languageNames.of(code) ?? code;
-                } catch {
-                  return code;
-                }
-              }).join(", ")}</p>
-            )}
-          </div>
-        )}
+          );
+        })()}
       </dialog>
     </section>
   );

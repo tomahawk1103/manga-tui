@@ -1,10 +1,12 @@
+use std::collections::HashMap;
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 use std::sync::{Mutex, MutexGuard};
 
-use manga_core::backend::database::{Database, HomeStats};
+use manga_core::SearchTerm;
+use manga_core::backend::database::{Database, GetHistoryArgs, HomeStats, MangaHistory, MangaHistoryType};
 use manga_core::backend::manga_provider::{Languages, MangaProviders};
 use manga_core::backend::migration::update_database_with_migrations;
 use manga_core::backend::offline::scan_offline_mangas_in_dir;
@@ -165,6 +167,53 @@ pub struct OnboardingPreferencesPayload {
     pub theme_mode: Option<ThemeMode>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryEntry {
+    pub id: String,
+    pub title: String,
+    pub provider: String,
+    pub provider_label: String,
+    pub cover_url: Option<String>,
+    pub last_read: Option<String>,
+    pub last_read_chapter: Option<String>,
+    pub total_read_count: u32,
+    pub bookmark_chapter: Option<String>,
+    pub bookmark_page: Option<u32>,
+    pub is_favorite: bool,
+    pub is_plan_to_read: bool,
+    pub downloaded_count: u32,
+    pub shelf_name: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct LibraryOverview {
+    pub continue_reading: Vec<LibraryEntry>,
+    pub favorites: Vec<LibraryEntry>,
+    pub recent_history: Vec<LibraryEntry>,
+    pub total_continue_reading: u32,
+    pub total_favorites: u32,
+    pub total_recent: u32,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleFavoritePayload {
+    pub manga_id: String,
+    pub provider: String,
+    pub title: String,
+    pub cover_url: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleFavoriteResult {
+    pub is_favorite: bool,
+    pub app_state: InitialAppState,
+    pub library: LibraryOverview,
+}
+
 #[derive(Debug)]
 struct AppStateInner {
     data_dir: PathBuf,
@@ -297,6 +346,95 @@ impl AppState {
         let db = Database::new(&conn);
         db.setup().map_err(|e| format!("Could not initialize database schema: {e}"))?;
         Ok(conn)
+    }
+
+    pub fn get_library_overview(&self, search: Option<&str>) -> Result<LibraryOverview, String> {
+        let conn = self.open_db_connection()?;
+        let db = Database::new(&conn);
+        let covers = load_cover_urls(&conn);
+
+        let recent_res = db
+            .get_continue_reading(GetHistoryArgs {
+                hist_type: MangaHistoryType::ReadingHistory,
+                page: 1,
+                search: search.and_then(SearchTerm::trimmed_lowercased),
+                items_per_page: 48,
+                provider: MangaProviders::default(),
+            })
+            .map_err(|e| format!("Could not load reading history: {e}"))?;
+
+        let lib_res = db
+            .get_library(GetHistoryArgs {
+                hist_type: MangaHistoryType::PlanToRead,
+                page: 1,
+                search: search.and_then(SearchTerm::trimmed_lowercased),
+                items_per_page: 64,
+                provider: MangaProviders::default(),
+            })
+            .map_err(|e| format!("Could not load library favorites: {e}"))?;
+
+        let recent_history: Vec<LibraryEntry> = recent_res
+            .mangas
+            .into_iter()
+            .map(|item| map_history_to_library_entry(item, &covers))
+            .collect();
+        let continue_reading: Vec<LibraryEntry> = recent_history.iter().take(12).cloned().collect();
+        let favorites: Vec<LibraryEntry> = lib_res
+            .mangas
+            .into_iter()
+            .map(|item| map_history_to_library_entry(item, &covers))
+            .collect();
+
+        Ok(LibraryOverview {
+            total_continue_reading: continue_reading.len() as u32,
+            total_favorites: lib_res.total_items,
+            total_recent: recent_res.total_items,
+            continue_reading,
+            favorites,
+            recent_history,
+        })
+    }
+
+    pub fn toggle_library_favorite(&self, payload: ToggleFavoritePayload) -> Result<ToggleFavoriteResult, String> {
+        let manga_id = payload.manga_id.trim();
+        let title = payload.title.trim();
+        if manga_id.is_empty() || title.is_empty() {
+            return Err("Missing manga identifier or title".to_string());
+        }
+        let provider = parse_provider(&payload.provider)?;
+
+        let is_favorite = {
+            let conn = self.open_db_connection()?;
+            let db = Database::new(&conn);
+            let next_fav = db
+                .toggle_favorite(manga_id, provider, title)
+                .map_err(|e| format!("Could not update favorite status: {e}"))?;
+
+            if next_fav
+                && let Some(cover_url) = payload
+                    .cover_url
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|url| url.starts_with("https://") || url.starts_with("http://"))
+            {
+                let provider_str = provider.to_string();
+                let _ = conn.execute(
+                    "INSERT OR IGNORE INTO mangas (id, title, img_url, manga_provider) VALUES (?1, ?2, ?3, ?4)",
+                    rusqlite::params![manga_id, title, cover_url, provider_str],
+                );
+                let _ = conn.execute(
+                    "UPDATE mangas SET img_url = ?1 WHERE id = ?2 AND (img_url IS NULL OR TRIM(img_url) = '')",
+                    rusqlite::params![cover_url, manga_id],
+                );
+            }
+            next_fav
+        };
+
+        Ok(ToggleFavoriteResult {
+            is_favorite,
+            app_state: self.snapshot()?,
+            library: self.get_library_overview(None)?,
+        })
     }
 
     pub fn save_onboarding_preferences(&self, payload: OnboardingPreferencesPayload) -> Result<InitialAppState, String> {
@@ -492,6 +630,44 @@ pub fn platform_capabilities(os: &str) -> (&'static str, bool, bool) {
         "android" => ("android", true, false),
         "ios" => ("ios", true, false),
         _ => ("unknown", false, false),
+    }
+}
+
+fn load_cover_urls(conn: &rusqlite::Connection) -> HashMap<(String, String), String> {
+    let mut covers = HashMap::new();
+    let Ok(mut stmt) =
+        conn.prepare("SELECT id, manga_provider, img_url FROM mangas WHERE img_url IS NOT NULL AND TRIM(img_url) != ''")
+    else {
+        return covers;
+    };
+    let Ok(rows) = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+    else {
+        return covers;
+    };
+    for row in rows.flatten() {
+        covers.insert((row.0, row.1.to_ascii_lowercase()), row.2);
+    }
+    covers
+}
+
+fn map_history_to_library_entry(item: MangaHistory, covers: &HashMap<(String, String), String>) -> LibraryEntry {
+    let provider_id = item.provider.to_string();
+    let cover_url = covers.get(&(item.id.clone(), provider_id.clone())).cloned();
+    LibraryEntry {
+        id: item.id,
+        title: item.title,
+        provider: provider_id,
+        provider_label: item.provider.badge_label().to_string(),
+        cover_url,
+        last_read: item.last_read,
+        last_read_chapter: item.last_read_chapter,
+        total_read_count: item.total_read_count,
+        bookmark_chapter: item.bookmark_chapter,
+        bookmark_page: item.bookmark_page,
+        is_favorite: item.is_favorite,
+        is_plan_to_read: item.is_plan_to_read,
+        downloaded_count: item.downloaded_count,
+        shelf_name: item.shelf_name,
     }
 }
 
@@ -843,5 +1019,93 @@ mod tests {
         assert_eq!(platform_capabilities("ios"), ("ios", true, false));
         assert_eq!(platform_capabilities("freebsd"), ("unknown", false, false));
         assert_eq!(storage_mode_id(StorageMode::AppSandbox), "sandbox");
+    }
+
+    #[test]
+    fn library_overview_reads_continue_reading_favorites_and_filters_by_title() {
+        let temp = TempTestDir::new("library_overview");
+        let state = make_test_state(&temp.path);
+
+        {
+            let conn = state.open_db_connection().unwrap();
+            let db = Database::new(&conn);
+            db.save_history(MangaReadingHistorySave {
+                id: "m-berserk",
+                title: "Berserk",
+                img_url: Some("https://example.com/berserk.jpg"),
+                chapter: ChapterToSaveHistory {
+                    id: "ch-1",
+                    title: "Capítulo 1",
+                    translated_language: "es",
+                },
+                provider: MangaProviders::Inmanga,
+            })
+            .unwrap();
+            db.save_history(MangaReadingHistorySave {
+                id: "m-monster",
+                title: "Monster",
+                img_url: Some("https://example.com/monster.jpg"),
+                chapter: ChapterToSaveHistory {
+                    id: "ch-2",
+                    title: "Capítulo 4",
+                    translated_language: "en",
+                },
+                provider: MangaProviders::Weebcentral,
+            })
+            .unwrap();
+            db.toggle_favorite("m-berserk", MangaProviders::Inmanga, "Berserk").unwrap();
+        }
+
+        let overview = state.get_library_overview(None).unwrap();
+        assert_eq!(overview.total_continue_reading, 2);
+        assert_eq!(overview.total_recent, 2);
+        assert_eq!(overview.total_favorites, 1);
+        assert_eq!(overview.favorites[0].id, "m-berserk");
+        assert_eq!(overview.favorites[0].cover_url.as_deref(), Some("https://example.com/berserk.jpg"));
+        assert!(overview.favorites[0].is_favorite);
+
+        let filtered = state.get_library_overview(Some("monst")).unwrap();
+        assert_eq!(filtered.total_recent, 1);
+        assert_eq!(filtered.recent_history[0].title, "Monster");
+        assert_eq!(filtered.total_favorites, 0);
+    }
+
+    #[test]
+    fn toggle_library_favorite_persists_bidirectionally_in_sqlite() {
+        let temp = TempTestDir::new("toggle_favorite");
+        let state = make_test_state(&temp.path);
+
+        let added = state
+            .toggle_library_favorite(ToggleFavoritePayload {
+                manga_id: "m-frieren".to_string(),
+                provider: "mangadex".to_string(),
+                title: "Frieren".to_string(),
+                cover_url: Some("https://example.com/frieren.jpg".to_string()),
+            })
+            .unwrap();
+
+        assert!(added.is_favorite);
+        assert_eq!(added.app_state.library.favorites, 1);
+        assert_eq!(added.library.total_favorites, 1);
+        assert_eq!(added.library.favorites[0].cover_url.as_deref(), Some("https://example.com/frieren.jpg"));
+
+        {
+            let conn = state.open_db_connection().unwrap();
+            let db = Database::new(&conn);
+            assert!(db.is_favorite("m-frieren", MangaProviders::Mangadex).unwrap());
+        }
+
+        let removed = state
+            .toggle_library_favorite(ToggleFavoritePayload {
+                manga_id: "m-frieren".to_string(),
+                provider: "mangadex".to_string(),
+                title: "Frieren".to_string(),
+                cover_url: None,
+            })
+            .unwrap();
+
+        assert!(!removed.is_favorite);
+        assert_eq!(removed.app_state.library.favorites, 0);
+        assert_eq!(removed.library.total_favorites, 0);
     }
 }

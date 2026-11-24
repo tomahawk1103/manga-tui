@@ -161,6 +161,33 @@ export interface Translations {
     nextMilestoneTitle: string;
     nextMilestoneDesc: string;
   };
+  library: {
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    searchPlaceholder: string;
+    refreshBtn: string;
+    loading: string;
+    tabs: {
+      continue: string;
+      favorites: string;
+      recent: string;
+    };
+    addFavorite: string;
+    removeFavorite: string;
+    favoriteAdded: string;
+    favoriteRemoved: string;
+    chaptersReadBadge: (count: number) => string;
+    downloadedBadge: (count: number) => string;
+    lastChapterPrefix: string;
+    bookmarkBadge: (chapter: string, page?: number | null) => string;
+    planToReadBadge: string;
+    emptyContinue: string;
+    emptyFavorites: string;
+    emptyRecent: string;
+    emptyFilter: string;
+    emptyCta: string;
+  };
   explore: {
     eyebrow: string;
     title: string;
@@ -376,7 +403,38 @@ const ES: Translations = {
     noGenresYet: "Sin géneros seleccionados todavía (puedes elegirlos en Ajustes).",
     nextMilestoneTitle: "Próximo paso en camino (Hito 2)",
     nextMilestoneDesc:
-      "En el siguiente hito conectaremos la lista interactiva de Biblioteca SQLite, buscador HD multi-proveedor y fichas con reseñas de AniList.",
+      "La biblioteca ya lee y escribe tu SQLite en vivo; en el siguiente bloque conectaremos la Ficha de Serie completa con capítulos, reseñas de AniList y bloque «Para ti».",
+  },
+  library: {
+    eyebrow: "Biblioteca interactiva · SQLite",
+    title: "Tus estantes en vivo.",
+    subtitle:
+      "Sincronizada automáticamente con manga-tui: filtra por título o marca y desmarca favoritos al instante.",
+    searchPlaceholder: "Filtrar biblioteca por título...",
+    refreshBtn: "Actualizar",
+    loading: "Cargando biblioteca local...",
+    tabs: {
+      continue: "Continuar leyendo",
+      favorites: "Siguiendo / Favoritos",
+      recent: "Historial reciente",
+    },
+    addFavorite: "Añadir a favoritos",
+    removeFavorite: "Quitar favorito",
+    favoriteAdded: "Añadido a favoritos",
+    favoriteRemoved: "Quitado de favoritos",
+    chaptersReadBadge: (count) =>
+      count === 1 ? "1 cap. leído" : `${count} caps. leídos`,
+    downloadedBadge: (count) =>
+      count === 1 ? "1 offline" : `${count} offline`,
+    lastChapterPrefix: "Último:",
+    bookmarkBadge: (chapter, page) =>
+      page && page > 0 ? `Marcador: ${chapter} · p.${page}` : `Marcador: ${chapter}`,
+    planToReadBadge: "Por leer",
+    emptyContinue: "Todavía no tienes lecturas en curso en este dispositivo.",
+    emptyFavorites: "Aún no tienes series en favoritos. Busca una en Explorar y márcala con el corazón.",
+    emptyRecent: "No hay historial reciente registrado todavía.",
+    emptyFilter: "Ninguna serie de esta pestaña coincide con tu filtro.",
+    emptyCta: "Ir a Explorar",
   },
   explore: {
     eyebrow: "Explorar · Catálogo y servidores",
@@ -609,7 +667,38 @@ const EN: Translations = {
     noGenresYet: "No favorite genres selected yet (you can pick them in Settings).",
     nextMilestoneTitle: "Coming next (Milestone 2)",
     nextMilestoneDesc:
-      "Milestone 2 connects interactive SQLite library shelves, multi-provider HD search, and series pages with AniList reviews.",
+      "Your live SQLite shelves are connected; next up are the full Series page with chapters, AniList reviews, and the For You shelf.",
+  },
+  library: {
+    eyebrow: "Interactive library · SQLite",
+    title: "Your live shelves.",
+    subtitle:
+      "Automatically shared with manga-tui: filter by title or toggle favorites in one click.",
+    searchPlaceholder: "Filter library by title...",
+    refreshBtn: "Refresh",
+    loading: "Loading local library...",
+    tabs: {
+      continue: "Continue reading",
+      favorites: "Following / Favorites",
+      recent: "Recent history",
+    },
+    addFavorite: "Add to favorites",
+    removeFavorite: "Remove favorite",
+    favoriteAdded: "Added to favorites",
+    favoriteRemoved: "Removed from favorites",
+    chaptersReadBadge: (count) =>
+      count === 1 ? "1 ch. read" : `${count} chs. read`,
+    downloadedBadge: (count) =>
+      count === 1 ? "1 offline" : `${count} offline`,
+    lastChapterPrefix: "Latest:",
+    bookmarkBadge: (chapter, page) =>
+      page && page > 0 ? `Bookmark: ${chapter} · p.${page}` : `Bookmark: ${chapter}`,
+    planToReadBadge: "Plan to read",
+    emptyContinue: "No active reading progress recorded on this device yet.",
+    emptyFavorites: "No favorites yet. Search a series in Explore and mark it with the heart button.",
+    emptyRecent: "No recent reading history recorded yet.",
+    emptyFilter: "No series in this tab match your filter.",
+    emptyCta: "Go to Explore",
   },
   explore: {
     eyebrow: "Explore · Catalog & sources",
