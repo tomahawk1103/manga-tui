@@ -1,6 +1,6 @@
 [workspace]
-members = [".", "crates/manga-core"]
-default-members = [".", "crates/manga-core"]
+members = [".", "crates/manga-core", "crates/anime-core"]
+default-members = [".", "crates/manga-core", "crates/anime-core"]
 resolver = "3"
 
 [package]

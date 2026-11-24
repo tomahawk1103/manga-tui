@@ -35,7 +35,7 @@ Convertir `manga-tui` en una experiencia unificada de **Manga + Anime** sin romp
 ```mermaid
 flowchart LR
     Base["Base Actual (main)<br/>SQLite + Web Viewer + 7 Proveedores Manga"]
-    H1["Hito 1<br/>crates/anime-core<br/>AnimeAV1 + JKAnime + 3 Extractores"]
+    H1["Hito 1<br/>crates/anime-core<br/>AnimeAV1 + JKAnime + 3 Extractores<br/>✅ Implementado y verificado"]
     H2["Hito 2<br/>Proxy HTTP Range/HLS + Web Player<br/>+ Lanzador VLC / mpv"]
     H3["Hito 3<br/>SQLite Migración 0.12.0<br/>+ Config [anime] y Ajustes"]
     H4["Hito 4<br/>Pestaña Anime en TUI<br/>Ratatui + Sixel + Ratón + i18n"]
@@ -46,7 +46,7 @@ flowchart LR
 
 | Hito | Objetivo principal | Entregables clave |
 | :--- | :--- | :--- |
-| **Hito 1 · Motor `anime-core`** | Crate aislado con catálogo y extractores | `crates/anime-core`, traits `AnimeProvider` y `VideoExtractor`, `AnimeAv1Provider` (decodificador SvelteKit `devalue`), `JkAnimeProvider` (HTML + AJAX con cookie jar/CSRF), `ZillaHlsExtractor`, `JkPlayerExtractor`, `Mp4UploadExtractor`, tests con `httpmock` y fixtures |
+| **Hito 1 · Motor `anime-core`** ✅ | Crate aislado con catálogo y extractores | `crates/anime-core`, traits `AnimeProvider` y `VideoExtractor`, `AnimeAv1Provider` (decodificador SvelteKit `devalue`), `JkAnimeProvider` (HTML + AJAX con cookie jar/CSRF), `ZillaHlsExtractor`, `JkPlayerExtractor`, `Mp4UploadExtractor`, tests con `httpmock` y tests live (`--ignored`) |
 | **Hito 2 · Streaming y Reproductores** | Proxy local real y reproducción sin anuncios | `AnimePlaybackServer` (`127.0.0.1:0`, chunks `bytes_stream`, `Range`/`206`, reescritura `.m3u8` + `#EXT-X-MAP`), Web Player HTML5 + `hls.js` embebido, `ExternalPlayerLauncher` (VLC/mpv auto-detectado) |
 | **Hito 3 · Persistencia y Config** | Historial local y preferencias | Tablas `animes` y `anime_episodes`, migración idempotente `0.12.0` en `migration.rs`, actualización de `database.rs` y `database_scheme.md`, bloque `[anime]` en `config.toml` y `SettingsModal` |
 | **Hito 4 · Pestaña `Anime` en TUI** | Interfaz completa en Ratatui | `SelectedPage::Anime`, `src/view/pages/anime.rs`, buscador, portadas Sixel/Kitty (margen inferior 1 fila), ficha/episodios con progreso, selector de mirror, `ThemePalette`, `tr(es, en)` y hitboxes de ratón |
