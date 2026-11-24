@@ -1,4 +1,3 @@
-import React from "react";
 import { getHito5Labels } from "../palettes";
 import type {
   CardDensity,

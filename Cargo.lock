@@ -3804,6 +3804,7 @@ dependencies = [
 name = "mangora"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "log",
  "manga-core",
  "open",
@@ -3813,6 +3814,8 @@ dependencies = [
  "serde_json",
  "tauri",
  "tauri-build",
+ "tokio",
+ "uuid",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import type { Hito5Bridge } from "../bridge";
 import { getHito5Labels } from "../palettes";
 import type { UiLanguage } from "../types";
