@@ -7,6 +7,7 @@ interface OnboardingWizardProps {
   appState: InitialAppState;
   isReplay: boolean;
   isSaving: boolean;
+  errorMessage: string | null;
   onLanguagePreview: (lang: UiLanguage) => Promise<void>;
   onThemePreview: (themeMode: ThemeMode) => Promise<void>;
   onComplete: (payload: {
@@ -27,6 +28,7 @@ export function OnboardingWizard({
   appState,
   isReplay,
   isSaving,
+  errorMessage,
   onLanguagePreview,
   onThemePreview,
   onComplete,
@@ -89,6 +91,7 @@ export function OnboardingWizard({
             <button
               type="button"
               onClick={() => void onThemePreview(nextTheme)}
+              disabled={isSaving}
               className="editorial-btn-secondary px-3 py-1.5 text-xs"
             >
               {appState.themeMode === "paper" ? (
@@ -103,6 +106,7 @@ export function OnboardingWizard({
               <button
                 type="button"
                 onClick={onCancelReplay}
+                disabled={isSaving}
                 className="editorial-btn-secondary px-3 py-1.5 text-xs"
               >
                 <X className="h-3.5 w-3.5" aria-hidden="true" />
@@ -111,6 +115,8 @@ export function OnboardingWizard({
             )}
           </div>
         </div>
+
+        {errorMessage && <p role="alert" className="editorial-callout mb-4 p-3">{errorMessage}</p>}
 
         {/* Step progress strip */}
         <div className="mb-6 grid grid-cols-3 gap-2 font-mono-editorial text-xs font-bold">
@@ -164,6 +170,7 @@ export function OnboardingWizard({
                     <button
                       type="button"
                       onClick={() => void handleSelectLanguage("es")}
+                      disabled={isSaving}
                       className={`cursor-pointer border-2 border-[var(--ink)] p-5 text-left transition-colors ${
                         selectedLang === "es"
                           ? "bg-[var(--ink)] text-[var(--paper)] shadow-[5px_5px_0_var(--red)]"
@@ -193,6 +200,7 @@ export function OnboardingWizard({
                     <button
                       type="button"
                       onClick={() => void handleSelectLanguage("en")}
+                      disabled={isSaving}
                       className={`cursor-pointer border-2 border-[var(--ink)] p-5 text-left transition-colors ${
                         selectedLang === "en"
                           ? "bg-[var(--ink)] text-[var(--paper)] shadow-[5px_5px_0_var(--red)]"

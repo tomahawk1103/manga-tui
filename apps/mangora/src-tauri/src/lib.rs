@@ -15,6 +15,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_initial_state,
+            commands::search_catalog,
             commands::save_onboarding_preferences,
             commands::set_ui_language,
             commands::set_theme_mode,

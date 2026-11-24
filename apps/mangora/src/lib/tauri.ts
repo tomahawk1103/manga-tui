@@ -9,6 +9,15 @@ import type {
 
 const BROWSER_STORAGE_KEY = "mangora_browser_fallback_v1";
 
+export interface CatalogPage {
+  items: { id: string; title: string; coverUrl: string; genres: string[]; languages: string[] }[];
+  hasNext: boolean;
+}
+
+export function searchCatalog(provider: string, query: string, page: number) {
+  return invoke<CatalogPage>("search_catalog", { provider, query, page });
+}
+
 const FALLBACK_PROVIDERS: ProviderOption[] = [
   {
     id: "mangadex",

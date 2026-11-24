@@ -114,6 +114,7 @@ export function App() {
         appState={appState}
         isReplay={replayOnboarding}
         isSaving={isSaving}
+        errorMessage={errorMessage}
         onLanguagePreview={async (lang: UiLanguage) => {
           await runMutation(() => setUiLanguage(lang));
         }}
@@ -121,19 +122,14 @@ export function App() {
           await runMutation(() => setThemeMode(mode));
         }}
         onComplete={async ({ uiLanguage, favoriteGenres, provider, themeMode }) => {
-          await runMutation(
-            () =>
-              saveOnboardingPreferences({
-                uiLanguage,
-                favoriteGenres,
-                provider,
-                onboardingCompleted: true,
-                themeMode,
-              }),
-            false,
-          );
-          setReplayOnboarding(false);
-          setActiveSection("home");
+          await runMutation(async () => {
+            const next = await saveOnboardingPreferences({
+              uiLanguage, favoriteGenres, provider, themeMode, onboardingCompleted: true,
+            });
+            setReplayOnboarding(false);
+            setActiveSection("home");
+            return next;
+          });
         }}
         onCancelReplay={() => setReplayOnboarding(false)}
       />

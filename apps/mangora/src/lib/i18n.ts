@@ -164,15 +164,23 @@ export interface Translations {
     title: string;
     subtitle: string;
     forYouTitle: string;
-    forYouDesc: string;
     noGenresHint: string;
     editGenresBtn: string;
     providerSelectorTitle: string;
     providerSelectorDesc: string;
     activeTag: string;
     recommendedTag: string;
-    h2PreviewTitle: string;
-    h2PreviewDesc: string;
+    search: string;
+    searchTitle: string;
+    loading: string;
+    empty: string;
+    unavailable: string;
+    desktopOnly: string;
+    previous: string;
+    next: string;
+    language: string;
+    genre: string;
+    all: string;
   };
   downloads: {
     eyebrow: string;
@@ -356,10 +364,8 @@ const ES: Translations = {
     eyebrow: "Explorar · Catálogo y servidores",
     title: "Encuentra tu próxima serie.",
     subtitle:
-      "Elige el servidor que prefieras o filtra a partir de los gustos que marcaste al iniciar Mangora.",
-    forYouTitle: "Para ti según tus gustos",
-    forYouDesc:
-      "Tus géneros favoritos ya están guardados y listos para alimentar las recomendaciones del buscador.",
+      "Busca una serie por su título en el catálogo del servidor que elijas.",
+    forYouTitle: "Tus géneros favoritos",
     noGenresHint: "Aún no has elegido géneros favoritos. Márcalos en Ajustes para personalizar esta zona.",
     editGenresBtn: "Editar gustos en Ajustes",
     providerSelectorTitle: "Servidor activo",
@@ -367,9 +373,17 @@ const ES: Translations = {
       "Al cambiar el servidor aquí se guarda automáticamente en config.toml y lo comparte con manga-tui.",
     activeTag: "Activo",
     recommendedTag: "Recomendado",
-    h2PreviewTitle: "Buscador HD multi-proveedor (Hito 2)",
-    h2PreviewDesc:
-      "La base de proveedores (`multi_provider`) ya está enlazada en el backend Rust. En el Hito 2 se activará el buscador con portadas HD y ficha completa.",
+    search: "Buscar",
+    searchTitle: "Título de la serie",
+    loading: "Buscando en el catálogo…",
+    empty: "No hay coincidencias en esta página.",
+    unavailable: "El servidor no ha respondido. Vuelve a buscar o elige otro servidor.",
+    desktopOnly: "Abre Mangora en el escritorio para buscar en el catálogo.",
+    previous: "Página anterior",
+    next: "Página siguiente",
+    language: "Idioma en esta página",
+    genre: "Género en esta página",
+    all: "Todos",
   },
   downloads: {
     eyebrow: "Descargas · Lectura offline",
@@ -565,10 +579,8 @@ const EN: Translations = {
     eyebrow: "Explore · Catalog & sources",
     title: "Find your next series.",
     subtitle:
-      "Pick your active manga source or review the favorite genres you selected during onboarding.",
-    forYouTitle: "Picked for your tastes",
-    forYouDesc:
-      "Your favorite genres are saved and ready to power personalized search filters.",
+      "Search for a series by title in your chosen source’s catalog.",
+    forYouTitle: "Your favorite genres",
     noGenresHint: "No favorite genres chosen yet. Select a few in Settings to personalize this section.",
     editGenresBtn: "Edit genres in Settings",
     providerSelectorTitle: "Active source",
@@ -576,9 +588,17 @@ const EN: Translations = {
       "Switching the source here persists straight to config.toml and stays shared with manga-tui.",
     activeTag: "Active",
     recommendedTag: "Recommended",
-    h2PreviewTitle: "Multi-provider HD search (Milestone 2)",
-    h2PreviewDesc:
-      "The `multi_provider` engine is linked in Rust. Milestone 2 enables live cover search, filters, and series details.",
+    search: "Search",
+    searchTitle: "Series title",
+    loading: "Searching the catalog…",
+    empty: "No matches on this page.",
+    unavailable: "The source did not respond. Search again or choose another source.",
+    desktopOnly: "Open the Mangora desktop app to search the catalog.",
+    previous: "Previous page",
+    next: "Next page",
+    language: "Language on this page",
+    genre: "Genre on this page",
+    all: "All",
   },
   downloads: {
     eyebrow: "Downloads · Offline reading",

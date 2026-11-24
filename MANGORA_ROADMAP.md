@@ -12,22 +12,39 @@
 ```mermaid
 flowchart LR
     Base["Base Actual<br/>crates/manga-core + docs/index.html"]
-    H1["Hito 1<br/>Tauri v2 + Diseño Editorial + Onboarding<br/>⏳ Pendiente"]
-    H2["Hito 2<br/>Explorar + Biblioteca + Ficha AniList<br/>⏳ Pendiente"]
-    H3["Hito 3<br/>Lector HD Nativo + Descargas Offline<br/>⏳ Pendiente"]
+    H1["Hito 1<br/>Tauri v2 + Diseño Editorial + Onboarding<br/>En validación"]
+    H2["Hito 2<br/>Explorar + Biblioteca + Ficha AniList<br/>En curso"]
+    H3["Hito 3<br/>Lector HD Nativo + Descargas Offline<br/>En curso"]
     H4["Hito 4<br/>Ajustes + Buzón + Monster 2€ + Instalador<br/>⏳ Pendiente"]
-    H5["Hito 5 (v1.1+)<br/>Personalización Visual + Métricas Locales<br/>✅ Implementado (rama MANGORA_HITO5)"]
+    H5["Hito 5 (v1.1+)<br/>Personalización Visual + Métricas Locales<br/>Integración pendiente"]
 
     Base --> H1 --> H2 --> H3 --> H4 --> H5
 ```
 
 | Hito | Estado | Objetivo principal |
 | :--- | :--- | :--- |
-| **Hito 1** | ⏳ Pendiente | Scaffold Tauri v2 en `apps/mangora/`, sistema de diseño editorial (`docs/index.html`) y Onboarding de primeros pasos |
-| **Hito 2** | ⏳ Pendiente | Explorar/Buscar con portadas HD, Biblioteca compartida SQLite y Ficha de serie con reseñas de AniList y acceso a Discord |
-| **Hito 3** | ⏳ Pendiente | Lector HD nativo (online + 100 % offline en CBZ/RAW/EPUB/PDF) y gestor de cola de descargas en tiempo real |
+| **Hito 1** | En validación | Scaffold Tauri v2 en `apps/mangora/`, sistema de diseño editorial (`docs/index.html`) y Onboarding de primeros pasos |
+| **Hito 2** | En curso | Explorar/Buscar con portadas HD, Biblioteca compartida SQLite y Ficha de serie con reseñas de AniList y acceso a Discord |
+| **Hito 3** | En curso | Lector HD nativo (online + 100 % offline en CBZ/RAW/EPUB/PDF) y gestor de cola de descargas en tiempo real |
 | **Hito 4** | ⏳ Pendiente | Ajustes simples (Drive/AniList/MAL), Buzón de opiniones seguro, botón *"¿Me invitas a un Monster? ⚡ 2 €"* y empaquetado Windows |
-| **Hito 5 (v1.1+)** | ✅ Implementado (`MANGORA_HITO5`) | Personalización visual avanzada de temas/tarjetas y métricas locales ampliadas del lector |
+| **Hito 5 (v1.1+)** | Módulos en `MANGORA`, integración pendiente | Personalización visual avanzada de temas/tarjetas y métricas locales ampliadas del lector |
+
+---
+
+## Estado de la app y cambios integrados
+
+El trabajo de Mangora está reunido en `manga-tui/`, rama local `MANGORA`. La aplicación vive en `apps/mangora/` y comparte el motor Rust de `crates/manga-core/`. Los cambios recientes de **Explorar** y del asistente inicial están preparados en Git, pendientes de commit por un error de permisos al escribir el registro de la rama.
+
+| Área | Disponible ahora | Pendiente |
+| :--- | :--- | :--- |
+| Base y navegación | Proyecto Tauri v2 con React, TypeScript, Vite y Tailwind; secciones Inicio, Explorar, Descargas, Ajustes y Apoyar; temas Papel y Tinta. | Abrir y revisar la ventana nativa en una sesión normal de Windows. |
+| Primer inicio | Selección de idioma, géneros y proveedor recomendado; detección de biblioteca previa; tour que se puede repetir desde Ajustes. Un fallo al guardar muestra el error y permite reintentar. | Validación manual completa en la app nativa. |
+| Explorar | Búsqueda por título en el proveedor activo mediante `search_catalog` y `multi_provider`; portadas, paginación, filtros por idioma y género de los resultados visibles, orden del proveedor recomendado primero y mensajes de error. | Buscar contra un proveedor real en red; recomendaciones según gustos y filtros aplicados a todo el catálogo. |
+| Biblioteca y lector | Detección y recuentos de la biblioteca compartida; preferencias de lector persistidas en el backend; motor Rust con lectura local y cola de descargas. | Biblioteca visual interactiva, ficha, lector dentro de Mangora, progreso de lectura y controles de la cola en la interfaz. |
+| Ajustes y apoyo | Cambio de idioma, tema, proveedor y géneros; apertura de la carpeta de datos; enlaces a Discord y GitHub. | Drive y trackers guiados, buzón de opiniones, donaciones activas y paquete instalable. |
+| Apariencia y métricas | Módulos, migración y componentes del hito 5 presentes en el repositorio. | Registrar sus comandos Tauri e incorporar sus componentes a las pantallas. |
+
+Para probar la app de escritorio en Windows, ejecutar `npm.cmd install` y `npm.cmd run tauri dev` desde `apps/mangora/`. `npm.cmd run dev` abre la vista previa web en `http://localhost:1420`; la búsqueda del catálogo requiere Tauri. La compilación de Vite, `cargo check --workspace --locked --offline` y las pruebas activas del workspace pasaron. En Chromium se verificaron el tour, el reintento tras un fallo de guardado y la búsqueda con respuestas simuladas. La prueba de red con MangaDex falló por falta de conexión en el entorno de pruebas, y allí la ventana nativa devolvió «Acceso denegado».
 
 ---
 
@@ -95,7 +112,9 @@ Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.r
 
 ## Hito 1 · Base Tauri v2, Estética `index.html` y Onboarding de Primeros Pasos
 
-- **Estado:** `⏳ Pendiente`
+- **Estado:** `En validación`
+
+El ejecutable de Windows compila. El asistente permite reintentar un guardado fallido y conserva la selección. Queda por comprobar la apertura de la ventana nativa en una sesión de escritorio: Tauri devolvió «Acceso denegado» en el entorno de pruebas.
 
 ### Prompt sugerido para nuevo hilo
 
@@ -122,15 +141,19 @@ Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.r
 ### Criterios de aceptación
 
 - [ ] `apps/mangora/` compila y arranca la ventana nativa Tauri v2 en Windows sin mostrar ventana de consola extra.
-- [ ] La UI aplica fielmente los tokens visuales de `docs/index.html` (Papel `#f8f7f1`, Tinta `#191918`, Rojo `#cb3028`, sombras duras y tipografía mono/display) y soporta cambio a Modo Tinta.
-- [ ] El Onboarding guarda idioma, gustos y proveedor recomendado, y no vuelve a mostrarse al reiniciar una vez completado.
-- [ ] `cargo check` y `cargo test` del workspace (`manga-tui` y `manga-core`) pasan sin regresiones.
+- [x] La UI aplica fielmente los tokens visuales de `docs/index.html` (Papel `#f8f7f1`, Tinta `#191918`, Rojo `#cb3028`, sombras duras y tipografía mono/display) y soporta cambio a Modo Tinta.
+- [x] El Onboarding guarda idioma, gustos y proveedor recomendado, y no vuelve a mostrarse al reiniciar una vez completado.
+- [x] `cargo check` y `cargo test` del workspace (`manga-tui` y `manga-core`) pasan sin regresiones.
 
 ---
 
 ## Hito 2 · Explorar, Biblioteca Visual y Ficha de Manga (AniList + Discord)
 
-- **Estado:** `⏳ Pendiente`
+- **Estado:** `En curso`
+
+La pantalla **Explorar** ya busca títulos por proveedor con el comando `search_catalog`, muestra portadas y permite recorrer páginas y filtrar sus resultados por idioma o género cuando la fuente facilita esos datos. Quedan pendientes las recomendaciones por gustos, las acciones de biblioteca y la ficha de serie con AniList y Discord.
+
+Se verificaron paginación, filtros y errores en Chromium con respuestas simuladas. La prueba de conexión real a MangaDex está en `apps/mangora/src-tauri/src/commands.rs` y requiere acceso de red.
 
 ### Prompt sugerido para nuevo hilo
 
@@ -161,7 +184,9 @@ Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.r
 
 ## Hito 3 · Lector HD Nativo (Online + 100 % Offline) y Gestor de Descargas
 
-- **Estado:** `⏳ Pendiente`
+- **Estado:** `En curso`
+
+El backend ya conserva preferencias del lector y formato de descarga, y `manga-core` incorpora acceso a capítulos locales y cola de descargas. La pantalla de Descargas muestra información y permite abrir la carpeta de datos. Falta conectar la lectura y la cola a la interfaz de Mangora.
 
 ### Prompt sugerido para nuevo hilo
 
@@ -194,6 +219,8 @@ Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.r
 ## Hito 4 · Ajustes Sencillos, Buzón de Opiniones, "Monster ⚡ 2 €" y Empaquetado Windows
 
 - **Estado:** `⏳ Pendiente`
+
+Ya se pueden cambiar idioma, tema, proveedor y géneros desde Ajustes, repetir el tour y abrir la carpeta de datos. Apoyar incluye enlaces a Discord y GitHub; el bloque de Monster todavía es informativo.
 
 ### Prompt sugerido para nuevo hilo
 
@@ -228,7 +255,7 @@ Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.r
 
 ## Hito 5 (v1.1+) · Personalización Visual Avanzada y Métricas del Lector
 
-- **Estado:** `✅ Implementado` (rama `MANGORA_HITO5`, listo para integrarse sobre los Hitos 1–4 sin conflictos)
+- **Estado:** Módulos presentes en `MANGORA`. Falta conectar los comandos Tauri y los componentes a las pantallas de la app.
 
 ### Prompt sugerido para nuevo hilo
 
@@ -243,14 +270,14 @@ Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.r
    - Migración SQLite `0.12.0` (`reading_sessions` 100 % local y `manga_genres` con índices) manteniendo compatibilidad total hacia atrás con `manga-tui` y `LibrarySyncSnapshot` (solo `manga_genres` sincroniza como metadato; `reading_sessions` nunca sale del equipo).
    - Cálculo de estadísticas locales sin doble conteo (`ExtendedReaderMetrics`): capítulos leídos (hoy / 7d / 30d / total), tiempo real/estimado, promedio por capítulo, rachas actual y máxima, top géneros, top series, actividad diaria de 14 días y vista/tarjeta editorial SVG (`1200×675`) exportable a **SVG** y **PNG 2x**.
 
-### Archivos añadidos en `MANGORA_HITO5`
+### Archivos del hito 5 en `MANGORA`
 
 - **Backend compartido (`crates/manga-core`):** [`mangora_appearance.rs`](crates/manga-core/src/mangora_appearance.rs), [`config.rs`](crates/manga-core/src/config.rs), [`migration.rs`](crates/manga-core/src/backend/migration.rs), [`database.rs`](crates/manga-core/src/backend/database.rs), [`cloud.rs`](crates/manga-core/src/backend/cloud.rs), [`database_scheme.md`](crates/manga-core/src/backend/database_scheme.md), [`mangora_metrics_card.rs`](crates/manga-core/src/mangora_metrics_card.rs), [`mangora_hito5_api.rs`](crates/manga-core/src/mangora_hito5_api.rs), [`lib.rs`](crates/manga-core/src/lib.rs).
 - **Módulos UI autocontenidos (`apps/mangora/src/features/hito5/`):** [`types.ts`](apps/mangora/src/features/hito5/types.ts), [`palettes.css`](apps/mangora/src/features/hito5/palettes.css), [`palettes.ts`](apps/mangora/src/features/hito5/palettes.ts), [`bridge.ts`](apps/mangora/src/features/hito5/bridge.ts), [`sorting.ts`](apps/mangora/src/features/hito5/sorting.ts), [`useMangoraAppearance.ts`](apps/mangora/src/features/hito5/useMangoraAppearance.ts), [`useReaderMetrics.ts`](apps/mangora/src/features/hito5/useReaderMetrics.ts), [`AppearanceCustomizerPanel.tsx`](apps/mangora/src/features/hito5/components/AppearanceCustomizerPanel.tsx), [`CollectionDisplayToolbar.tsx`](apps/mangora/src/features/hito5/components/CollectionDisplayToolbar.tsx), [`ReaderMetricsDashboard.tsx`](apps/mangora/src/features/hito5/components/ReaderMetricsDashboard.tsx), [`tauriCommandsTemplate.rs`](apps/mangora/src/features/hito5/tauriCommandsTemplate.rs), [`index.ts`](apps/mangora/src/features/hito5/index.ts), [`INTEGRATION.md`](apps/mangora/src/features/hito5/INTEGRATION.md).
 
 ### Criterios de aceptación
 
-- [x] Los temas y ajustes de densidad se aplican en vivo y persisten entre reinicios.
+- [ ] Los temas y ajustes de densidad se aplican en vivo y persisten entre reinicios.
 - [x] Las métricas se calculan y almacenan 100 % en local sin telemetría oculta ni envío externo de hábitos de lectura.
 - [x] Cualquier cambio en la base de datos SQLite conserva compatibilidad total con `manga-tui` y pasa las pruebas de migración y `cargo test`.
 

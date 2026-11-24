@@ -1,4 +1,5 @@
 import { Check, SlidersHorizontal } from "lucide-react";
+import { CatalogSearch } from "../components/CatalogSearch";
 import type { InitialAppState, NavSection } from "../types/mangora";
 import { getGenreLabel, getTranslations } from "../lib/i18n";
 
@@ -16,6 +17,9 @@ export function ExploreView({
   onNavigate,
 }: ExploreViewProps) {
   const t = getTranslations(appState.uiLanguage);
+  const providers = [...appState.availableProviders].sort((a, b) =>
+    Number(b.id === appState.recommendedProvider) - Number(a.id === appState.recommendedProvider));
+  const active = providers.find(provider => provider.id === appState.activeProvider);
 
   return (
     <div className="space-y-8">
@@ -24,6 +28,8 @@ export function ExploreView({
         <h1 className="font-display mb-2 text-4xl sm:text-5xl">{t.explore.title}</h1>
         <p className="max-w-2xl text-base text-[var(--muted)]">{t.explore.subtitle}</p>
       </div>
+
+      {active && <CatalogSearch provider={active} language={appState.uiLanguage} />}
 
       {/* For you genres */}
       <section className="editorial-callout p-5">
@@ -38,7 +44,6 @@ export function ExploreView({
             <span>{t.explore.editGenresBtn}</span>
           </button>
         </div>
-        <p className="mb-3 text-sm text-[var(--muted)]">{t.explore.forYouDesc}</p>
         {appState.favoriteGenres.length > 0 ? (
           <div className="flex flex-wrap gap-2">
             {appState.favoriteGenres.map((genreId) => (
@@ -63,7 +68,7 @@ export function ExploreView({
         </div>
 
         <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-3">
-          {appState.availableProviders.map((prov) => {
+          {providers.map((prov) => {
             const isActive = appState.activeProvider === prov.id;
             const isRecommended = appState.recommendedProvider === prov.id;
             return (
@@ -106,12 +111,6 @@ export function ExploreView({
         </div>
       </section>
 
-      <section className="editorial-card-muted p-5">
-        <div className="font-mono-editorial mb-1 text-xs font-bold uppercase text-[var(--red-text)]">
-          [HITO 2] {t.explore.h2PreviewTitle}
-        </div>
-        <p className="text-sm text-[var(--muted)]">{t.explore.h2PreviewDesc}</p>
-      </section>
     </div>
   );
 }
