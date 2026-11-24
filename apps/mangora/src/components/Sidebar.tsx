@@ -9,6 +9,7 @@ interface SidebarProps {
   onToggleTheme: () => void;
   uiLanguage: UiLanguage;
   appVersion: string;
+  activeDownloadCount?: number;
 }
 
 export function Sidebar({
@@ -18,6 +19,7 @@ export function Sidebar({
   onToggleTheme,
   uiLanguage,
   appVersion,
+  activeDownloadCount = 0,
 }: SidebarProps) {
   const t = getTranslations(uiLanguage);
 
@@ -65,7 +67,12 @@ export function Sidebar({
                 }`}
               >
                 <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
-                <span className="truncate">{item.label}</span>
+                <span className="min-w-0 flex-1 truncate">{item.label}</span>
+                {item.id === "downloads" && activeDownloadCount > 0 ? (
+                  <span className="border border-current bg-[var(--red)] px-1.5 py-0.5 font-mono-editorial text-[10px] font-bold text-white">
+                    {activeDownloadCount}
+                  </span>
+                ) : null}
               </button>
             );
           })}

@@ -260,6 +260,13 @@ export interface Translations {
     markedReadToast: string;
     markedUnreadToast: string;
     openReaderBtn: string;
+    downloadBtn: string;
+    downloadingBtn: string;
+    selectChaptersBtn: string;
+    cancelSelectBtn: string;
+    selectAllPageBtn: string;
+    downloadSelectedBtn: (count: number) => string;
+    enqueuedToast: (count: number) => string;
     communityEyebrow: string;
     communityTitle: string;
     communityLoading: string;
@@ -276,20 +283,80 @@ export interface Translations {
     communityDiscordDesc: string;
     communityDiscordBtn: string;
   };
+  reader: {
+    backToSeries: string;
+    loading: string;
+    loadErrorTitle: string;
+    retry: string;
+    offlineBadge: (fmt: string | null) => string;
+    onlineBadge: (provider: string) => string;
+    chapterLabel: (num: string) => string;
+    pageOf: (current: number, total: number) => string;
+    prevChapter: string;
+    nextChapter: string;
+    prevPage: string;
+    nextPage: string;
+    modeLabel: string;
+    modeCascade: string;
+    modeSingle: string;
+    modeDouble: string;
+    directionLabel: string;
+    dirRtl: string;
+    dirLtr: string;
+    fitLabel: string;
+    fitWidth: string;
+    fitHeight: string;
+    fitOriginal: string;
+    zoomOut: string;
+    zoomIn: string;
+    zoomReset: string;
+    firstPageSingleLabel: string;
+    darkCanvasLabel: string;
+    pinHudLabel: string;
+    fullscreenBtn: string;
+    settingsBtn: string;
+    endOfChapterTitle: string;
+    endOfChapterSubtitle: string;
+    noNextChapter: string;
+    shortcutsHint: string;
+    touchHint: string;
+    bookmarkSavedToast: string;
+  };
   downloads: {
     eyebrow: string;
     title: string;
     subtitle: string;
     ribbonLabel: string;
     formats: string[];
+    formatSelectorLabel: string;
+    formatDescriptions: Record<"cbz" | "pdf" | "epub" | "raw", string>;
     folderCardTitle: string;
     folderCardDesc: string;
     openFolderBtn: string;
     mobileStorageNote: string;
     detectedOfflineTitle: string;
     detectedOfflineCount: (count: number) => string;
-    queuePreviewTitle: string;
-    queuePreviewDesc: string;
+    queueTitle: string;
+    queueEmpty: string;
+    pauseAllBtn: string;
+    resumeAllBtn: string;
+    retryFailedBtn: string;
+    clearFinishedBtn: string;
+    cancelAllBtn: string;
+    overallProgressLabel: string;
+    pagesProgress: (done: number, total: number) => string;
+    statusNames: Record<string, string>;
+    pauseTaskBtn: string;
+    resumeTaskBtn: string;
+    retryTaskBtn: string;
+    cancelTaskBtn: string;
+    removeTaskBtn: string;
+    offlineShelfTitle: string;
+    offlineShelfSubtitle: string;
+    offlineShelfEmpty: string;
+    offlineChaptersRead: (read: number, total: number) => string;
+    openOfflineSeriesBtn: string;
+    finishedToast: (title: string, ch: string) => string;
   };
   settings: {
     eyebrow: string;
@@ -577,6 +644,14 @@ const ES: Translations = {
     markedReadToast: "Capítulo marcado como leído",
     markedUnreadToast: "Capítulo marcado como pendiente",
     openReaderBtn: "Abrir lector",
+    downloadBtn: "Descargar",
+    downloadingBtn: "En cola",
+    selectChaptersBtn: "Seleccionar varios",
+    cancelSelectBtn: "Cancelar selección",
+    selectAllPageBtn: "Marcar página",
+    downloadSelectedBtn: (count) => `Descargar (${count})`,
+    enqueuedToast: (count) =>
+      count === 1 ? "1 capítulo añadido a la cola de descargas" : `${count} capítulos añadidos a la cola de descargas`,
     communityEyebrow: "Comunidad · AniList + Discord",
     communityTitle: "Opinión y reseñas",
     communityLoading: "Consultando ficha pública de AniList…",
@@ -594,13 +669,59 @@ const ES: Translations = {
       "¿Quieres recomendarla, comentar el último capítulo o avisar si un servidor falla? Pásate por el Discord oficial.",
     communityDiscordBtn: "Abrir Discord ↗",
   },
+  reader: {
+    backToSeries: "Volver",
+    loading: "Abriendo páginas del capítulo…",
+    loadErrorTitle: "No se pudo abrir el capítulo",
+    retry: "Reintentar",
+    offlineBadge: (fmt) => (fmt ? `OFFLINE / LOCAL · ${fmt}` : "OFFLINE / LOCAL"),
+    onlineBadge: (provider) => `ONLINE · ${provider}`,
+    chapterLabel: (num) => `Cap. ${num}`,
+    pageOf: (current, total) => `Pág. ${current} / ${total}`,
+    prevChapter: "Cap. anterior",
+    nextChapter: "Siguiente cap.",
+    prevPage: "Página anterior",
+    nextPage: "Página siguiente",
+    modeLabel: "Modo de vista",
+    modeCascade: "Cascada",
+    modeSingle: "Página única",
+    modeDouble: "Doble página",
+    directionLabel: "Sentido",
+    dirRtl: "Manga (D ← I)",
+    dirLtr: "Occidental (I → D)",
+    fitLabel: "Ajuste",
+    fitWidth: "Ancho",
+    fitHeight: "Alto",
+    fitOriginal: "Original",
+    zoomOut: "Alejar",
+    zoomIn: "Acercar",
+    zoomReset: "100%",
+    firstPageSingleLabel: "Portada sola en doble página",
+    darkCanvasLabel: "Fondo oscuro de lectura",
+    pinHudLabel: "Mantener barras visibles",
+    fullscreenBtn: "Pantalla completa",
+    settingsBtn: "Ajustes de lectura",
+    endOfChapterTitle: "Fin del capítulo",
+    endOfChapterSubtitle: "El progreso ya está guardado en tu biblioteca SQLite.",
+    noNextChapter: "No hay un capítulo siguiente en esta lista.",
+    shortcutsHint: "Atajos: ← / → o Espacio para avanzar · F pantalla completa · Esc salir",
+    touchHint: "Toca los laterales o desliza para pasar página · Pellizca o doble toque para zoom",
+    bookmarkSavedToast: "Marcador guardado",
+  },
   downloads: {
     eyebrow: "Descargas · Lectura offline",
     title: "Llévatelo sin conexión.",
     subtitle:
-      "Mangora comparte la carpeta `mangaDownloads/` y soporta exactamente los mismos cuatro formatos de archivo que manga-tui.",
+      "Mangora comparte `mangaDownloads/` con manga-tui, descarga en segundo plano y lee CBZ, EPUB, PDF y RAW sin internet.",
     ribbonLabel: "Formatos compatibles",
     formats: ["CBZ", "EPUB", "PDF", "Imágenes RAW"],
+    formatSelectorLabel: "Formato de descarga por defecto",
+    formatDescriptions: {
+      cbz: "Archivo cómico estándar, rápido y compatible con casi cualquier lector (Recomendado).",
+      pdf: "Documento portátil listo para compartir o abrir en tablet.",
+      epub: "Libro electrónico compatible con e-readers.",
+      raw: "Carpeta con imágenes sueltas sin empaquetar.",
+    },
     folderCardTitle: "Carpeta compartida de descargas",
     folderCardDesc:
       "Los capítulos descargados desde manga-tui o Mangora conviven en la misma ubicación local.",
@@ -612,9 +733,35 @@ const ES: Translations = {
       count === 1
         ? "1 serie offline detectada actualmente en disco."
         : `${count} series offline detectadas actualmente en disco.`,
-    queuePreviewTitle: "Cola en vivo y visor HD offline (Hito 3)",
-    queuePreviewDesc:
-      "En el Hito 3 incorporaremos la cola de descargas en tiempo real y el visor de páginas locales CBZ/EPUB/PDF/RAW sin internet.",
+    queueTitle: "Cola de descargas en vivo",
+    queueEmpty: "No hay capítulos en la cola ahora mismo. Puedes descargarlos desde la ficha de cualquier serie.",
+    pauseAllBtn: "Pausar todo",
+    resumeAllBtn: "Reanudar todo",
+    retryFailedBtn: "Reintentar fallidos",
+    clearFinishedBtn: "Limpiar terminados",
+    cancelAllBtn: "Cancelar todo",
+    overallProgressLabel: "Progreso global",
+    pagesProgress: (done, total) => `${done}/${total} págs.`,
+    statusNames: {
+      queued: "En cola",
+      downloading: "Descargando",
+      packaging: "Empaquetando",
+      paused: "Pausado",
+      completed: "Completado",
+      failed: "Error",
+      cancelled: "Cancelado",
+    },
+    pauseTaskBtn: "Pausar",
+    resumeTaskBtn: "Reanudar",
+    retryTaskBtn: "Reintentar",
+    cancelTaskBtn: "Cancelar",
+    removeTaskBtn: "Quitar",
+    offlineShelfTitle: "Series disponibles 100 % offline",
+    offlineShelfSubtitle: "Toca cualquier serie descargada para ver sus capítulos locales y abrir el lector sin internet.",
+    offlineShelfEmpty: "Aún no hay capítulos descargados en tu carpeta local.",
+    offlineChaptersRead: (read, total) => `${read} / ${total} leídos`,
+    openOfflineSeriesBtn: "Abrir serie",
+    finishedToast: (title, ch) => `Descarga lista: ${title} · Cap. ${ch}`,
   },
   settings: {
     eyebrow: "Ajustes · Preferencias",
@@ -909,6 +1056,14 @@ const EN: Translations = {
     markedReadToast: "Chapter marked as read",
     markedUnreadToast: "Chapter marked as unread",
     openReaderBtn: "Open reader",
+    downloadBtn: "Download",
+    downloadingBtn: "Queued",
+    selectChaptersBtn: "Select multiple",
+    cancelSelectBtn: "Cancel selection",
+    selectAllPageBtn: "Select page",
+    downloadSelectedBtn: (count) => `Download (${count})`,
+    enqueuedToast: (count) =>
+      count === 1 ? "1 chapter added to the download queue" : `${count} chapters added to the download queue`,
     communityEyebrow: "Community · AniList + Discord",
     communityTitle: "Community & reviews",
     communityLoading: "Fetching public AniList data…",
@@ -926,16 +1081,62 @@ const EN: Translations = {
       "Share thoughts, ask for features, or report a broken source in the official Discord server.",
     communityDiscordBtn: "Open Discord ↗",
   },
+  reader: {
+    backToSeries: "Back",
+    loading: "Loading chapter pages…",
+    loadErrorTitle: "Could not open chapter",
+    retry: "Retry",
+    offlineBadge: (fmt) => (fmt ? `OFFLINE / LOCAL · ${fmt}` : "OFFLINE / LOCAL"),
+    onlineBadge: (provider) => `ONLINE · ${provider}`,
+    chapterLabel: (num) => `Ch. ${num}`,
+    pageOf: (current, total) => `Page ${current} / ${total}`,
+    prevChapter: "Prev chapter",
+    nextChapter: "Next chapter",
+    prevPage: "Previous page",
+    nextPage: "Next page",
+    modeLabel: "View mode",
+    modeCascade: "Cascade",
+    modeSingle: "Single page",
+    modeDouble: "Double page",
+    directionLabel: "Direction",
+    dirRtl: "Manga (R ← L)",
+    dirLtr: "Western (L → R)",
+    fitLabel: "Fit",
+    fitWidth: "Fit width",
+    fitHeight: "Fit height",
+    fitOriginal: "Original",
+    zoomOut: "Zoom out",
+    zoomIn: "Zoom in",
+    zoomReset: "100%",
+    firstPageSingleLabel: "Single cover in double spread",
+    darkCanvasLabel: "Dark reading canvas",
+    pinHudLabel: "Keep toolbars pinned",
+    fullscreenBtn: "Fullscreen",
+    settingsBtn: "Reader settings",
+    endOfChapterTitle: "End of chapter",
+    endOfChapterSubtitle: "Your progress is saved to the shared SQLite library.",
+    noNextChapter: "No next chapter in this list.",
+    shortcutsHint: "Shortcuts: ← / → or Space to turn pages · F fullscreen · Esc close",
+    touchHint: "Tap sides or swipe to turn pages · Pinch or double-tap to zoom",
+    bookmarkSavedToast: "Bookmark saved",
+  },
   downloads: {
     eyebrow: "Downloads · Offline reading",
     title: "Read anywhere offline.",
     subtitle:
-      "Mangora shares the `mangaDownloads/` folder and supports the exact same four formats as manga-tui.",
+      "Mangora shares `mangaDownloads/` with manga-tui, queues downloads in the background, and reads CBZ, EPUB, PDF, and RAW offline.",
     ribbonLabel: "Supported formats",
     formats: ["CBZ", "EPUB", "PDF", "RAW Images"],
+    formatSelectorLabel: "Default download format",
+    formatDescriptions: {
+      cbz: "Standard comic archive, fast and compatible with almost every reader (Recommended).",
+      pdf: "Portable document ready for sharing or tablet reading.",
+      epub: "E-book container for e-readers.",
+      raw: "Unpacked folder with individual image files.",
+    },
     folderCardTitle: "Shared downloads folder",
     folderCardDesc:
-      "Chapters downloaded from manga-tui or Mangora live together in the same folder.",
+      "Chapters downloaded from manga-tui or Mangora live together in the same local folder.",
     openFolderBtn: "Open downloads folder in Explorer",
     mobileStorageNote:
       "On mobile, downloads are stored in Mangora's private app storage and can be synced with Google Drive in Settings.",
@@ -944,9 +1145,35 @@ const EN: Translations = {
       count === 1
         ? "1 offline series currently detected on disk."
         : `${count} offline series currently detected on disk.`,
-    queuePreviewTitle: "Live queue & offline HD reader (Milestone 3)",
-    queuePreviewDesc:
-      "Milestone 3 adds the real-time download queue and native offline reader for CBZ, EPUB, PDF, and RAW chapters.",
+    queueTitle: "Live download queue",
+    queueEmpty: "No chapters in the queue right now. You can queue downloads from any series page.",
+    pauseAllBtn: "Pause all",
+    resumeAllBtn: "Resume all",
+    retryFailedBtn: "Retry failed",
+    clearFinishedBtn: "Clear finished",
+    cancelAllBtn: "Cancel all",
+    overallProgressLabel: "Overall progress",
+    pagesProgress: (done, total) => `${done}/${total} pages`,
+    statusNames: {
+      queued: "Queued",
+      downloading: "Downloading",
+      packaging: "Packaging",
+      paused: "Paused",
+      completed: "Completed",
+      failed: "Failed",
+      cancelled: "Cancelled",
+    },
+    pauseTaskBtn: "Pause",
+    resumeTaskBtn: "Resume",
+    retryTaskBtn: "Retry",
+    cancelTaskBtn: "Cancel",
+    removeTaskBtn: "Remove",
+    offlineShelfTitle: "Available 100% offline",
+    offlineShelfSubtitle: "Tap any downloaded series to browse local chapters and open the offline reader.",
+    offlineShelfEmpty: "No downloaded chapters found in your local folder yet.",
+    offlineChaptersRead: (read, total) => `${read} / ${total} read`,
+    openOfflineSeriesBtn: "Open series",
+    finishedToast: (title, ch) => `Download ready: ${title} · Ch. ${ch}`,
   },
   settings: {
     eyebrow: "Settings · Preferences",

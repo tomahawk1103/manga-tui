@@ -1,14 +1,28 @@
-import { invoke } from "@tauri-apps/api/core";
+import { convertFileSrc, invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   AniListCommunityInfo,
+  DownloadChapterFinishedEvent,
+  DownloadFormat,
+  DownloadQueueAction,
+  DownloadQueueSnapshot,
+  EnqueueChaptersRequest,
   ForYouResponse,
   InitialAppState,
   LibraryEntry,
   LibraryOverview,
+  OfflineSeriesItem,
   OnboardingPreferencesPayload,
+  OpenReaderChapterRequest,
   ProviderOption,
+  ReaderPrefs,
+  ReaderSessionResponse,
+  SaveReaderProgressPayload,
+  SaveReaderProgressResult,
   SeriesDetailResponse,
   SeriesSelection,
+  SetDownloadFormatResult,
   ThemeMode,
   ToggleChapterReadPayload,
   ToggleChapterReadResult,
@@ -120,6 +134,16 @@ function defaultBrowserState(): InitialAppState {
     favoriteGenres: [],
     onboardingCompleted: false,
     downloadFormat: "cbz",
+    readerPrefs: {
+      viewMode: "cascade",
+      direction: "rtl",
+      fitMode: "fitWidth",
+      zoomPercent: 100,
+      cascadeGapPx: 8,
+      firstPageSingle: true,
+      pinToolbars: false,
+      darkCanvas: true,
+    },
     library: {
       hasExistingData: false,
       libraryMangas: 0,
@@ -459,4 +483,157 @@ export async function getForYouRecommendations(provider?: string): Promise<ForYo
     items: [],
     fallbackPopular: true,
   };
+}
+
+export function buildReaderPageUrl(sessionId: string, pageIndex: number): string {
+  if (isTauriRuntime()) {
+    return convertFileSrc(`page/${sessionId}/${pageIndex}`, "mangora");
+  }
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="900" height="1350" viewBox="0 0 900 1350"><rect width="900" height="1350" fill="#f8f7f1"/><rect x="36" y="36" width="828" height="1278" fill="none" stroke="#191918" stroke-width="8"/><text x="450" y="640" text-anchor="middle" font-family="Arial, sans-serif" font-size="64" font-weight="900" fill="#191918">MANGORA PREVIEW</text><text x="450" y="720" text-anchor="middle" font-family="monospace" font-size="36" fill="#cb3028">${sessionId} · Page ${pageIndex + 1}</text></svg>`;
+  return `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svg)}`;
+}
+
+export async function openReaderChapter(
+  request: OpenReaderChapterRequest,
+): Promise<ReaderSessionResponse> {
+  if (isTauriRuntime()) {
+    return invoke<ReaderSessionResponse>("open_reader_chapter", { request });
+  }
+  return {
+    sessionId: "preview-1",
+    mangaId: request.mangaId,
+    provider: request.provider,
+    providerLabel: request.provider,
+    mangaTitle: request.mangaTitle,
+    coverUrl: request.coverUrl ?? null,
+    chapterId: request.chapterId,
+    chapterTitle: request.chapterTitle ?? "Cap. 1",
+    chapterNumber: request.chapterNumber ?? "1",
+    volumeNumber: request.volumeNumber ?? null,
+    language: request.language ?? "es",
+    pageCount: 3,
+    initialPage: 0,
+    isOffline: false,
+    offlineFormat: null,
+    prevChapter: null,
+    nextChapter: null,
+  };
+}
+
+export async function saveReaderProgress(
+  payload: SaveReaderProgressPayload,
+): Promise<SaveReaderProgressResult> {
+  if (isTauriRuntime()) {
+    return invoke<SaveReaderProgressResult>("save_reader_progress", { payload });
+  }
+  return { pageIndex: payload.pageIndex, isRead: true };
+}
+
+export async function saveReaderPrefs(prefs: ReaderPrefs): Promise<InitialAppState> {
+  if (isTauriRuntime()) {
+    return invoke<InitialAppState>("save_reader_prefs", { prefs });
+  }
+  const current = readBrowserState();
+  return writeBrowserState({ ...current, readerPrefs: prefs });
+}
+
+export async function toggleNativeFullscreen(): Promise<boolean> {
+  if (isTauriRuntime()) {
+    try {
+      const win = getCurrentWindow();
+      const next = !(await win.isFullscreen());
+      await win.setFullscreen(next);
+      return next;
+    } catch {
+      // Fallback to DOM fullscreen if platform disallows native window fullscreen (e.g. mobile)
+    }
+  }
+  if (document.fullscreenElement) {
+    await document.exitFullscreen().catch(() => {});
+    return false;
+  }
+  await document.documentElement.requestFullscreen?.().catch(() => {});
+  return Boolean(document.fullscreenElement);
+}
+
+export async function getDownloadQueueSnapshot(): Promise<DownloadQueueSnapshot> {
+  if (isTauriRuntime()) {
+    return invoke<DownloadQueueSnapshot>("get_download_queue_snapshot");
+  }
+  const state = readBrowserState();
+  return {
+    isPaused: false,
+    isDownloading: false,
+    activeFormat: state.downloadFormat,
+    downloadsDir: state.downloadsDir,
+    queuedCount: 0,
+    downloadingCount: 0,
+    pausedCount: 0,
+    completedCount: 0,
+    failedCount: 0,
+    overallProgressPercent: 0,
+    speedBytesPerSec: 0,
+    items: [],
+  };
+}
+
+export async function enqueueChaptersDownload(
+  payload: EnqueueChaptersRequest,
+): Promise<DownloadQueueSnapshot> {
+  if (isTauriRuntime()) {
+    return invoke<DownloadQueueSnapshot>("enqueue_chapters_download", { payload });
+  }
+  return getDownloadQueueSnapshot();
+}
+
+export async function controlDownloadQueue(
+  action: DownloadQueueAction,
+  taskId?: string,
+): Promise<DownloadQueueSnapshot> {
+  if (isTauriRuntime()) {
+    return invoke<DownloadQueueSnapshot>("control_download_queue", {
+      request: { action, taskId: taskId ?? null },
+    });
+  }
+  return getDownloadQueueSnapshot();
+}
+
+export async function setDownloadFormat(
+  format: DownloadFormat,
+): Promise<SetDownloadFormatResult> {
+  if (isTauriRuntime()) {
+    return invoke<SetDownloadFormatResult>("set_download_format", { format });
+  }
+  const next = writeBrowserState({ ...readBrowserState(), downloadFormat: format });
+  const queue = await getDownloadQueueSnapshot();
+  return { queue, appState: next };
+}
+
+export async function listOfflineLibrary(): Promise<OfflineSeriesItem[]> {
+  if (isTauriRuntime()) {
+    return invoke<OfflineSeriesItem[]>("list_offline_library");
+  }
+  return [];
+}
+
+export async function subscribeDownloadQueue(
+  handler: (snapshot: DownloadQueueSnapshot) => void,
+): Promise<() => void> {
+  if (!isTauriRuntime()) {
+    return () => {};
+  }
+  return listen<DownloadQueueSnapshot>("mangora://download-queue", (event) => {
+    handler(event.payload);
+  });
+}
+
+export async function subscribeDownloadChapterFinished(
+  handler: (event: DownloadChapterFinishedEvent) => void,
+): Promise<() => void> {
+  if (!isTauriRuntime()) {
+    return () => {};
+  }
+  return listen<DownloadChapterFinishedEvent>("mangora://download-chapter-finished", (event) => {
+    handler(event.payload);
+  });
 }

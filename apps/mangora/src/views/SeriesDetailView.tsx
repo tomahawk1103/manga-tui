@@ -5,8 +5,10 @@ import {
   ArrowUpDown,
   BookOpen,
   Check,
+  CheckSquare,
   ChevronLeft,
   ChevronRight,
+  Download,
   ExternalLink,
   HardDrive,
   Heart,
@@ -14,6 +16,7 @@ import {
   MessageSquare,
   RefreshCw,
   Sparkles,
+  Square,
   Star,
   WifiOff,
 } from "lucide-react";
@@ -21,6 +24,9 @@ import { getTranslations } from "../lib/i18n";
 import { getAniListCommunity, getSeriesDetail } from "../lib/tauri";
 import type {
   AniListCommunityInfo,
+  EnqueueChaptersRequest,
+  OpenReaderChapterRequest,
+  ReaderChapterNeighbor,
   SeriesChapterItem,
   SeriesDetailResponse,
   SeriesSelection,
@@ -48,9 +54,13 @@ export interface SeriesDetailViewProps {
   language: UiLanguage;
   isSaving: boolean;
   isFavoriteInLibrary?: boolean;
+  activeDownloadChapterIds?: Set<string>;
+  downloadCompletedTick?: number;
   onBack: () => void;
   onToggleFavorite: (payload: ToggleFavoritePayload) => Promise<void>;
   onToggleChapterRead: (payload: ToggleChapterReadPayload) => Promise<boolean | void>;
+  onOpenReader: (request: OpenReaderChapterRequest) => void;
+  onEnqueueDownload: (payload: EnqueueChaptersRequest) => Promise<void>;
   onNotify: (message: string) => void;
   onOpenExternal: (url: string) => Promise<void>;
 }
@@ -115,9 +125,13 @@ export function SeriesDetailView({
   language,
   isSaving,
   isFavoriteInLibrary,
+  activeDownloadChapterIds,
+  downloadCompletedTick = 0,
   onBack,
   onToggleFavorite,
   onToggleChapterRead,
+  onOpenReader,
+  onEnqueueDownload,
   onNotify,
   onOpenExternal,
 }: SeriesDetailViewProps) {
@@ -133,6 +147,9 @@ export function SeriesDetailView({
   const [page, setPage] = useState(1);
   const [offlineOnly, setOfflineOnly] = useState(false);
   const [togglingChapterId, setTogglingChapterId] = useState<string | null>(null);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedChapterIds, setSelectedChapterIds] = useState<Set<string>>(() => new Set());
+  const [enqueuingDownloads, setEnqueuingDownloads] = useState(false);
   const [coverFailed, setCoverFailed] = useState(false);
 
   const [community, setCommunity] = useState<AniListCommunityInfo | null>(null);
@@ -146,6 +163,8 @@ export function SeriesDetailView({
     setChapterOrder("desc");
     setPage(1);
     setOfflineOnly(false);
+    setSelectionMode(false);
+    setSelectedChapterIds(new Set());
   }, [selection.mangaId, selection.provider]);
 
   const loadSeries = useCallback(async () => {
@@ -191,6 +210,23 @@ export function SeriesDetailView({
       active = false;
     };
   }, [selection, selectedChapterLang, chapterOrder, page]);
+
+  useEffect(() => {
+    if (downloadCompletedTick <= 0) return;
+    let active = true;
+    getSeriesDetail(selection, {
+      language: selectedChapterLang,
+      order: chapterOrder,
+      page,
+    })
+      .then((response) => {
+        if (active) setDetail(response);
+      })
+      .catch(() => {});
+    return () => {
+      active = false;
+    };
+  }, [downloadCompletedTick, selection, selectedChapterLang, chapterOrder, page]);
 
   const communityQueryTitle = detail?.title?.trim() || selection.title.trim();
 
@@ -279,9 +315,70 @@ export function SeriesDetailView({
     }
   };
 
-  const handleOpenReaderClick = () => {
-    onNotify(s.readerComingSoonToast);
+  const handleOpenReaderClick = (chapter: SeriesChapterItem) => {
+    const chaptersContext: ReaderChapterNeighbor[] = (detail?.chapters ?? []).map((item) => ({
+      id: item.id,
+      title: item.title,
+      chapterNumber: item.chapterNumber,
+      volumeNumber: item.volumeNumber,
+      language: item.language || detail?.activeLanguage || "es",
+      isDownloaded: item.isDownloaded,
+    }));
+
+    onOpenReader({
+      mangaId: detail?.id ?? selection.mangaId,
+      provider: detail?.provider ?? selection.provider,
+      mangaTitle: displayTitle,
+      coverUrl: displayCover,
+      chapterId: chapter.id,
+      chapterTitle: chapter.title,
+      chapterNumber: chapter.chapterNumber,
+      volumeNumber: chapter.volumeNumber,
+      language: chapter.language || detail?.activeLanguage || "es",
+      chaptersContext,
+    });
   };
+
+  const enqueueChaptersList = async (chapters: SeriesChapterItem[]) => {
+    if (chapters.length === 0 || enqueuingDownloads) return;
+    setEnqueuingDownloads(true);
+    try {
+      await onEnqueueDownload({
+        mangaId: detail?.id ?? selection.mangaId,
+        provider: detail?.provider ?? selection.provider,
+        mangaTitle: displayTitle,
+        coverUrl: displayCover,
+        chapters: chapters.map((ch) => ({
+          id: ch.id,
+          title: ch.title,
+          chapterNumber: ch.chapterNumber,
+          volumeNumber: ch.volumeNumber,
+          language: ch.language || detail?.activeLanguage || "es",
+          scanlator: ch.scanlator,
+        })),
+      });
+      onNotify(s.enqueuedToast(chapters.length));
+      setSelectionMode(false);
+      setSelectedChapterIds(new Set());
+    } catch (error) {
+      onNotify(error instanceof Error ? error.message : String(error));
+    } finally {
+      setEnqueuingDownloads(false);
+    }
+  };
+
+  const downloadableVisibleChapters = useMemo(
+    () =>
+      visibleChapters.filter(
+        (ch) => ch.isAvailableOnline && !ch.isDownloaded && !activeDownloadChapterIds?.has(ch.id),
+      ),
+    [visibleChapters, activeDownloadChapterIds],
+  );
+
+  const selectedDownloadChapters = useMemo(
+    () => downloadableVisibleChapters.filter((ch) => selectedChapterIds.has(ch.id)),
+    [downloadableVisibleChapters, selectedChapterIds],
+  );
 
   const availableLanguages = detail?.availableLanguages ?? [];
   const activeLanguage = selectedChapterLang ?? detail?.activeLanguage ?? "";
@@ -430,7 +527,7 @@ export function SeriesDetailView({
                     </div>
                     <button
                       type="button"
-                      onClick={handleOpenReaderClick}
+                      onClick={() => handleOpenReaderClick(detail.nextUnreadChapter!)}
                       className="editorial-btn-primary inline-flex min-h-[44px] shrink-0 touch-manipulation items-center justify-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em]"
                     >
                       <BookOpen className="h-4 w-4" aria-hidden="true" />
@@ -565,8 +662,53 @@ export function SeriesDetailView({
                   <span>{offlineOnly ? s.filterOffline : s.filterAll}</span>
                 </button>
               ) : null}
+
+              {!detail.isOfflineFallback && downloadableVisibleChapters.length > 0 ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSelectionMode((prev) => !prev);
+                    setSelectedChapterIds(new Set());
+                  }}
+                  className={`${
+                    selectionMode ? "editorial-btn-primary" : "editorial-btn-secondary"
+                  } inline-flex min-h-[44px] touch-manipulation items-center gap-2 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em]`}
+                >
+                  <CheckSquare className="h-4 w-4" aria-hidden="true" />
+                  <span>{selectionMode ? s.cancelSelectBtn : s.selectChaptersBtn}</span>
+                </button>
+              ) : null}
             </div>
           </div>
+
+          {selectionMode ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-2 border-[var(--ink)] bg-[var(--surface)] p-3">
+              <button
+                type="button"
+                onClick={() => {
+                  if (selectedDownloadChapters.length === downloadableVisibleChapters.length) {
+                    setSelectedChapterIds(new Set());
+                  } else {
+                    setSelectedChapterIds(new Set(downloadableVisibleChapters.map((c) => c.id)));
+                  }
+                }}
+                className="editorial-btn-secondary min-h-[44px] px-3 py-1.5 text-xs font-bold"
+              >
+                <CheckSquare className="h-4 w-4" aria-hidden="true" />
+                <span>{s.selectAllPageBtn}</span>
+              </button>
+
+              <button
+                type="button"
+                disabled={selectedDownloadChapters.length === 0 || enqueuingDownloads}
+                onClick={() => void enqueueChaptersList(selectedDownloadChapters)}
+                className="editorial-btn-primary min-h-[44px] px-4 py-1.5 text-xs font-bold disabled:opacity-40"
+              >
+                <Download className="h-4 w-4" aria-hidden="true" />
+                <span>{s.downloadSelectedBtn(selectedDownloadChapters.length)}</span>
+              </button>
+            </div>
+          ) : null}
 
           {isLoading ? (
             <div className="flex items-center gap-2 py-6 text-xs text-[var(--muted)]">
@@ -586,6 +728,9 @@ export function SeriesDetailView({
             <ul className="divide-y divide-[var(--line)]">
               {visibleChapters.map((chapter) => {
                 const isBusy = togglingChapterId === chapter.id;
+                const isQueued = activeDownloadChapterIds?.has(chapter.id) ?? false;
+                const canDownload = chapter.isAvailableOnline && !chapter.isDownloaded && !detail.id.startsWith("offline::");
+                const isChecked = selectedChapterIds.has(chapter.id);
                 const headingText = chapter.volumeNumber
                   ? `Vol. ${chapter.volumeNumber} · ${s.chapterPrefix} ${chapter.chapterNumber}`
                   : `${s.chapterPrefix} ${chapter.chapterNumber}`;
@@ -597,61 +742,85 @@ export function SeriesDetailView({
                       chapter.isRead ? "opacity-75" : ""
                     }`}
                   >
-                    <div className="min-w-0 flex-1 space-y-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="font-display text-base text-[var(--ink)]">
-                          {headingText}
-                        </span>
-                        {chapter.title ? (
-                          <span className="truncate text-sm text-[var(--ink)]">
-                            — {chapter.title}
-                          </span>
-                        ) : null}
-                      </div>
-
-                      <div className="flex flex-wrap items-center gap-2 font-mono-editorial text-[11px]">
-                        <span
-                          className={`inline-flex items-center gap-1 border px-2 py-0.5 font-bold uppercase tracking-[0.08em] ${
-                            chapter.isRead
-                              ? "border-[var(--ink)] bg-[var(--surface)] text-[var(--ink)]"
-                              : "border-[var(--red)] bg-[var(--red)] text-white"
-                          }`}
+                    <div className="flex min-w-0 flex-1 items-start gap-3">
+                      {selectionMode && canDownload && !isQueued ? (
+                        <button
+                          type="button"
+                          aria-pressed={isChecked}
+                          onClick={() =>
+                            setSelectedChapterIds((prev) => {
+                              const next = new Set(prev);
+                              if (next.has(chapter.id)) next.delete(chapter.id);
+                              else next.add(chapter.id);
+                              return next;
+                            })
+                          }
+                          className="mt-0.5 inline-flex min-h-[44px] min-w-[44px] shrink-0 cursor-pointer items-center justify-center border-2 border-[var(--ink)] bg-[var(--paper)] text-[var(--ink)]"
                         >
-                          {chapter.isRead ? (
-                            <Check className="h-3 w-3" aria-hidden="true" />
+                          {isChecked ? (
+                            <CheckSquare className="h-4 w-4 text-[var(--red-text)]" aria-hidden="true" />
+                          ) : (
+                            <Square className="h-4 w-4" aria-hidden="true" />
+                          )}
+                        </button>
+                      ) : null}
+
+                      <div className="min-w-0 flex-1 space-y-1">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <span className="font-display text-base text-[var(--ink)]">
+                            {headingText}
+                          </span>
+                          {chapter.title ? (
+                            <span className="truncate text-sm text-[var(--ink)]">
+                              — {chapter.title}
+                            </span>
                           ) : null}
-                          {chapter.isRead ? s.statusRead : s.statusUnread}
-                        </span>
+                        </div>
 
-                        {chapter.isDownloaded ? (
-                          <span className="inline-flex items-center gap-1 border border-[var(--ink)] bg-[var(--ink)] px-2 py-0.5 font-bold uppercase tracking-[0.06em] text-[var(--paper)]">
-                            <HardDrive className="h-3 w-3" aria-hidden="true" />
-                            {s.statusOffline}
-                            {chapter.offlineFormat ? ` · ${chapter.offlineFormat}` : ""}
+                        <div className="flex flex-wrap items-center gap-2 font-mono-editorial text-[11px]">
+                          <span
+                            className={`inline-flex items-center gap-1 border px-2 py-0.5 font-bold uppercase tracking-[0.08em] ${
+                              chapter.isRead
+                                ? "border-[var(--ink)] bg-[var(--surface)] text-[var(--ink)]"
+                                : "border-[var(--red)] bg-[var(--red)] text-white"
+                            }`}
+                          >
+                            {chapter.isRead ? (
+                              <Check className="h-3 w-3" aria-hidden="true" />
+                            ) : null}
+                            {chapter.isRead ? s.statusRead : s.statusUnread}
                           </span>
-                        ) : chapter.isAvailableOnline ? (
-                          <span className="border border-[var(--line)] px-2 py-0.5 font-medium text-[var(--muted)]">
-                            {s.statusOnline}
-                          </span>
-                        ) : null}
 
-                        {chapter.isBookmarked && chapter.bookmarkedPage !== null ? (
-                          <span className="border border-[var(--red)] px-2 py-0.5 font-bold text-[var(--red-text)]">
-                            p.{chapter.bookmarkedPage}
-                          </span>
-                        ) : null}
+                          {chapter.isDownloaded ? (
+                            <span className="inline-flex items-center gap-1 border border-[var(--ink)] bg-[var(--ink)] px-2 py-0.5 font-bold uppercase tracking-[0.06em] text-[var(--paper)]">
+                              <HardDrive className="h-3 w-3" aria-hidden="true" />
+                              {s.statusOffline}
+                              {chapter.offlineFormat ? ` · ${chapter.offlineFormat}` : ""}
+                            </span>
+                          ) : chapter.isAvailableOnline ? (
+                            <span className="border border-[var(--line)] px-2 py-0.5 font-medium text-[var(--muted)]">
+                              {s.statusOnline}
+                            </span>
+                          ) : null}
 
-                        {chapter.scanlator ? (
-                          <span className="truncate text-[var(--muted)]">
-                            {chapter.scanlator}
-                          </span>
-                        ) : null}
+                          {chapter.isBookmarked && chapter.bookmarkedPage !== null ? (
+                            <span className="border border-[var(--red)] px-2 py-0.5 font-bold text-[var(--red-text)]">
+                              p.{chapter.bookmarkedPage + 1}
+                            </span>
+                          ) : null}
 
-                        {chapter.publicationDate ? (
-                          <span className="text-[var(--muted)]">
-                            {chapter.publicationDate}
-                          </span>
-                        ) : null}
+                          {chapter.scanlator ? (
+                            <span className="truncate text-[var(--muted)]">
+                              {chapter.scanlator}
+                            </span>
+                          ) : null}
+
+                          {chapter.publicationDate ? (
+                            <span className="text-[var(--muted)]">
+                              {chapter.publicationDate}
+                            </span>
+                          ) : null}
+                        </div>
                       </div>
                     </div>
 
@@ -668,9 +837,21 @@ export function SeriesDetailView({
                         </span>
                       </button>
 
+                      {canDownload ? (
+                        <button
+                          type="button"
+                          disabled={isQueued || enqueuingDownloads}
+                          onClick={() => void enqueueChaptersList([chapter])}
+                          className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] disabled:opacity-50"
+                        >
+                          <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                          <span>{isQueued ? s.downloadingBtn : s.downloadBtn}</span>
+                        </button>
+                      ) : null}
+
                       <button
                         type="button"
-                        onClick={handleOpenReaderClick}
+                        onClick={() => handleOpenReaderClick(chapter)}
                         className="editorial-btn-primary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.08em]"
                       >
                         <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />

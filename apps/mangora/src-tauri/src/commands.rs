@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use manga_core::SearchTerm;
 use manga_core::backend::database::{Database, MangaReadingHistoryRetrieve, RetrieveBookmark, extract_normalized_chapter_number};
+use manga_core::backend::download_queue::ManagedDownloadQueue;
 use manga_core::backend::manga_provider::{
     Chapter, ChapterFilters, ChapterOrderBy, Languages, Manga, MangaProviders, MangaStatus, Pagination,
 };
@@ -17,9 +18,17 @@ use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
 use crate::anilist::{AniListCommunityInfo, fetch_anilist_community};
+use crate::downloads::{
+    DownloadQueueControlRequest, DownloadQueueSnapshotDto, EnqueueChaptersRequest, OfflineSeriesItemDto, SetDownloadFormatResult,
+    apply_queue_control, enqueue_chapters, map_queue_snapshot, parse_download_type, scan_offline_series,
+};
+use crate::reader::{
+    OpenReaderChapterRequest, ReaderSessionResponse, ReaderSessionStore, SaveReaderProgressPayload, SaveReaderProgressResult,
+    resolve_and_open_chapter, save_progress_in_db,
+};
 use crate::state::{
-    AppState, InitialAppState, LibraryOverview, OnboardingPreferencesPayload, ToggleChapterReadPayload, ToggleChapterReadResult,
-    ToggleFavoritePayload, ToggleFavoriteResult,
+    AppState, InitialAppState, LibraryOverview, OnboardingPreferencesPayload, ReaderPrefs, ToggleChapterReadPayload,
+    ToggleChapterReadResult, ToggleFavoritePayload, ToggleFavoriteResult,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -150,11 +159,16 @@ pub async fn search_catalog(provider: String, query: String, page: u32) -> Resul
 
 #[tauri::command]
 pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetailRequest) -> Result<SeriesDetailResponse, String> {
-    let provider = MangaProviders::from_str(request.provider.trim()).map_err(|_| "Unknown catalog source")?;
     let manga_id = request.manga_id.trim().to_string();
     if manga_id.is_empty() {
         return Err("Missing manga identifier".into());
     }
+    let is_offline_only = manga_id.starts_with("offline::");
+    let provider = match MangaProviders::from_str(request.provider.trim()) {
+        Ok(p) => p,
+        Err(_) if is_offline_only => MangaProviders::default(),
+        Err(_) => return Err("Unknown catalog source".into()),
+    };
 
     let page = request.page.unwrap_or(1);
     const CHAPTERS_PER_PAGE: u32 = 50;
@@ -172,14 +186,19 @@ pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetail
         .and_then(Languages::from_str_lenient);
     let mut active_lang = requested_lang.unwrap_or(default_chapter_lang);
 
-    let manga_result = tokio::time::timeout(Duration::from_secs(15), get_manga_by_id_for_provider(provider, &manga_id))
-        .await
-        .map_err(|_| "Series metadata request timed out".to_string())
-        .and_then(|res| res.map_err(|e| e.to_string()));
+    let (manga_result, mut chapters_result) = if is_offline_only {
+        (Err("Offline-only archive".to_string()), Err("Offline-only archive".to_string()))
+    } else {
+        let meta = tokio::time::timeout(Duration::from_secs(15), get_manga_by_id_for_provider(provider, &manga_id))
+            .await
+            .map_err(|_| "Series metadata request timed out".to_string())
+            .and_then(|res| res.map_err(|e| e.to_string()));
+        let chs = fetch_chapters_page(provider, &manga_id, active_lang, order, page, CHAPTERS_PER_PAGE).await;
+        (meta, chs)
+    };
 
-    let mut chapters_result = fetch_chapters_page(provider, &manga_id, active_lang, order, page, CHAPTERS_PER_PAGE).await;
-
-    if request.language.is_none()
+    if !is_offline_only
+        && request.language.is_none()
         && provider == MangaProviders::Mangadex
         && chapters_result.as_ref().is_ok_and(|res| res.chapters.is_empty())
     {
@@ -194,11 +213,15 @@ pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetail
         }
     }
 
-    let online_warning = match (&manga_result, &chapters_result) {
-        (Err(e1), Err(e2)) => Some(format!("{e1}; {e2}")),
-        (Ok(_), Err(e)) => Some(e.clone()),
-        (Err(e), Ok(_)) if request.fallback_title.as_deref().map(str::trim).is_some_and(|t| !t.is_empty()) => Some(e.clone()),
-        _ => None,
+    let online_warning = if is_offline_only {
+        None
+    } else {
+        match (&manga_result, &chapters_result) {
+            (Err(e1), Err(e2)) => Some(format!("{e1}; {e2}")),
+            (Ok(_), Err(e)) => Some(e.clone()),
+            (Err(e), Ok(_)) if request.fallback_title.as_deref().map(str::trim).is_some_and(|t| !t.is_empty()) => Some(e.clone()),
+            _ => None,
+        }
     };
 
     let manga_meta: Option<Manga> = manga_result.ok();
@@ -753,6 +776,68 @@ pub fn set_favorite_genres(state: State<'_, AppState>, genres: Vec<String>) -> R
 #[tauri::command]
 pub fn set_onboarding_completed(state: State<'_, AppState>, completed: bool) -> Result<InitialAppState, String> {
     state.set_onboarding_completed(completed)
+}
+
+#[tauri::command]
+pub async fn open_reader_chapter(
+    state: State<'_, AppState>,
+    reader_store: State<'_, ReaderSessionStore>,
+    request: OpenReaderChapterRequest,
+) -> Result<ReaderSessionResponse, String> {
+    resolve_and_open_chapter(&state, &reader_store, request).await
+}
+
+#[tauri::command]
+pub fn save_reader_progress(
+    state: State<'_, AppState>,
+    payload: SaveReaderProgressPayload,
+) -> Result<SaveReaderProgressResult, String> {
+    save_progress_in_db(&state, payload)
+}
+
+#[tauri::command]
+pub fn save_reader_prefs(state: State<'_, AppState>, prefs: ReaderPrefs) -> Result<InitialAppState, String> {
+    state.save_reader_prefs(prefs)
+}
+
+#[tauri::command]
+pub fn get_download_queue_snapshot(queue: State<'_, ManagedDownloadQueue>) -> Result<DownloadQueueSnapshotDto, String> {
+    Ok(map_queue_snapshot(queue.snapshot()))
+}
+
+#[tauri::command]
+pub fn enqueue_chapters_download(
+    queue: State<'_, ManagedDownloadQueue>,
+    payload: EnqueueChaptersRequest,
+) -> Result<DownloadQueueSnapshotDto, String> {
+    enqueue_chapters(&queue, payload)
+}
+
+#[tauri::command]
+pub fn control_download_queue(
+    queue: State<'_, ManagedDownloadQueue>,
+    request: DownloadQueueControlRequest,
+) -> Result<DownloadQueueSnapshotDto, String> {
+    apply_queue_control(&queue, request)
+}
+
+#[tauri::command]
+pub fn set_download_format(
+    state: State<'_, AppState>,
+    queue: State<'_, ManagedDownloadQueue>,
+    format: String,
+) -> Result<SetDownloadFormatResult, String> {
+    let parsed = parse_download_type(&format)?;
+    let updated_queue = queue.set_active_format(parsed)?;
+    Ok(SetDownloadFormatResult {
+        queue: map_queue_snapshot(updated_queue),
+        app_state: state.snapshot()?,
+    })
+}
+
+#[tauri::command]
+pub fn list_offline_library(state: State<'_, AppState>) -> Result<Vec<OfflineSeriesItemDto>, String> {
+    scan_offline_series(&state)
 }
 
 fn validate_external_https_url(url: &str) -> Result<&str, String> {

@@ -5,23 +5,38 @@ import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { getTranslations } from "./lib/i18n";
 import {
+  controlDownloadQueue,
+  enqueueChaptersDownload,
+  getDownloadQueueSnapshot,
   getInitialState,
   getLibraryOverview,
+  listOfflineLibrary,
   openDataFolder,
   openDownloadsFolder,
   openExternalUrl,
   saveOnboardingPreferences,
+  saveReaderPrefs,
   setDefaultProvider,
+  setDownloadFormat,
   setFavoriteGenres,
   setThemeMode,
   setUiLanguage,
+  subscribeDownloadChapterFinished,
+  subscribeDownloadQueue,
   toggleChapterRead,
   toggleLibraryFavorite,
 } from "./lib/tauri";
 import {
+  type DownloadFormat,
+  type DownloadQueueAction,
+  type DownloadQueueSnapshot,
+  type EnqueueChaptersRequest,
   type InitialAppState,
   type LibraryOverview,
   type NavSection,
+  type OfflineSeriesItem,
+  type OpenReaderChapterRequest,
+  type ReaderPrefs,
   type SeriesSelection,
   type ThemeMode,
   type ToggleChapterReadPayload,
@@ -31,6 +46,7 @@ import {
 import { DownloadsView } from "./views/DownloadsView";
 import { ExploreView } from "./views/ExploreView";
 import { HomeView } from "./views/HomeView";
+import { ReaderView } from "./views/ReaderView";
 import { SeriesDetailView } from "./views/SeriesDetailView";
 import { SettingsView } from "./views/SettingsView";
 import { SupportView } from "./views/SupportView";
@@ -41,12 +57,18 @@ export function App() {
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [activeSection, setActiveSection] = useState<NavSection>("home");
   const [selectedSeries, setSelectedSeries] = useState<SeriesSelection | null>(null);
+  const [readerTarget, setReaderTarget] = useState<OpenReaderChapterRequest | null>(null);
+  const [downloadQueue, setDownloadQueue] = useState<DownloadQueueSnapshot | null>(null);
+  const [offlineSeries, setOfflineSeries] = useState<OfflineSeriesItem[]>([]);
+  const [offlineLoading, setOfflineLoading] = useState(false);
+  const [downloadCompletedTick, setDownloadCompletedTick] = useState(0);
   const [navigationTarget, setNavigationTarget] = useState<"genres" | "search" | null>(null);
   const [replayOnboarding, setReplayOnboarding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
+  const uiLangRef = useRef<"es" | "en">("es");
 
   const loadLibrary = useCallback(async (search?: string) => {
     setLibraryLoading(true);
@@ -60,6 +82,18 @@ export function App() {
     }
   }, []);
 
+  const loadOfflineSeries = useCallback(async () => {
+    setOfflineLoading(true);
+    try {
+      const list = await listOfflineLibrary();
+      setOfflineSeries(list);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setOfflineLoading(false);
+    }
+  }, []);
+
   const loadInitial = useCallback(async () => {
     setErrorMessage(null);
     try {
@@ -68,6 +102,7 @@ export function App() {
         getLibraryOverview().catch(() => null),
       ]);
       setAppState(next);
+      uiLangRef.current = next.uiLanguage;
       if (overview) {
         setLibraryOverview(overview);
       }
@@ -84,7 +119,53 @@ export function App() {
     if (appState?.onboardingCompleted && activeSection === "home") {
       void loadLibrary();
     }
-  }, [activeSection, appState?.onboardingCompleted, loadLibrary]);
+    if (appState?.onboardingCompleted && activeSection === "downloads") {
+      void getDownloadQueueSnapshot().then(setDownloadQueue).catch(() => {});
+      void loadOfflineSeries();
+    }
+  }, [activeSection, appState?.onboardingCompleted, loadLibrary, loadOfflineSeries]);
+
+  const showToast = useCallback((message: string) => {
+    setToastMessage(message);
+    window.setTimeout(() => {
+      setToastMessage((prev) => (prev === message ? null : prev));
+    }, 2200);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let unlistenQueue: (() => void) | undefined;
+    let unlistenDone: (() => void) | undefined;
+
+    void getDownloadQueueSnapshot().then((snap) => {
+      if (active) setDownloadQueue(snap);
+    });
+
+    void subscribeDownloadQueue((snap) => {
+      if (active) setDownloadQueue(snap);
+    }).then((fn) => {
+      if (active) unlistenQueue = fn;
+      else fn();
+    });
+
+    void subscribeDownloadChapterFinished((event) => {
+      if (!active) return;
+      setDownloadCompletedTick((prev) => prev + 1);
+      const copy = getTranslations(uiLangRef.current).downloads;
+      showToast(copy.finishedToast(event.mangaTitle, event.chapterNumber));
+      void loadInitial();
+      void loadOfflineSeries();
+    }).then((fn) => {
+      if (active) unlistenDone = fn;
+      else fn();
+    });
+
+    return () => {
+      active = false;
+      unlistenQueue?.();
+      unlistenDone?.();
+    };
+  }, [loadInitial, loadOfflineSeries, showToast]);
 
   const favoriteKeys = useMemo(() => {
     const keys = new Set<string>();
@@ -103,6 +184,7 @@ export function App() {
 
   useEffect(() => {
     if (!appState) return;
+    uiLangRef.current = appState.uiLanguage;
     document.documentElement.dataset.theme = appState.themeMode;
     document.documentElement.lang = appState.uiLanguage;
     const themeColorMeta = document.querySelector('meta[name="theme-color"]');
@@ -111,12 +193,31 @@ export function App() {
     }
   }, [appState]);
 
-  const showToast = useCallback((message: string) => {
-    setToastMessage(message);
-    window.setTimeout(() => {
-      setToastMessage((prev) => (prev === message ? null : prev));
-    }, 2200);
-  }, []);
+  const activeDownloadCount = useMemo(() => {
+    if (!downloadQueue) return 0;
+    return (
+      downloadQueue.queuedCount +
+      downloadQueue.downloadingCount +
+      downloadQueue.pausedCount
+    );
+  }, [downloadQueue]);
+
+  const activeDownloadChapterIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!downloadQueue || !selectedSeries) return ids;
+    for (const item of downloadQueue.items) {
+      if (
+        item.mangaId === selectedSeries.mangaId &&
+        (item.status === "queued" ||
+          item.status === "downloading" ||
+          item.status === "packaging" ||
+          item.status === "paused")
+      ) {
+        ids.add(item.chapterId);
+      }
+    }
+    return ids;
+  }, [downloadQueue, selectedSeries]);
 
   const runMutation = async (action: () => Promise<InitialAppState>, announceSave = false) => {
     setIsSaving(true);
@@ -162,6 +263,50 @@ export function App() {
     setErrorMessage(null);
     setSelectedSeries(series);
     mainRef.current?.scrollTo({ top: 0 });
+  };
+
+  const handleEnqueueDownload = async (payload: EnqueueChaptersRequest) => {
+    const snapshot = await enqueueChaptersDownload(payload);
+    setDownloadQueue(snapshot);
+  };
+
+  const handleControlQueue = async (action: DownloadQueueAction, taskId?: string) => {
+    try {
+      const snapshot = await controlDownloadQueue(action, taskId);
+      setDownloadQueue(snapshot);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleChangeDownloadFormat = async (format: DownloadFormat) => {
+    setIsSaving(true);
+    setErrorMessage(null);
+    try {
+      const res = await setDownloadFormat(format);
+      setDownloadQueue(res.queue);
+      setAppState(res.appState);
+      showToast(getTranslations(res.appState.uiLanguage).settings.savedToast);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleUpdateReaderPrefs = async (prefs: ReaderPrefs) => {
+    try {
+      const next = await saveReaderPrefs(prefs);
+      setAppState(next);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
+
+  const handleCloseReader = async () => {
+    setReaderTarget(null);
+    setDownloadCompletedTick((prev) => prev + 1);
+    await Promise.all([loadInitial(), loadLibrary()]);
   };
 
   if (!appState) {
@@ -241,6 +386,7 @@ export function App() {
         onToggleTheme={() => void runMutation(() => setThemeMode(nextTheme), true)}
         uiLanguage={appState.uiLanguage}
         appVersion={appState.appVersion}
+        activeDownloadCount={activeDownloadCount}
       />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -273,9 +419,13 @@ export function App() {
                 isFavoriteInLibrary={favoriteKeys.has(
                   libraryKey(selectedSeries.mangaId, selectedSeries.provider),
                 )}
+                activeDownloadChapterIds={activeDownloadChapterIds}
+                downloadCompletedTick={downloadCompletedTick}
                 onBack={() => setSelectedSeries(null)}
                 onToggleFavorite={handleToggleFavorite}
                 onToggleChapterRead={handleToggleChapterRead}
+                onOpenReader={(req) => setReaderTarget(req)}
+                onEnqueueDownload={handleEnqueueDownload}
                 onNotify={showToast}
                 onOpenExternal={async (url) => {
                   try {
@@ -331,6 +481,10 @@ export function App() {
                 {activeSection === "downloads" && (
                   <DownloadsView
                     appState={appState}
+                    queue={downloadQueue}
+                    offlineSeries={offlineSeries}
+                    offlineLoading={offlineLoading}
+                    isMutating={isSaving}
                     onOpenDownloadsFolder={async () => {
                       try {
                         await openDownloadsFolder();
@@ -338,6 +492,10 @@ export function App() {
                         setErrorMessage(err instanceof Error ? err.message : String(err));
                       }
                     }}
+                    onChangeDownloadFormat={handleChangeDownloadFormat}
+                    onControlQueue={handleControlQueue}
+                    onRefreshOffline={loadOfflineSeries}
+                    onOpenSeries={openSeries}
                   />
                 )}
 
@@ -387,14 +545,26 @@ export function App() {
           activeSection={activeSection}
           onSelectSection={navigate}
           uiLanguage={appState.uiLanguage}
+          activeDownloadCount={activeDownloadCount}
         />
       </div>
+
+      {readerTarget && (
+        <ReaderView
+          request={readerTarget}
+          language={appState.uiLanguage}
+          initialPrefs={appState.readerPrefs}
+          onUpdatePrefs={handleUpdateReaderPrefs}
+          onClose={handleCloseReader}
+          onNotify={showToast}
+        />
+      )}
 
       {toastMessage && (
         <div
           role="status"
           aria-live="polite"
-          className="ink-bar fixed right-4 bottom-20 border-2 border-[var(--ink)] px-4 py-2 text-xs font-bold shadow-[4px_4px_0_var(--red)] md:right-6 md:bottom-5"
+          className="ink-bar fixed right-4 bottom-20 z-[60] border-2 border-[var(--ink)] px-4 py-2 text-xs font-bold shadow-[4px_4px_0_var(--red)] md:right-6 md:bottom-5"
         >
           ✓ {toastMessage}
         </div>

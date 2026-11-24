@@ -6,9 +6,15 @@ interface BottomNavProps {
   activeSection: NavSection;
   onSelectSection: (section: NavSection) => void;
   uiLanguage: UiLanguage;
+  activeDownloadCount?: number;
 }
 
-export function BottomNav({ activeSection, onSelectSection, uiLanguage }: BottomNavProps) {
+export function BottomNav({
+  activeSection,
+  onSelectSection,
+  uiLanguage,
+  activeDownloadCount = 0,
+}: BottomNavProps) {
   const t = getTranslations(uiLanguage);
 
   const items: Array<{ id: NavSection; label: string; icon: typeof BookOpen }> = [
@@ -42,7 +48,14 @@ export function BottomNav({ activeSection, onSelectSection, uiLanguage }: Bottom
                 : "border-t-transparent bg-transparent text-[var(--ink)] hover:bg-[var(--paper)]"
             }`}
           >
-            <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+            <div className="relative">
+              <Icon className="h-4 w-4 shrink-0" aria-hidden="true" />
+              {item.id === "downloads" && activeDownloadCount > 0 ? (
+                <span className="absolute -top-1.5 -right-2.5 min-w-[16px] bg-[var(--red)] px-1 text-center font-mono-editorial text-[9px] font-bold text-white">
+                  {activeDownloadCount}
+                </span>
+              ) : null}
+            </div>
             <span className="max-w-full truncate font-mono-editorial text-[10px] uppercase tracking-tight">
               {item.label}
             </span>

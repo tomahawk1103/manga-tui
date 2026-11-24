@@ -4,6 +4,25 @@ export type UiLanguage = "es" | "en";
 
 export type NavSection = "home" | "explore" | "downloads" | "settings" | "support";
 
+export type ReaderViewMode = "cascade" | "single" | "double";
+
+export type ReadingDirection = "rtl" | "ltr";
+
+export type PageFitMode = "fitWidth" | "fitHeight" | "original";
+
+export type DownloadFormat = "cbz" | "pdf" | "epub" | "raw";
+
+export interface ReaderPrefs {
+  viewMode: ReaderViewMode;
+  direction: ReadingDirection;
+  fitMode: PageFitMode;
+  zoomPercent: number;
+  cascadeGapPx: number;
+  firstPageSingle: boolean;
+  pinToolbars: boolean;
+  darkCanvas: boolean;
+}
+
 export interface LibraryDetection {
   hasExistingData: boolean;
   libraryMangas: number;
@@ -40,7 +59,8 @@ export interface InitialAppState {
   availableProviders: ProviderOption[];
   favoriteGenres: string[];
   onboardingCompleted: boolean;
-  downloadFormat?: string;
+  downloadFormat: DownloadFormat;
+  readerPrefs: ReaderPrefs;
   library: LibraryDetection;
 }
 
@@ -201,6 +221,171 @@ export interface ForYouResponse {
     languages: string[];
   }>;
   fallbackPopular: boolean;
+}
+
+export interface ReaderChapterNeighbor {
+  id: string;
+  title: string;
+  chapterNumber: string;
+  volumeNumber: string | null;
+  language: string;
+  isDownloaded: boolean;
+}
+
+export interface OpenReaderChapterRequest {
+  mangaId: string;
+  provider: string;
+  mangaTitle: string;
+  coverUrl?: string | null;
+  chapterId: string;
+  chapterTitle?: string | null;
+  chapterNumber?: string | null;
+  volumeNumber?: string | null;
+  language?: string | null;
+  chaptersContext?: ReaderChapterNeighbor[];
+}
+
+export interface ReaderSessionResponse {
+  sessionId: string;
+  mangaId: string;
+  provider: string;
+  providerLabel: string;
+  mangaTitle: string;
+  coverUrl: string | null;
+  chapterId: string;
+  chapterTitle: string;
+  chapterNumber: string;
+  volumeNumber: string | null;
+  language: string;
+  pageCount: number;
+  initialPage: number;
+  isOffline: boolean;
+  offlineFormat: string | null;
+  prevChapter: ReaderChapterNeighbor | null;
+  nextChapter: ReaderChapterNeighbor | null;
+}
+
+export interface SaveReaderProgressPayload {
+  mangaId: string;
+  provider: string;
+  mangaTitle: string;
+  coverUrl?: string | null;
+  chapterId: string;
+  chapterTitle: string;
+  language: string;
+  pageIndex: number;
+  totalPages?: number;
+}
+
+export interface SaveReaderProgressResult {
+  pageIndex: number;
+  isRead: boolean;
+}
+
+export type DownloadTaskStatus =
+  | "queued"
+  | "downloading"
+  | "packaging"
+  | "paused"
+  | "completed"
+  | "failed"
+  | "cancelled";
+
+export interface DownloadTaskItem {
+  taskId: string;
+  mangaId: string;
+  mangaTitle: string;
+  mangaCoverUrl: string | null;
+  provider: string;
+  providerLabel: string;
+  language: string;
+  chapterId: string;
+  chapterTitle: string;
+  chapterNumber: string;
+  volumeNumber: string | null;
+  format: string;
+  status: DownloadTaskStatus;
+  progressPercent: number;
+  pagesDownloaded: number;
+  totalPages: number;
+  bytesDownloaded: number;
+  speedBytesPerSec: number;
+  errorMessage: string | null;
+  outputPath: string | null;
+}
+
+export interface DownloadQueueSnapshot {
+  isPaused: boolean;
+  isDownloading: boolean;
+  activeFormat: DownloadFormat;
+  downloadsDir: string;
+  queuedCount: number;
+  downloadingCount: number;
+  pausedCount: number;
+  completedCount: number;
+  failedCount: number;
+  overallProgressPercent: number;
+  speedBytesPerSec: number;
+  items: DownloadTaskItem[];
+}
+
+export interface DownloadChapterFinishedEvent {
+  taskId: string;
+  mangaId: string;
+  mangaTitle: string;
+  chapterId: string;
+  chapterNumber: string;
+  format: string;
+  outputPath: string | null;
+}
+
+export interface EnqueueChapterInput {
+  id: string;
+  title: string;
+  chapterNumber: string;
+  volumeNumber?: string | null;
+  language: string;
+  scanlator?: string | null;
+}
+
+export interface EnqueueChaptersRequest {
+  mangaId: string;
+  provider: string;
+  mangaTitle: string;
+  coverUrl?: string | null;
+  formatOverride?: DownloadFormat;
+  chapters: EnqueueChapterInput[];
+}
+
+export type DownloadQueueAction =
+  | "pauseAll"
+  | "resumeAll"
+  | "cancelAll"
+  | "retryAllFailed"
+  | "clearFinished"
+  | "pauseTask"
+  | "resumeTask"
+  | "cancelTask"
+  | "retryTask"
+  | "removeTask";
+
+export interface SetDownloadFormatResult {
+  queue: DownloadQueueSnapshot;
+  appState: InitialAppState;
+}
+
+export interface OfflineSeriesItem {
+  mangaId: string;
+  title: string;
+  provider: string;
+  providerLabel: string;
+  isOfflineOnly: boolean;
+  chapterCount: number;
+  readCount: number;
+  formats: string[];
+  totalSizeBytes: number;
+  totalSizeLabel: string;
+  coverUrl: string | null;
 }
 
 export function libraryKey(mangaId: string, provider: string): string {

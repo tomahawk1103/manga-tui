@@ -14,7 +14,7 @@ flowchart LR
     Base["Base Actual<br/>crates/manga-core + docs/index.html"]
     H1["Hito 1<br/>Tauri v2 + Diseño Editorial + Onboarding<br/>En validación"]
     H2["Hito 2<br/>Explorar + Biblioteca + Ficha AniList<br/>En validación"]
-    H3["Hito 3<br/>Lector HD Nativo + Descargas Offline<br/>En curso"]
+    H3["Hito 3<br/>Lector HD Nativo + Descargas Offline<br/>En validación"]
     H4["Hito 4<br/>Ajustes + Buzón + Monster 2€ + Escritorio/Android/iOS<br/>⏳ Pendiente"]
     H5["Hito 5 (v1.1+)<br/>Personalización Visual + Métricas Locales<br/>Integración pendiente"]
 
@@ -25,7 +25,7 @@ flowchart LR
 | :--- | :--- | :--- |
 | **Hito 1** | En validación | Scaffold Tauri v2 multiplataforma en `apps/mangora/`, sistema de diseño editorial (`docs/index.html`), shell móvil (`BottomNav` + *safe areas*) y Onboarding |
 | **Hito 2** | En validación | Explorar/Buscar con portadas HD y bloque *"Para ti"*, Biblioteca compartida SQLite y Ficha de serie completa con capítulos, AniList y Discord |
-| **Hito 3** | En curso | Lector HD nativo táctil y de escritorio (online + 100 % offline en CBZ/RAW/EPUB/PDF) y gestor de cola de descargas en tiempo real |
+| **Hito 3** | En validación | Lector HD nativo táctil y de escritorio (online + 100 % offline en CBZ/RAW/EPUB/PDF) y gestor de cola de descargas en tiempo real |
 | **Hito 4** | ⏳ Pendiente | Ajustes simples (Drive/AniList/MAL con *deep links* en móvil), Buzón seguro, *"¿Me invitas a un Monster? ⚡ 2 €"* y empaquetado Windows/Android/iOS |
 | **Hito 5 (v1.1+)** | Módulos en `MANGORA`, integración pendiente | Personalización visual avanzada de temas/tarjetas y métricas locales ampliadas del lector |
 
@@ -40,7 +40,8 @@ El trabajo de Mangora está reunido en `manga-tui/`, rama `MANGORA`. La aplicaci
 | Base y navegación | Proyecto Tauri v2 multiplataforma (escritorio + base Android/iOS) con React, TypeScript, Vite (`TAURI_DEV_HOST`) y Tailwind; `Sidebar` en escritorio y `BottomNav` táctil en móvil con `viewport-fit=cover`, `safe-area-inset-*`, `h-dvh`, objetivos `>= 44px` y temas Papel/Tinta. | Validar la ventana nativa en Windows y ejecutar `tauri android init` / `tauri ios init` con los SDKs de cada plataforma. |
 | Primer inicio | Selección de idioma, géneros y proveedor recomendado; detección de biblioteca previa; tour que se puede repetir desde Ajustes. Un fallo al guardar muestra el error y permite reintentar. | Validación manual completa en la app nativa. |
 | Explorar | Búsqueda por título en el proveedor activo (`search_catalog` + `multi_provider`), bloque *«Para ti según tus gustos»* (`get_for_you_recommendations`), portadas HD, paginación, filtros por idioma/género en resultados visibles, favorito en 1 clic (`toggle_library_favorite`) y apertura directa de la Ficha de serie. | Validación en red real contra proveedores activos y filtros aplicados a todo el catálogo remoto. |
-| Biblioteca y ficha de serie | Biblioteca visual interactiva conectada a `history/manga-tui-history.db` (`get_library_overview`, `toggle_library_favorite`) con pestañas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente**, y **Ficha de serie completa** (`SeriesDetailView`, `get_series_detail`, `toggle_chapter_read`, `get_anilist_community`) abierta desde Inicio y Explorar con capítulos online/offline, marcación leído/pendiente en SQLite, reseñas/etiquetas públicas de AniList y enlace a Discord. | Validación manual con red real, Lector HD nativo dentro de Mangora (el botón de capítulo enlaza de momento un aviso hacia Hito 3) y controles de cola en Descargas. |
+| Biblioteca y ficha de serie | Biblioteca visual interactiva conectada a `history/manga-tui-history.db` (`get_library_overview`, `toggle_library_favorite`) con pestañas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente**, **Ficha de serie completa** (`SeriesDetailView`) con capítulos online/offline, selección múltiple de descargas y **Lector HD nativo** (`ReaderView` + protocolo `mangora://`: Cascada, Página única, Doble página, RTL/LTR, zoom/gestos táctiles, marcadores SQLite y lectura local CBZ/RAW/EPUB/PDF). | Validación manual con red real en escritorio y móvil de todos los modos del lector y descargas en vivo. |
+| Descargas y cola | Gestor conectado a `ManagedDownloadQueue` (`downloads.rs`, eventos `mangora://download-queue` y `mangora://download-chapter-finished`), selector de formato (`CBZ`/`PDF`/`EPUB`/`RAW`), controles por tarea/globales y estantería 100 % offline (`list_offline_library`) con apertura directa a ficha/lector. | Validación manual de colas reales y almacenamiento sandbox en Android/iOS. |
 | Ajustes y apoyo | Cambio de idioma, tema, proveedor y géneros; apertura de la carpeta de datos; enlaces a Discord y GitHub. | Drive y trackers guiados, buzón de opiniones, donaciones activas y paquete instalable. |
 | Apariencia y métricas | Módulos, migración y componentes del hito 5 presentes en el repositorio. | Registrar sus comandos Tauri e incorporar sus componentes a las pantallas. |
 
@@ -191,9 +192,15 @@ Se verificaron la conciliación de capítulos, el ranking *«Para ti»*, el clie
 
 ## Hito 3 · Lector HD Nativo (Online + 100 % Offline) y Gestor de Descargas
 
-- **Estado:** `En curso`
+- **Estado:** `En validación`
 
-El backend ya conserva preferencias del lector y formato de descarga, y `manga-core` incorpora acceso a capítulos locales y cola de descargas. La pantalla de Descargas muestra información y permite abrir la carpeta de datos. Falta conectar la lectura y la cola a la interfaz de Mangora.
+El lector HD nativo (`apps/mangora/src/views/ReaderView.tsx` + `apps/mangora/src-tauri/src/reader.rs` mediante el protocolo `mangora://`) y el gestor de cola en vivo (`apps/mangora/src/views/DownloadsView.tsx` + `apps/mangora/src-tauri/src/downloads.rs` sobre `ManagedDownloadQueue`) ya están implementados:
+
+- Modos **Cascada vertical**, **Página única** y **Doble página**, sentido **RTL/LTR**, ajuste de ancho/alto/original, zoom y barras `.ink-bar` retráctiles con atajos de escritorio (`←`/`→`/`Espacio`/`F`/`Esc`/`+`/`-`) y gestos táctiles móviles (*tap* lateral, *swipe*, doble toque y *pinch-to-zoom*).
+- Resolución *offline-first* sobre `LocalChapterHandle` (`CBZ`, `RAW`, `EPUB`, `PDF`) con distintivo `OFFLINE / LOCAL`, precarga en segundo plano y guardado automático de historial y marcador de página en `manga-tui-history.db`.
+- Descarga de capítulos individuales o por selección múltiple desde `SeriesDetailView`, eventos en vivo, selector de formato y estantería offline directa en `DownloadsView`.
+
+Pendiente de validación manual en `tauri dev` con capítulos en red real.
 
 ### Prompt sugerido para nuevo hilo
 
@@ -219,7 +226,7 @@ El backend ya conserva preferencias del lector y formato de descarga, y `manga-c
 - [ ] El lector carga capítulos online y offline con los 3 modos de vista (cascada, página única, doble página), soporta ratón/teclado en escritorio y gestos táctiles en móvil, y recuerda el modo/sentido preferido del usuario.
 - [ ] Los capítulos descargados en `CBZ`, `RAW`, `EPUB` y `PDF` se leen completamente sin conexión a internet y reconcilian el estado leído en SQLite.
 - [ ] La pantalla de Descargas refleja el progreso en vivo desde `download_queue` y adapta las acciones de carpeta según `canOpenDataFolder`.
-- [ ] `cargo check` y `cargo test` pasan sin regresiones.
+- [x] `cargo check` y `cargo test` pasan sin regresiones.
 
 ---
 
