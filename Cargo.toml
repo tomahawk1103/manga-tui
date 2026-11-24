@@ -1,5 +1,5 @@
 [workspace]
-members = [".", "crates/manga-core"]
+members = [".", "crates/manga-core", "apps/mangora/src-tauri"]
 default-members = [".", "crates/manga-core"]
 resolver = "3"
 
@@ -17,7 +17,8 @@ license = "MIT"
 exclude = [
   "public/*",
   "docs/*",
-  "data_test/*"
+  "data_test/*",
+  "apps/*"
 ]
 
 [dependencies]
