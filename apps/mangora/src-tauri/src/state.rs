@@ -12,8 +12,8 @@ use manga_core::backend::{AppDirectories, StorageMode, build_data_dir, current_s
 use manga_core::config::{MangaTuiConfig, UiLanguage, get_config_directory_path};
 use manga_core::logger::Logger;
 use manga_core::runtime_settings::{
-    ALL_PROVIDERS, persist_setting_in_dir, set_active_chapter_language, set_active_default_provider, set_active_ui_language,
-    ui_lang_toml_value,
+    ALL_PROVIDERS, active_download_type, download_type_toml_value, persist_setting_in_dir, set_active_chapter_language,
+    set_active_default_provider, set_active_ui_language, ui_lang_toml_value,
 };
 use serde::{Deserialize, Serialize};
 
@@ -37,12 +37,75 @@ impl ThemeMode {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReaderViewMode {
+    #[default]
+    Cascade,
+    Single,
+    Double,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReadingDirection {
+    #[default]
+    Rtl,
+    Ltr,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PageFitMode {
+    #[default]
+    FitWidth,
+    FitHeight,
+    Original,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct ReaderPrefs {
+    pub view_mode: ReaderViewMode,
+    pub direction: ReadingDirection,
+    pub fit_mode: PageFitMode,
+    pub zoom_percent: u16,
+    pub cascade_gap_px: u16,
+    pub first_page_single: bool,
+    pub pin_toolbars: bool,
+    pub dark_canvas: bool,
+}
+
+impl Default for ReaderPrefs {
+    fn default() -> Self {
+        Self {
+            view_mode: ReaderViewMode::Cascade,
+            direction: ReadingDirection::Rtl,
+            fit_mode: PageFitMode::FitWidth,
+            zoom_percent: 100,
+            cascade_gap_px: 8,
+            first_page_single: true,
+            pin_toolbars: false,
+            dark_canvas: true,
+        }
+    }
+}
+
+impl ReaderPrefs {
+    pub fn normalized(mut self) -> Self {
+        self.zoom_percent = self.zoom_percent.clamp(50, 250);
+        self.cascade_gap_px = self.cascade_gap_px.clamp(0, 48);
+        self
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct MangoraPrefs {
     pub onboarding_completed: bool,
     pub favorite_genres: Vec<String>,
     pub theme_mode: ThemeMode,
+    pub reader_prefs: ReaderPrefs,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -84,6 +147,8 @@ pub struct InitialAppState {
     pub available_providers: Vec<ProviderOption>,
     pub favorite_genres: Vec<String>,
     pub onboarding_completed: bool,
+    pub download_format: String,
+    pub reader_prefs: ReaderPrefs,
     pub library: LibraryDetection,
 }
 
@@ -184,6 +249,51 @@ impl AppState {
     pub fn data_dir(&self) -> Result<PathBuf, String> {
         let inner = self.lock_inner()?;
         Ok(inner.data_dir.clone())
+    }
+
+    pub fn config_dir(&self) -> Result<PathBuf, String> {
+        let inner = self.lock_inner()?;
+        Ok(inner.config_dir.clone())
+    }
+
+    pub fn downloads_dir(&self) -> Result<PathBuf, String> {
+        let inner = self.lock_inner()?;
+        Ok(inner.downloads_dir.clone())
+    }
+
+    pub fn db_path(&self) -> Result<PathBuf, String> {
+        let inner = self.lock_inner()?;
+        Ok(inner.db_path.clone())
+    }
+
+    pub fn get_reader_prefs(&self) -> Result<ReaderPrefs, String> {
+        let inner = self.lock_inner()?;
+        Ok(inner.prefs.reader_prefs.clone())
+    }
+
+    pub fn save_reader_prefs(&self, prefs: ReaderPrefs) -> Result<InitialAppState, String> {
+        let normalized = prefs.normalized();
+        let mut inner = self.lock_inner()?;
+        let mut next_prefs = inner.prefs.clone();
+        next_prefs.reader_prefs = normalized;
+        save_prefs_in_dir(&inner.config_dir, &next_prefs)?;
+        inner.prefs = next_prefs;
+        Ok(build_initial_state(&inner))
+    }
+
+    pub fn open_db_connection(&self) -> Result<rusqlite::Connection, String> {
+        let db_path = self.db_path()?;
+        if let Some(parent) = db_path.parent() {
+            fs::create_dir_all(parent).map_err(|e| format!("Could not create database folder: {e}"))?;
+        }
+        let conn = rusqlite::Connection::open(&db_path).map_err(|e| format!("Could not open shared SQLite database: {e}"))?;
+        conn.execute_batch(
+            "PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000; PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;",
+        )
+        .map_err(|e| format!("Could not configure SQLite connection: {e}"))?;
+        let db = Database::new(&conn);
+        db.setup().map_err(|e| format!("Could not initialize database schema: {e}"))?;
+        Ok(conn)
     }
 
     pub fn save_onboarding_preferences(&self, payload: OnboardingPreferencesPayload) -> Result<InitialAppState, String> {
@@ -474,6 +584,8 @@ fn build_initial_state(inner: &AppStateInner) -> InitialAppState {
         available_providers: available_providers(),
         favorite_genres: inner.prefs.favorite_genres.clone(),
         onboarding_completed: inner.prefs.onboarding_completed,
+        download_format: download_type_toml_value(active_download_type()).to_string(),
+        reader_prefs: inner.prefs.reader_prefs.clone(),
         library,
     }
 }
@@ -667,5 +779,39 @@ mod tests {
         let reloaded_prefs = load_prefs_from_dir(&temp.path.join("config"));
         assert!(!reloaded_prefs.onboarding_completed);
         assert_eq!(reloaded_prefs.theme_mode, ThemeMode::Paper);
+    }
+
+    #[test]
+    fn saves_and_clamps_reader_prefs_across_restart() {
+        let temp = TempTestDir::new("reader_prefs_persist");
+        let state = make_test_state(&temp.path);
+
+        let initial = state.get_reader_prefs().unwrap();
+        assert_eq!(initial, ReaderPrefs::default());
+
+        let updated = state
+            .save_reader_prefs(ReaderPrefs {
+                view_mode: ReaderViewMode::Double,
+                direction: ReadingDirection::Ltr,
+                fit_mode: PageFitMode::FitHeight,
+                zoom_percent: 999,
+                cascade_gap_px: 200,
+                first_page_single: false,
+                pin_toolbars: true,
+                dark_canvas: false,
+            })
+            .unwrap();
+
+        assert_eq!(updated.reader_prefs.view_mode, ReaderViewMode::Double);
+        assert_eq!(updated.reader_prefs.direction, ReadingDirection::Ltr);
+        assert_eq!(updated.reader_prefs.fit_mode, PageFitMode::FitHeight);
+        assert_eq!(updated.reader_prefs.zoom_percent, 250);
+        assert_eq!(updated.reader_prefs.cascade_gap_px, 48);
+        assert!(!updated.reader_prefs.first_page_single);
+        assert!(updated.reader_prefs.pin_toolbars);
+        assert!(!updated.reader_prefs.dark_canvas);
+
+        let reloaded_prefs = load_prefs_from_dir(&temp.path.join("config"));
+        assert_eq!(reloaded_prefs.reader_prefs, updated.reader_prefs);
     }
 }

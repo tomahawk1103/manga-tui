@@ -3,5 +3,11 @@
   "identifier": "default",
   "description": "Capability for the main Mangora window",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "permissions": [
+    "core:default",
+    "core:window:allow-set-fullscreen",
+    "core:window:allow-is-fullscreen",
+    "core:window:allow-set-title",
+    "core:event:default"
+  ]
 }
