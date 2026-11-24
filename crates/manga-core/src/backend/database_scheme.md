@@ -120,6 +120,42 @@ Stores recently searched queries for quick recall and autocompletion cycling.
 - searched_at
     - type: DATETIME DEFAULT (datetime('now'))
 
+# reading_sessions
+
+Stores **100 % device-local** reading session telemetry for Mangora personal reader analytics (never exported to cloud snapshots or external services).
+
+- id
+    - type: INTEGER PRIMARY KEY AUTOINCREMENT
+- manga_id
+    - type: TEXT NOT NULL
+- provider
+    - type: TEXT NOT NULL
+- chapter_id
+    - type: TEXT NOT NULL
+- started_at
+    - type: DATETIME DEFAULT (datetime('now'))
+- duration_seconds
+    - type: INTEGER NOT NULL DEFAULT 0
+- pages_read
+    - type: INTEGER NOT NULL DEFAULT 0
+- completed_chapter
+    - type: BOOLEAN NOT NULL DEFAULT 0
+
+# manga_genres
+
+Stores normalized genres/tags associated with mangas in the user's library (exported as catalog metadata in `library_sync.json`).
+
+- manga_id
+    - type: TEXT NOT NULL
+- provider
+    - type: TEXT NOT NULL
+- genre
+    - type: TEXT NOT NULL
+- created_at
+    - type: DATETIME DEFAULT (datetime('now'))
+
+PRIMARY KEY (manga_id, provider, genre)
+
 # SQLite Configuration & Pragmas
 
 To ensure high-performance concurrent reads and writes without `SQLITE_BUSY` contention:
@@ -138,5 +174,13 @@ To ensure high-performance concurrent reads and writes without `SQLITE_BUSY` con
   - Speeds up favorite manga filtering per provider.
 - `idx_manga_collections_shelf`: `CREATE INDEX IF NOT EXISTS idx_manga_collections_shelf ON manga_collections(shelf_name, provider);`
   - Speeds up filtering and grouping mangas by custom library shelf.
+- `idx_reading_sessions_started_at`: `CREATE INDEX IF NOT EXISTS idx_reading_sessions_started_at ON reading_sessions(started_at);`
+  - Accelerates daily activity, streak, and 7/30-day window queries.
+- `idx_reading_sessions_manga`: `CREATE INDEX IF NOT EXISTS idx_reading_sessions_manga ON reading_sessions(manga_id, provider);`
+  - Speeds up per-series reading duration aggregation.
+- `idx_reading_sessions_chapter`: `CREATE INDEX IF NOT EXISTS idx_reading_sessions_chapter ON reading_sessions(chapter_id);`
+  - Speeds up deduplication between session duration and legacy chapter read rows.
+- `idx_manga_genres_genre`: `CREATE INDEX IF NOT EXISTS idx_manga_genres_genre ON manga_genres(genre, provider);`
+  - Optimizes top-genres aggregation across the local library.
 
 

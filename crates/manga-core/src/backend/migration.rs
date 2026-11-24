@@ -253,6 +253,7 @@ pub fn update_database_with_migrations(
         migrate_version_0_6_0(connection, logger)?,
         migrate_version_0_10_1(connection, logger)?,
         migrate_version_0_11_0(connection, logger)?,
+        migrate_version_0_12_0(connection, logger)?,
     ];
 
     Ok(migrations)
@@ -376,6 +377,54 @@ fn migrate_version_0_11_0(connection: &mut Connection, logger: &impl ILogger) ->
     let migration = Migration::new(&queries)
         .with_name("Add manga_collections table and index for custom library shelves")
         .with_version("0.11.0")
+        .up(connection)?;
+
+    let migration_result = match migration {
+        Some(available_migration) => {
+            logger.inform("Updating database");
+            let migration_result = available_migration.update(connection)?;
+            logger.inform("Database updated");
+            Some(migration_result)
+        },
+        None => None,
+    };
+
+    Ok(migration_result)
+}
+
+/// Add `reading_sessions` (local-only) and `manga_genres` tables with indexes for extended reader metrics
+fn migrate_version_0_12_0(connection: &mut Connection, logger: &impl ILogger) -> rusqlite::Result<Option<MigrationTable>> {
+    let queries = [
+        Query::Raw(
+            "CREATE TABLE IF NOT EXISTS reading_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                manga_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                chapter_id TEXT NOT NULL,
+                started_at DATETIME DEFAULT (datetime('now')),
+                duration_seconds INTEGER NOT NULL DEFAULT 0,
+                pages_read INTEGER NOT NULL DEFAULT 0,
+                completed_chapter BOOLEAN NOT NULL DEFAULT 0
+            )",
+        ),
+        Query::Raw(
+            "CREATE TABLE IF NOT EXISTS manga_genres (
+                manga_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                genre TEXT NOT NULL,
+                created_at DATETIME DEFAULT (datetime('now')),
+                PRIMARY KEY (manga_id, provider, genre)
+            )",
+        ),
+        Query::Raw("CREATE INDEX IF NOT EXISTS idx_reading_sessions_started_at ON reading_sessions(started_at)"),
+        Query::Raw("CREATE INDEX IF NOT EXISTS idx_reading_sessions_manga ON reading_sessions(manga_id, provider)"),
+        Query::Raw("CREATE INDEX IF NOT EXISTS idx_reading_sessions_chapter ON reading_sessions(chapter_id)"),
+        Query::Raw("CREATE INDEX IF NOT EXISTS idx_manga_genres_genre ON manga_genres(genre, provider)"),
+    ];
+
+    let migration = Migration::new(&queries)
+        .with_name("Add reading_sessions and manga_genres tables for local reader metrics")
+        .with_version("0.12.0")
         .up(connection)?;
 
     let migration_result = match migration {
@@ -940,19 +989,78 @@ mod tests {
 
         let migrations = update_database_with_migrations(&mut conn, &DefaultLogger)?;
 
-        assert_eq!(4, migrations.len());
+        assert_eq!(5, migrations.len());
 
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.4.0"));
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.6.0"));
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.10.1"));
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.11.0"));
+        assert!(migrations.iter().flatten().any(|migration| migration.version == "0.12.0"));
 
-        let table_exists: bool = conn.query_row(
-            "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'manga_collections')",
-            [],
-            |row| row.get(0),
+        for expected_table in ["manga_collections", "reading_sessions", "manga_genres"] {
+            let table_exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+                [expected_table],
+                |row| row.get(0),
+            )?;
+            assert!(table_exists, "missing table {expected_table}");
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_migrate_version_0_12_0_idempotent_on_legacy_db() -> Result<(), Box<dyn Error>> {
+        let mut conn = Connection::open_in_memory()?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS mangas (
+                id TEXT PRIMARY KEY,
+                title TEXT NOT NULL,
+                created_at DATETIME DEFAULT (datetime('now')),
+                updated_at DATETIME DEFAULT (datetime('now')),
+                last_read DATETIME DEFAULT (datetime('now')),
+                deleted_at DATETIME NULL,
+                img_url TEXT NULL
+            )",
+            (),
         )?;
-        assert!(table_exists);
+
+        let first = migrate_version_0_12_0(&mut conn, &DefaultLogger)?.expect("0.12.0 migration should run on legacy DB");
+        assert_eq!(first.version, "0.12.0");
+
+        for expected_table in ["reading_sessions", "manga_genres"] {
+            let exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?1)",
+                [expected_table],
+                |row| row.get(0),
+            )?;
+            assert!(exists, "expected table {expected_table} to exist");
+        }
+
+        for expected_index in [
+            "idx_reading_sessions_started_at",
+            "idx_reading_sessions_manga",
+            "idx_reading_sessions_chapter",
+            "idx_manga_genres_genre",
+        ] {
+            let exists: bool = conn.query_row(
+                "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?1)",
+                [expected_index],
+                |row| row.get(0),
+            )?;
+            assert!(exists, "expected index {expected_index} to exist");
+        }
+
+        conn.execute(
+            "INSERT INTO reading_sessions (manga_id, provider, chapter_id, duration_seconds, pages_read, completed_chapter)
+             VALUES ('m1', 'mangadex', 'ch1', 420, 24, 1)",
+            (),
+        )?;
+        conn.execute("INSERT INTO manga_genres (manga_id, provider, genre) VALUES ('m1', 'mangadex', 'Action')", ())?;
+
+        let second = migrate_version_0_12_0(&mut conn, &DefaultLogger)?;
+        assert!(second.is_none(), "second run of 0.12.0 migration must be idempotent no-op");
 
         Ok(())
     }

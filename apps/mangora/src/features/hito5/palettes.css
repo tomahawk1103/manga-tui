@@ -1,0 +1,459 @@
+/* ============================================================================
+ * Mangora Hito 5 · Editorial Design Tokens, Palettes, Density & Reader Canvas
+ * Faithful to `docs/index.html` paper-and-ink aesthetic (solid 2px borders,
+ * hard offset shadows, red stripe emphasis, screentone accents, no blur).
+ * ============================================================================ */
+
+:root,
+[data-mangora-palette="classic_paper"] {
+  --paper: #f8f7f1;
+  --surface: #ecebe3;
+  --ink: #191918;
+  --red: #cb3028;
+  --red-hover: #a1201b;
+  --muted: #55554f;
+  --line: #c8c7bc;
+  --focus-ring: #0077b6;
+  --reader-bar-bg: #191918;
+  --reader-bar-fg: #f8f7f1;
+  --button-fg: #ffffff;
+  --display: "Arial Black", "Archivo Black", Arial, sans-serif;
+  --body-font: "Segoe UI", Arial, sans-serif;
+  --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  color-scheme: light;
+}
+
+[data-mangora-palette="night_ink"] {
+  --paper: #141413;
+  --surface: #1f1f1d;
+  --ink: #f8f7f1;
+  --red: #ff8a76;
+  --red-hover: #cb3028;
+  --muted: #b5b4a8;
+  --line: #3a3a35;
+  --focus-ring: #4cc9f0;
+  --reader-bar-bg: #0c0c0b;
+  --reader-bar-fg: #f8f7f1;
+  --button-fg: #141413;
+  color-scheme: dark;
+}
+
+[data-mangora-palette="editorial_sepia"] {
+  --paper: #f4ecd8;
+  --surface: #e7dcc2;
+  --ink: #2b2118;
+  --red: #a83226;
+  --red-hover: #832218;
+  --muted: #665746;
+  --line: #cbbba0;
+  --focus-ring: #1d6fa5;
+  --reader-bar-bg: #2b2118;
+  --reader-bar-fg: #f4ecd8;
+  --button-fg: #ffffff;
+  color-scheme: light;
+}
+
+[data-mangora-palette="shonen_red"] {
+  --paper: #fffaf5;
+  --surface: #fcebe6;
+  --ink: #171414;
+  --red: #d91e2a;
+  --red-hover: #a6111c;
+  --muted: #5a4c4c;
+  --line: #e3c2bd;
+  --focus-ring: #0077b6;
+  --reader-bar-bg: #171414;
+  --reader-bar-fg: #fffaf5;
+  --button-fg: #ffffff;
+  color-scheme: light;
+}
+
+[data-mangora-palette="sumi_slate"] {
+  --paper: #1c1f24;
+  --surface: #252930;
+  --ink: #eff1f5;
+  --red: #f06553;
+  --red-hover: #cb3028;
+  --muted: #a6adb9;
+  --line: #3b424d;
+  --focus-ring: #66b2ff;
+  --reader-bar-bg: #121417;
+  --reader-bar-fg: #eff1f5;
+  --button-fg: #121417;
+  color-scheme: dark;
+}
+
+/* ============================================================================
+ * Density Tokens for Library & Explore Grids
+ * ============================================================================ */
+
+:root,
+[data-mangora-library-density="comfortable"] {
+  --mangora-library-min-card: 180px;
+  --mangora-library-gap: 1.15rem;
+  --mangora-library-pad: 0.8rem;
+}
+
+[data-mangora-library-density="compact"] {
+  --mangora-library-min-card: 142px;
+  --mangora-library-gap: 0.75rem;
+  --mangora-library-pad: 0.55rem;
+}
+
+[data-mangora-library-density="spacious"] {
+  --mangora-library-min-card: 224px;
+  --mangora-library-gap: 1.5rem;
+  --mangora-library-pad: 1.05rem;
+}
+
+:root,
+[data-mangora-explore-density="comfortable"] {
+  --mangora-explore-min-card: 185px;
+  --mangora-explore-gap: 1.15rem;
+  --mangora-explore-pad: 0.8rem;
+}
+
+[data-mangora-explore-density="compact"] {
+  --mangora-explore-min-card: 148px;
+  --mangora-explore-gap: 0.75rem;
+  --mangora-explore-pad: 0.55rem;
+}
+
+[data-mangora-explore-density="spacious"] {
+  --mangora-explore-min-card: 230px;
+  --mangora-explore-gap: 1.5rem;
+  --mangora-explore-pad: 1.05rem;
+}
+
+.mangora-library-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--mangora-library-min-card), 1fr));
+  gap: var(--mangora-library-gap);
+}
+
+.mangora-library-list {
+  display: flex;
+  flex-direction: column;
+  gap: calc(var(--mangora-library-gap) * 0.75);
+}
+
+.mangora-explore-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--mangora-explore-min-card), 1fr));
+  gap: var(--mangora-explore-gap);
+}
+
+/* ============================================================================
+ * Subtle Reader Backgrounds
+ * ============================================================================ */
+
+.mangora-reader-canvas,
+.mangora-reader-bg--theme_default {
+  background: var(--paper);
+  color: var(--ink);
+}
+
+.mangora-reader-bg--pure_paper {
+  background: #f8f7f1;
+  color: #191918;
+}
+
+.mangora-reader-bg--warm_sepia {
+  background: #f4ecd8;
+  color: #2b2118;
+}
+
+.mangora-reader-bg--soft_gray {
+  background: #e6e5de;
+  color: #191918;
+}
+
+.mangora-reader-bg--matte_ink {
+  background: #191918;
+  color: #f8f7f1;
+}
+
+.mangora-reader-bg--pitch_black {
+  background: #090909;
+  color: #f8f7f1;
+}
+
+.mangora-reader-bg--subtle_screentone {
+  background:
+    radial-gradient(rgba(25, 25, 24, 0.085) 1px, transparent 1.25px) 0 0 / 8px 8px,
+    var(--paper);
+}
+
+[data-mangora-palette="night_ink"] .mangora-reader-bg--subtle_screentone,
+[data-mangora-palette="sumi_slate"] .mangora-reader-bg--subtle_screentone {
+  background:
+    radial-gradient(rgba(248, 247, 241, 0.08) 1px, transparent 1.25px) 0 0 / 8px 8px,
+    var(--paper);
+}
+
+/* ============================================================================
+ * Editorial Component Primitives (docs/index.html faithful)
+ * ============================================================================ */
+
+.mangora-hito5-root {
+  color: var(--ink);
+  font-family: var(--body-font);
+  line-height: 1.5;
+}
+
+.mangora-hito5-root :focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: 4px;
+}
+
+.mangora-eyebrow {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.65rem;
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--red);
+}
+
+.mangora-eyebrow::before {
+  content: "";
+  width: 1.75rem;
+  height: 3px;
+  background: currentColor;
+}
+
+.mangora-editorial-title {
+  margin: 0.35rem 0 0.5rem;
+  font-family: var(--display);
+  font-weight: 900;
+  letter-spacing: -0.06em;
+  line-height: 1.04;
+  color: var(--ink);
+}
+
+.mangora-editorial-title em {
+  color: var(--red);
+  font-style: normal;
+}
+
+.mangora-card {
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  box-shadow: 6px 6px var(--ink);
+  padding: 1.25rem;
+}
+
+.mangora-surface-card {
+  border: 2px solid var(--ink);
+  background: var(--surface);
+  box-shadow: 4px 4px var(--ink);
+  padding: 1rem;
+}
+
+.mangora-accent-block {
+  border: 2px solid var(--ink);
+  border-left: 0.45rem solid var(--red);
+  background: var(--surface);
+  padding: 1rem 1.2rem;
+}
+
+.mangora-ink-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.55rem 0.9rem;
+  background: var(--reader-bar-bg);
+  color: var(--reader-bar-fg);
+  border-bottom: 2px solid var(--ink);
+  font-family: var(--mono);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.mangora-screentone-stage {
+  position: relative;
+  isolation: isolate;
+}
+
+[data-mangora-screentone="true"] .mangora-screentone-stage::before {
+  content: "";
+  position: absolute;
+  inset: 0.5rem -0.45rem -0.45rem 0.75rem;
+  border: 1px solid var(--ink);
+  background: radial-gradient(var(--red) 1px, transparent 1.4px) 0 0 / 6px 6px;
+  z-index: -1;
+  pointer-events: none;
+}
+
+.mangora-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.65rem 1.05rem;
+  border: 2px solid var(--ink);
+  background: var(--red);
+  color: var(--button-fg);
+  box-shadow: 3px 3px var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+  transition: transform 0.08s ease, background-color 0.12s ease;
+}
+
+.mangora-btn-primary:hover:not(:disabled) {
+  background: var(--red-hover);
+}
+
+.mangora-btn-primary:active:not(:disabled) {
+  transform: translate(1px, 1px);
+  box-shadow: 2px 2px var(--ink);
+}
+
+.mangora-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.mangora-btn-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.45rem;
+  padding: 0.5rem 0.85rem;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  box-shadow: 3px 3px var(--ink);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mangora-btn-secondary:hover:not(:disabled),
+.mangora-btn-secondary[aria-pressed="true"] {
+  background: var(--ink);
+  color: var(--paper);
+}
+
+.mangora-chip-group {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.mangora-chip {
+  padding: 0.4rem 0.75rem;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.mangora-chip[aria-pressed="true"] {
+  background: var(--red);
+  color: var(--button-fg);
+  border-color: var(--ink);
+  box-shadow: 2px 2px var(--ink);
+}
+
+.mangora-chip:hover:not([aria-pressed="true"]) {
+  background: var(--surface);
+}
+
+.mangora-select,
+.mangora-input {
+  padding: 0.45rem 0.7rem;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--mono);
+  font-size: 0.84rem;
+  font-weight: 600;
+}
+
+.mangora-mono-meta {
+  font-family: var(--mono);
+  font-size: 0.78rem;
+  color: var(--muted);
+}
+
+.mangora-palette-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(195px, 1fr));
+  gap: 0.9rem;
+}
+
+.mangora-palette-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  text-align: left;
+  padding: 0.85rem;
+  border: 2px solid var(--ink);
+  background: var(--paper);
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.mangora-palette-card[aria-pressed="true"] {
+  border-color: var(--red);
+  box-shadow: 4px 4px var(--ink);
+}
+
+.mangora-kpi-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(185px, 1fr));
+  gap: 0.9rem;
+}
+
+.mangora-two-col {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.15rem;
+}
+
+.mangora-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem 1.25rem;
+  padding: 0.75rem 1rem;
+  border: 2px solid var(--ink);
+  background: var(--surface);
+  box-shadow: 3px 3px var(--ink);
+}
+
+.mangora-toolbar-section {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.55rem;
+}
+
+.mangora-bar-track {
+  height: 12px;
+  border: 1px solid var(--ink);
+  background: var(--paper);
+  overflow: hidden;
+}
+
+.mangora-bar-fill {
+  height: 100%;
+  background: var(--red);
+}
+
+.mangora-activity-bars {
+  display: grid;
+  grid-template-columns: repeat(14, minmax(0, 1fr));
+  align-items: end;
+  gap: 0.35rem;
+  height: 96px;
+  padding-top: 0.5rem;
+}

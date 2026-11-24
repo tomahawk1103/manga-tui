@@ -107,6 +107,14 @@ pub struct SyncCollectionRecord {
     pub created_at: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SyncMangaGenreRecord {
+    pub manga_id: String,
+    pub provider: String,
+    pub genre: String,
+    pub created_at: Option<String>,
+}
+
 /// Cross-platform library snapshot stored as `library_sync.json` in the cloud.
 /// Designed so both desktop (`manga-tui`) and future mobile clients (Android / iOS)
 /// can perform lossless bidirectional merges without SQLite schema coupling.
@@ -122,6 +130,8 @@ pub struct LibrarySyncSnapshot {
     pub search_history: Vec<SyncSearchRecord>,
     #[serde(default)]
     pub collections: Vec<SyncCollectionRecord>,
+    #[serde(default)]
+    pub manga_genres: Vec<SyncMangaGenreRecord>,
 }
 
 impl Default for LibrarySyncSnapshot {
@@ -136,6 +146,7 @@ impl Default for LibrarySyncSnapshot {
             dismissed_notifications: Vec::new(),
             search_history: Vec::new(),
             collections: Vec::new(),
+            manga_genres: Vec::new(),
         }
     }
 }
@@ -366,6 +377,26 @@ pub fn merge_library_snapshots(local: &LibrarySyncSnapshot, remote: &LibrarySync
             .or_insert_with(|| col.clone());
     }
 
+    let mut genres_map: BTreeMap<(String, String, String), SyncMangaGenreRecord> = BTreeMap::new();
+    for g in local.manga_genres.iter().chain(remote.manga_genres.iter()) {
+        let trimmed_genre = g.genre.trim();
+        if trimmed_genre.is_empty() {
+            continue;
+        }
+        let key = (g.manga_id.clone(), g.provider.clone(), trimmed_genre.to_lowercase());
+        genres_map
+            .entry(key)
+            .and_modify(|existing| {
+                existing.created_at = pick_older_timestamp(&existing.created_at, &g.created_at);
+            })
+            .or_insert_with(|| SyncMangaGenreRecord {
+                manga_id: g.manga_id.clone(),
+                provider: g.provider.clone(),
+                genre: trimmed_genre.to_string(),
+                created_at: g.created_at.clone(),
+            });
+    }
+
     LibrarySyncSnapshot {
         schema_version: LIBRARY_SYNC_SCHEMA_VERSION,
         app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -376,6 +407,7 @@ pub fn merge_library_snapshots(local: &LibrarySyncSnapshot, remote: &LibrarySync
         dismissed_notifications,
         search_history,
         collections: collections_map.into_values().collect(),
+        manga_genres: genres_map.into_values().collect(),
     }
 }
 
@@ -1897,6 +1929,7 @@ mod tests {
                 searched_at: 100,
             }],
             collections: vec![],
+            manga_genres: vec![],
         };
 
         // Remote has newer reading timestamp on m1, read c2, bookmarked c2 on page 12, and added m2
@@ -1952,6 +1985,7 @@ mod tests {
                 searched_at: 250,
             }],
             collections: vec![],
+            manga_genres: vec![],
         };
 
         let merged = merge_library_snapshots(&local, &remote);
@@ -2146,6 +2180,7 @@ mod tests {
             dismissed_notifications: vec![],
             search_history: vec![],
             collections: vec![],
+            manga_genres: vec![],
         };
         fs::write(cloud_dir.join(CLOUD_LIBRARY_JSON_NAME), serde_json::to_vec_pretty(&remote_snap).unwrap()).unwrap();
         let cloud_remote_manga_dir = cloud_dir.join(CLOUD_DOWNLOADS_FOLDER_NAME).join("Sakamoto Days");
@@ -2186,5 +2221,65 @@ mod tests {
         );
         assert_eq!(resolve_secret_with_precedence(None, None, Some("  "), Some(" embedded_id ")), Some("embedded_id".to_string()));
         assert_eq!(resolve_secret_with_precedence(None, Some(""), None, Some("  ")), None);
+    }
+
+    #[test]
+    fn library_sync_snapshot_deserializes_legacy_json_and_merges_genres_without_duplicates() {
+        let legacy_json = r#"{
+            "schema_version": 1,
+            "app_version": "0.3.1",
+            "synced_at": "2026-11-20T00:00:00Z",
+            "mangas": [],
+            "chapters": [],
+            "favorites": [],
+            "dismissed_notifications": [],
+            "search_history": []
+        }"#;
+
+        let parsed_legacy: LibrarySyncSnapshot = serde_json::from_str(legacy_json).unwrap();
+        assert!(parsed_legacy.collections.is_empty());
+        assert!(parsed_legacy.manga_genres.is_empty());
+
+        let local = LibrarySyncSnapshot {
+            manga_genres: vec![
+                SyncMangaGenreRecord {
+                    manga_id: "m1".to_string(),
+                    provider: "mangadex".to_string(),
+                    genre: "Action".to_string(),
+                    created_at: Some("2026-11-10 08:00:00".to_string()),
+                },
+                SyncMangaGenreRecord {
+                    manga_id: "m1".to_string(),
+                    provider: "mangadex".to_string(),
+                    genre: "   ".to_string(),
+                    created_at: None,
+                },
+            ],
+            ..LibrarySyncSnapshot::default()
+        };
+
+        let remote = LibrarySyncSnapshot {
+            manga_genres: vec![
+                SyncMangaGenreRecord {
+                    manga_id: "m1".to_string(),
+                    provider: "mangadex".to_string(),
+                    genre: "action".to_string(),
+                    created_at: Some("2026-11-15 09:00:00".to_string()),
+                },
+                SyncMangaGenreRecord {
+                    manga_id: "m1".to_string(),
+                    provider: "mangadex".to_string(),
+                    genre: "Fantasy".to_string(),
+                    created_at: Some("2026-11-15 09:00:00".to_string()),
+                },
+            ],
+            ..LibrarySyncSnapshot::default()
+        };
+
+        let merged = merge_library_snapshots(&local, &remote);
+        assert_eq!(merged.manga_genres.len(), 2);
+        assert_eq!(merged.manga_genres[0].genre, "Action");
+        assert_eq!(merged.manga_genres[0].created_at.as_deref(), Some("2026-11-10 08:00:00"));
+        assert_eq!(merged.manga_genres[1].genre, "Fantasy");
     }
 }

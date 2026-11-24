@@ -58,11 +58,12 @@
 //!     provider: MangaProviders::Mangadx,
 //! })?;
 //! ```
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-use chrono::Utc;
+use chrono::{Duration, NaiveDate, Utc};
 use rusqlite::types::ToSqlOutput;
 use rusqlite::{Connection, OptionalExtension, ToSql, params};
+use serde::{Deserialize, Serialize};
 use strum_macros::{Display, EnumIter};
 
 use super::AppDirectories;
@@ -226,6 +227,129 @@ pub struct ReadingDashboardStats {
     pub read_last_7_days: u32,
     pub top_read_mangas: Vec<(String, MangaProviders, u32)>,
     pub provider_breakdown: Vec<(MangaProviders, u32, u32)>,
+}
+
+/// Input payload for recording a 100 % local reading session in SQLite.
+#[derive(Debug, Clone)]
+pub struct ReadingSessionInput<'a> {
+    pub manga_id: &'a str,
+    pub provider: MangaProviders,
+    pub chapter_id: &'a str,
+    pub duration_seconds: u32,
+    pub pages_read: u32,
+    pub completed_chapter: bool,
+    pub started_at: Option<&'a str>,
+}
+
+/// Reading metrics aggregated per genre for a user's local library.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct GenreReadingStat {
+    pub genre: String,
+    pub mangas_count: u32,
+    pub chapters_read: u32,
+    pub reading_minutes: u32,
+    pub share_percent: f32,
+}
+
+/// Top read manga entry with local reading duration.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TopMangaStat {
+    pub manga_id: String,
+    pub title: String,
+    pub provider: MangaProviders,
+    pub chapters_read: u32,
+    pub reading_minutes: u32,
+}
+
+/// Aggregated series and read-chapter count per manga provider.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ProviderReadingStat {
+    pub provider: MangaProviders,
+    pub mangas_count: u32,
+    pub chapters_read: u32,
+}
+
+/// Daily reading activity bucket used for 14-day charts.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DailyReadingActivity {
+    pub date: String,
+    pub chapters_read: u32,
+    pub reading_minutes: u32,
+    pub pages_read: u32,
+}
+
+/// Comprehensive 100 % device-local reader analytics (no external telemetry).
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct ExtendedReaderMetrics {
+    pub total_chapters_read: u32,
+    pub chapters_read_today: u32,
+    pub chapters_read_last_7_days: u32,
+    pub chapters_read_last_30_days: u32,
+    pub total_pages_read: u32,
+    pub recorded_reading_seconds: u64,
+    pub estimated_total_reading_minutes: u32,
+    pub average_minutes_per_chapter: f32,
+    pub active_days_count: u32,
+    pub current_streak_days: u32,
+    pub longest_streak_days: u32,
+    pub reading_mangas: u32,
+    pub plan_to_read_mangas: u32,
+    pub favorites_count: u32,
+    pub shelves_count: u32,
+    pub downloaded_chapters: u32,
+    pub top_genres: Vec<GenreReadingStat>,
+    pub top_read_mangas: Vec<TopMangaStat>,
+    pub provider_breakdown: Vec<ProviderReadingStat>,
+    pub daily_activity_last_14_days: Vec<DailyReadingActivity>,
+    pub generated_at: String,
+    pub privacy_local_only: bool,
+}
+
+/// Computes `(current_streak_days, longest_streak_days)` from active calendar dates.
+pub fn compute_reading_streaks(sorted_unique_dates: &[NaiveDate], today: NaiveDate) -> (u32, u32) {
+    if sorted_unique_dates.is_empty() {
+        return (0, 0);
+    }
+
+    let mut dates: Vec<NaiveDate> = sorted_unique_dates.to_vec();
+    dates.sort_unstable();
+    dates.dedup();
+
+    let mut longest: u32 = 0;
+    let mut run: u32 = 0;
+    let mut prev: Option<NaiveDate> = None;
+
+    for &date in &dates {
+        if let Some(p) = prev
+            && date == p + Duration::days(1)
+        {
+            run += 1;
+        } else {
+            run = 1;
+        }
+        longest = longest.max(run);
+        prev = Some(date);
+    }
+
+    let eligible_dates: Vec<NaiveDate> = dates.into_iter().filter(|&d| d <= today).collect();
+    let current = match eligible_dates.last().copied() {
+        Some(last_date) if last_date == today || last_date == today - Duration::days(1) => {
+            let mut streak: u32 = 1;
+            let mut cursor = last_date;
+            for &d in eligible_dates.iter().rev().skip(1) {
+                if d == cursor - Duration::days(1) {
+                    streak += 1;
+                    cursor = d;
+                } else {
+                    break;
+                }
+            }
+            streak
+        },
+        _ => 0,
+    };
+
+    (current, longest)
 }
 
 pub const PRESET_SHELVES: [&str; 4] = ["🔥 Obras Maestras", "⏸ En Pausa", "✔ Completados", "💎 Pendiente Top"];
@@ -498,6 +622,43 @@ impl<'a> Database<'a> {
 
         self.connection
             .execute("CREATE INDEX IF NOT EXISTS idx_manga_collections_shelf ON manga_collections(shelf_name, provider)", ())?;
+
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS reading_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                manga_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                chapter_id TEXT NOT NULL,
+                started_at DATETIME DEFAULT (datetime('now')),
+                duration_seconds INTEGER NOT NULL DEFAULT 0,
+                pages_read INTEGER NOT NULL DEFAULT 0,
+                completed_chapter BOOLEAN NOT NULL DEFAULT 0
+             )",
+            (),
+        )?;
+
+        self.connection.execute(
+            "CREATE TABLE IF NOT EXISTS manga_genres (
+                manga_id TEXT NOT NULL,
+                provider TEXT NOT NULL,
+                genre TEXT NOT NULL,
+                created_at DATETIME DEFAULT (datetime('now')),
+                PRIMARY KEY (manga_id, provider, genre)
+             )",
+            (),
+        )?;
+
+        self.connection
+            .execute("CREATE INDEX IF NOT EXISTS idx_reading_sessions_started_at ON reading_sessions(started_at)", ())?;
+
+        self.connection
+            .execute("CREATE INDEX IF NOT EXISTS idx_reading_sessions_manga ON reading_sessions(manga_id, provider)", ())?;
+
+        self.connection
+            .execute("CREATE INDEX IF NOT EXISTS idx_reading_sessions_chapter ON reading_sessions(chapter_id)", ())?;
+
+        self.connection
+            .execute("CREATE INDEX IF NOT EXISTS idx_manga_genres_genre ON manga_genres(genre, provider)", ())?;
 
         Ok(())
     }
@@ -1109,7 +1270,7 @@ impl<'a> Database<'a> {
 
         use crate::backend::cloud::{
             LIBRARY_SYNC_SCHEMA_VERSION, LibrarySyncSnapshot, SyncChapterRecord, SyncCollectionRecord, SyncDismissedRecord,
-            SyncFavoriteRecord, SyncMangaRecord, SyncSearchRecord,
+            SyncFavoriteRecord, SyncMangaGenreRecord, SyncMangaRecord, SyncSearchRecord,
         };
 
         let reading_type_id = self.get_history_type(MangaHistoryType::ReadingHistory)?;
@@ -1249,6 +1410,24 @@ impl<'a> Database<'a> {
             }
         }
 
+        let mut manga_genres = Vec::new();
+        if let Ok(mut stmt) = self
+            .connection
+            .prepare("SELECT manga_id, provider, genre, created_at FROM manga_genres ORDER BY manga_id, provider, genre")
+            && let Ok(rows) = stmt.query_map([], |row| {
+                Ok(SyncMangaGenreRecord {
+                    manga_id: row.get(0)?,
+                    provider: row.get(1)?,
+                    genre: row.get(2)?,
+                    created_at: row.get(3).ok(),
+                })
+            })
+        {
+            for r in rows.flatten() {
+                manga_genres.push(r);
+            }
+        }
+
         Ok(LibrarySyncSnapshot {
             schema_version: LIBRARY_SYNC_SCHEMA_VERSION,
             app_version: env!("CARGO_PKG_VERSION").to_string(),
@@ -1259,6 +1438,7 @@ impl<'a> Database<'a> {
             dismissed_notifications,
             search_history,
             collections,
+            manga_genres,
         })
     }
 
@@ -1368,6 +1548,21 @@ impl<'a> Database<'a> {
                     "INSERT OR REPLACE INTO manga_collections (manga_id, provider, title, shelf_name, created_at)
                      VALUES (?1, ?2, ?3, ?4, COALESCE(?5, datetime('now')))",
                     params![col.manga_id, col.provider, col.title, col.shelf_name, col.created_at],
+                );
+            }
+        }
+
+        for genre in &merged.manga_genres {
+            let trimmed = genre.genre.trim();
+            if !trimmed.is_empty() {
+                let _ = tx.execute(
+                    "INSERT INTO manga_genres (manga_id, provider, genre, created_at)
+                     SELECT ?1, ?2, ?3, COALESCE(?4, datetime('now'))
+                     WHERE NOT EXISTS (
+                         SELECT 1 FROM manga_genres
+                         WHERE manga_id = ?1 AND provider = ?2 AND lower(genre) = lower(?3)
+                     )",
+                    params![genre.manga_id, genre.provider, trimmed, genre.created_at],
                 );
             }
         }
@@ -1851,6 +2046,479 @@ impl<'a> Database<'a> {
             read_last_7_days,
             top_read_mangas,
             provider_breakdown,
+        })
+    }
+
+    /// Records a 100 % device-local reading session for extended reader metrics.
+    pub fn record_reading_session(&self, input: ReadingSessionInput<'_>) -> rusqlite::Result<i64> {
+        // Guard against forgotten open tabs skewing totals (cap individual session at 12h).
+        let clamped_seconds = input.duration_seconds.min(43_200);
+        self.connection.execute(
+            "INSERT INTO reading_sessions (manga_id, provider, chapter_id, started_at, duration_seconds, pages_read, completed_chapter)
+             VALUES (?1, ?2, ?3, COALESCE(?4, datetime('now')), ?5, ?6, ?7)",
+            params![
+                input.manga_id,
+                input.provider.to_string(),
+                input.chapter_id,
+                input.started_at,
+                clamped_seconds,
+                input.pages_read,
+                input.completed_chapter,
+            ],
+        )?;
+        Ok(self.connection.last_insert_rowid())
+    }
+
+    /// Persists genres/tags associated with a manga, normalizing whitespace and avoiding case-insensitive duplicates.
+    pub fn save_manga_genres(&self, manga_id: &str, provider: MangaProviders, genres: &[String]) -> rusqlite::Result<usize> {
+        let provider_str = provider.to_string();
+        let mut seen: HashSet<String> = self.get_manga_genres(manga_id, provider)?.into_iter().map(|g| g.to_lowercase()).collect();
+
+        let tx = self.connection.unchecked_transaction()?;
+        let mut inserted = 0usize;
+        for raw in genres {
+            let trimmed = raw.trim();
+            if trimmed.is_empty() {
+                continue;
+            }
+            let lower = trimmed.to_lowercase();
+            if !seen.insert(lower) {
+                continue;
+            }
+            let affected =
+                tx.execute("INSERT OR IGNORE INTO manga_genres (manga_id, provider, genre) VALUES (?1, ?2, ?3)", params![
+                    manga_id,
+                    provider_str,
+                    trimmed
+                ])?;
+            inserted += affected;
+        }
+        tx.commit()?;
+        Ok(inserted)
+    }
+
+    /// Returns stored genres for a given `(manga_id, provider)` sorted alphabetically.
+    pub fn get_manga_genres(&self, manga_id: &str, provider: MangaProviders) -> rusqlite::Result<Vec<String>> {
+        let mut stmt = self.connection.prepare(
+            "SELECT genre FROM manga_genres
+             WHERE manga_id = ?1 AND provider = ?2
+             ORDER BY genre COLLATE NOCASE ASC",
+        )?;
+        let rows = stmt.query_map(params![manga_id, provider.to_string()], |row| row.get(0))?;
+        rows.collect()
+    }
+
+    /// Returns all stored genres indexed by `(manga_id, provider)`.
+    pub fn get_all_manga_genres_map(&self) -> rusqlite::Result<HashMap<(String, String), Vec<String>>> {
+        let mut map: HashMap<(String, String), Vec<String>> = HashMap::new();
+        let mut stmt = self.connection.prepare(
+            "SELECT manga_id, provider, genre FROM manga_genres
+             ORDER BY manga_id, provider, genre COLLATE NOCASE ASC",
+        )?;
+        let rows = stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))?;
+        for row in rows.flatten() {
+            map.entry((row.0, row.1)).or_default().push(row.2);
+        }
+        Ok(map)
+    }
+
+    /// Computes comprehensive 100 % device-local reader metrics (zero external telemetry).
+    pub fn get_extended_reader_metrics(&self) -> rusqlite::Result<ExtendedReaderMetrics> {
+        let now = Utc::now();
+        let today = now.date_naive();
+        let generated_at = now.to_rfc3339();
+
+        let reading_mangas: u32 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(DISTINCT manga_history_union.manga_id)
+                 FROM manga_history_union
+                 INNER JOIN history_types ON manga_history_union.type_id = history_types.id
+                 INNER JOIN mangas ON mangas.id = manga_history_union.manga_id
+                 WHERE history_types.name = 'ReadingHistory' AND mangas.deleted_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let plan_to_read_mangas: u32 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(DISTINCT manga_history_union.manga_id)
+                 FROM manga_history_union
+                 INNER JOIN history_types ON manga_history_union.type_id = history_types.id
+                 INNER JOIN mangas ON mangas.id = manga_history_union.manga_id
+                 WHERE history_types.name = 'PlanToRead' AND mangas.deleted_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let favorites_count: u32 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM favorite_mangas", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let shelves_count: u32 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM manga_collections", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let downloaded_chapters: u32 = self
+            .connection
+            .query_row("SELECT COUNT(*) FROM chapters WHERE is_downloaded = 1", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let chapters_in_table: u32 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM chapters
+                 INNER JOIN mangas ON mangas.id = chapters.manga_id
+                 WHERE chapters.is_read = 1 AND mangas.deleted_at IS NULL",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let session_only_completed: u32 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(DISTINCT chapter_id) FROM reading_sessions
+                 WHERE completed_chapter = 1
+                   AND NOT EXISTS (
+                       SELECT 1 FROM chapters c
+                       WHERE c.id = reading_sessions.chapter_id AND c.is_read = 1
+                   )",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let total_chapters_read = chapters_in_table.saturating_add(session_only_completed);
+
+        let recorded_reading_seconds: u64 = self
+            .connection
+            .query_row("SELECT COALESCE(SUM(duration_seconds), 0) FROM reading_sessions", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let total_pages_read: u32 = self
+            .connection
+            .query_row("SELECT COALESCE(SUM(pages_read), 0) FROM reading_sessions", [], |row| row.get(0))
+            .unwrap_or(0);
+
+        let legacy_read_without_session: u64 = self
+            .connection
+            .query_row(
+                "SELECT COUNT(*) FROM chapters
+                 INNER JOIN mangas ON mangas.id = chapters.manga_id
+                 WHERE chapters.is_read = 1 AND mangas.deleted_at IS NULL
+                   AND NOT EXISTS (SELECT 1 FROM reading_sessions rs WHERE rs.chapter_id = chapters.id)",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap_or(0);
+
+        let total_seconds = recorded_reading_seconds.saturating_add(legacy_read_without_session.saturating_mul(360));
+        let estimated_total_reading_minutes =
+            if total_seconds == 0 { 0 } else { ((total_seconds as f64) / 60.0).round().max(1.0) as u32 };
+
+        let average_minutes_per_chapter = if total_chapters_read == 0 {
+            0.0
+        } else {
+            ((estimated_total_reading_minutes as f32 / total_chapters_read as f32) * 10.0).round() / 10.0
+        };
+
+        let mut active_dates: BTreeSet<NaiveDate> = BTreeSet::new();
+        let mut chapters_by_date: HashMap<NaiveDate, u32> = HashMap::new();
+        let mut seconds_by_date: HashMap<NaiveDate, u64> = HashMap::new();
+        let mut pages_by_date: HashMap<NaiveDate, u32> = HashMap::new();
+
+        if let Ok(mut stmt) = self.connection.prepare(
+            "SELECT date(started_at) AS d,
+                    COALESCE(SUM(duration_seconds), 0) AS secs,
+                    COALESCE(SUM(pages_read), 0) AS pages,
+                    COUNT(DISTINCT CASE WHEN completed_chapter = 1 THEN chapter_id END) AS completed_chs
+             FROM reading_sessions
+             WHERE started_at IS NOT NULL
+             GROUP BY d",
+        ) && let Ok(rows) = stmt.query_map([], |row| {
+            Ok((row.get::<_, Option<String>>(0)?, row.get::<_, u64>(1)?, row.get::<_, u32>(2)?, row.get::<_, u32>(3)?))
+        }) {
+            for (date_str_opt, secs, pages, completed_chs) in rows.flatten() {
+                if let Some(date_str) = date_str_opt
+                    && let Ok(date) = NaiveDate::parse_from_str(date_str.trim(), "%Y-%m-%d")
+                {
+                    active_dates.insert(date);
+                    *seconds_by_date.entry(date).or_insert(0) += secs;
+                    *pages_by_date.entry(date).or_insert(0) += pages;
+                    *chapters_by_date.entry(date).or_insert(0) += completed_chs;
+                }
+            }
+        }
+
+        if let Ok(mut stmt) = self.connection.prepare(
+            "SELECT date(mangas.last_read) AS d,
+                    COUNT(chapters.id) AS ch_cnt,
+                    COALESCE(SUM(CASE
+                        WHEN NOT EXISTS (SELECT 1 FROM reading_sessions rs WHERE rs.chapter_id = chapters.id) THEN 1
+                        ELSE 0
+                    END), 0) AS no_session_cnt
+             FROM chapters
+             INNER JOIN mangas ON mangas.id = chapters.manga_id
+             WHERE chapters.is_read = 1
+               AND mangas.deleted_at IS NULL
+               AND mangas.last_read IS NOT NULL
+               AND NOT EXISTS (
+                   SELECT 1 FROM reading_sessions rs
+                   WHERE rs.chapter_id = chapters.id AND rs.completed_chapter = 1
+               )
+             GROUP BY d",
+        ) && let Ok(rows) =
+            stmt.query_map([], |row| Ok((row.get::<_, Option<String>>(0)?, row.get::<_, u32>(1)?, row.get::<_, u64>(2)?)))
+        {
+            for (date_str_opt, ch_cnt, no_session_cnt) in rows.flatten() {
+                if let Some(date_str) = date_str_opt
+                    && let Ok(date) = NaiveDate::parse_from_str(date_str.trim(), "%Y-%m-%d")
+                {
+                    active_dates.insert(date);
+                    *chapters_by_date.entry(date).or_insert(0) += ch_cnt;
+                    *seconds_by_date.entry(date).or_insert(0) += no_session_cnt.saturating_mul(360);
+                }
+            }
+        }
+
+        let chapters_read_today = chapters_by_date.get(&today).copied().unwrap_or(0);
+        let window_7_start = today - Duration::days(6);
+        let window_30_start = today - Duration::days(29);
+
+        let chapters_read_last_7_days: u32 = chapters_by_date
+            .iter()
+            .filter(|&(&d, _)| d >= window_7_start && d <= today)
+            .map(|(_, &cnt)| cnt)
+            .sum();
+        let chapters_read_last_30_days: u32 = chapters_by_date
+            .iter()
+            .filter(|&(&d, _)| d >= window_30_start && d <= today)
+            .map(|(_, &cnt)| cnt)
+            .sum();
+
+        let active_days_count = active_dates.len() as u32;
+        let sorted_dates: Vec<NaiveDate> = active_dates.into_iter().collect();
+        let (current_streak_days, longest_streak_days) = compute_reading_streaks(&sorted_dates, today);
+
+        let mut daily_activity_last_14_days = Vec::with_capacity(14);
+        for days_back in (0..14).rev() {
+            let date = today - Duration::days(days_back);
+            let chapters_read = chapters_by_date.get(&date).copied().unwrap_or(0);
+            let secs = seconds_by_date.get(&date).copied().unwrap_or(0);
+            let reading_minutes = if secs == 0 { 0 } else { ((secs as f64) / 60.0).round().max(1.0) as u32 };
+            let pages_read = pages_by_date.get(&date).copied().unwrap_or(0);
+            daily_activity_last_14_days.push(DailyReadingActivity {
+                date: date.format("%Y-%m-%d").to_string(),
+                chapters_read,
+                reading_minutes,
+                pages_read,
+            });
+        }
+
+        // Per-manga aggregation without double-counting chapters or reading time
+        let mut manga_meta: HashMap<(String, String), String> = HashMap::new();
+        let mut manga_chapters_read: HashMap<(String, String), u32> = HashMap::new();
+        let mut manga_seconds: HashMap<(String, String), u64> = HashMap::new();
+
+        if let Ok(mut stmt) = self
+            .connection
+            .prepare("SELECT id, title, manga_provider FROM mangas WHERE deleted_at IS NULL")
+            && let Ok(rows) =
+                stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+        {
+            for (id, title, provider) in rows.flatten() {
+                manga_meta.insert((id, provider), title);
+            }
+        }
+
+        if let Ok(mut stmt) = self.connection.prepare(
+            "SELECT mangas.id,
+                    mangas.manga_provider,
+                    COUNT(chapters.id) AS read_cnt,
+                    COALESCE(SUM(CASE
+                        WHEN NOT EXISTS (SELECT 1 FROM reading_sessions rs WHERE rs.chapter_id = chapters.id) THEN 1
+                        ELSE 0
+                    END), 0) AS legacy_cnt
+             FROM mangas
+             INNER JOIN chapters ON chapters.manga_id = mangas.id
+             WHERE chapters.is_read = 1 AND mangas.deleted_at IS NULL
+             GROUP BY mangas.id, mangas.manga_provider",
+        ) && let Ok(rows) = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u32>(2)?, row.get::<_, u64>(3)?))
+        }) {
+            for (id, provider, read_cnt, legacy_cnt) in rows.flatten() {
+                *manga_chapters_read.entry((id.clone(), provider.clone())).or_insert(0) += read_cnt;
+                *manga_seconds.entry((id, provider)).or_insert(0) += legacy_cnt.saturating_mul(360);
+            }
+        }
+
+        if let Ok(mut stmt) = self.connection.prepare(
+            "SELECT manga_id,
+                    provider,
+                    COALESCE(SUM(duration_seconds), 0) AS secs,
+                    COUNT(DISTINCT CASE
+                        WHEN completed_chapter = 1
+                             AND NOT EXISTS (SELECT 1 FROM chapters c WHERE c.id = reading_sessions.chapter_id AND c.is_read = 1)
+                        THEN chapter_id
+                    END) AS session_only_chs
+             FROM reading_sessions
+             GROUP BY manga_id, provider",
+        ) && let Ok(rows) = stmt.query_map([], |row| {
+            Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, u64>(2)?, row.get::<_, u32>(3)?))
+        }) {
+            for (id, provider, secs, extra_chs) in rows.flatten() {
+                *manga_seconds.entry((id.clone(), provider.clone())).or_insert(0) += secs;
+                *manga_chapters_read.entry((id, provider)).or_insert(0) += extra_chs;
+            }
+        }
+
+        let mut top_read_mangas: Vec<TopMangaStat> = manga_chapters_read
+            .iter()
+            .filter_map(|((id, provider_str), &ch_count)| {
+                if ch_count == 0 {
+                    return None;
+                }
+                let title = manga_meta.get(&(id.clone(), provider_str.clone()))?.clone();
+                let secs = manga_seconds.get(&(id.clone(), provider_str.clone())).copied().unwrap_or(0);
+                let reading_minutes = if secs == 0 { 0 } else { ((secs as f64) / 60.0).round().max(1.0) as u32 };
+                Some(TopMangaStat {
+                    manga_id: id.clone(),
+                    title,
+                    provider: provider_str.parse::<MangaProviders>().unwrap_or_default(),
+                    chapters_read: ch_count,
+                    reading_minutes,
+                })
+            })
+            .collect();
+        top_read_mangas.sort_by(|a, b| {
+            b.chapters_read
+                .cmp(&a.chapters_read)
+                .then_with(|| b.reading_minutes.cmp(&a.reading_minutes))
+                .then_with(|| a.title.cmp(&b.title))
+        });
+        top_read_mangas.truncate(5);
+
+        struct GenreAcc {
+            display_name: String,
+            mangas: HashSet<(String, String)>,
+            chapters_read: u32,
+            seconds: u64,
+        }
+        let mut genre_map: HashMap<String, GenreAcc> = HashMap::new();
+        if let Ok(mut stmt) = self
+            .connection
+            .prepare("SELECT manga_id, provider, genre FROM manga_genres ORDER BY genre COLLATE NOCASE ASC")
+            && let Ok(rows) =
+                stmt.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?, row.get::<_, String>(2)?)))
+        {
+            for (manga_id, provider, genre) in rows.flatten() {
+                let trimmed = genre.trim();
+                if trimmed.is_empty() {
+                    continue;
+                }
+                let key = trimmed.to_lowercase();
+                let manga_key = (manga_id, provider);
+                let acc = genre_map.entry(key).or_insert_with(|| GenreAcc {
+                    display_name: trimmed.to_string(),
+                    mangas: HashSet::new(),
+                    chapters_read: 0,
+                    seconds: 0,
+                });
+                if acc.mangas.insert(manga_key.clone()) {
+                    acc.chapters_read += manga_chapters_read.get(&manga_key).copied().unwrap_or(0);
+                    acc.seconds += manga_seconds.get(&manga_key).copied().unwrap_or(0);
+                }
+            }
+        }
+
+        let total_genre_chapters: u32 = genre_map.values().map(|g| g.chapters_read).sum();
+        let total_genre_mangas: u32 = genre_map.values().map(|g| g.mangas.len() as u32).sum();
+        let mut top_genres: Vec<GenreReadingStat> = genre_map
+            .into_values()
+            .map(|acc| {
+                let mangas_count = acc.mangas.len() as u32;
+                let reading_minutes = if acc.seconds == 0 { 0 } else { ((acc.seconds as f64) / 60.0).round().max(1.0) as u32 };
+                let share_percent = if total_genre_chapters > 0 {
+                    ((acc.chapters_read as f32 / total_genre_chapters as f32) * 1000.0).round() / 10.0
+                } else if total_genre_mangas > 0 {
+                    ((mangas_count as f32 / total_genre_mangas as f32) * 1000.0).round() / 10.0
+                } else {
+                    0.0
+                };
+                GenreReadingStat {
+                    genre: acc.display_name,
+                    mangas_count,
+                    chapters_read: acc.chapters_read,
+                    reading_minutes,
+                    share_percent,
+                }
+            })
+            .collect();
+        top_genres.sort_by(|a, b| {
+            b.chapters_read
+                .cmp(&a.chapters_read)
+                .then_with(|| b.mangas_count.cmp(&a.mangas_count))
+                .then_with(|| a.genre.cmp(&b.genre))
+        });
+        top_genres.truncate(8);
+
+        let provider_breakdown = {
+            let mut list = Vec::new();
+            if let Ok(mut stmt) = self.connection.prepare(
+                "SELECT mangas.manga_provider,
+                        COUNT(DISTINCT mangas.id) AS manga_count,
+                        COALESCE(SUM(CASE WHEN chapters.is_read = 1 THEN 1 ELSE 0 END), 0) AS read_chapters
+                 FROM mangas
+                 LEFT JOIN chapters ON mangas.id = chapters.manga_id
+                 WHERE mangas.deleted_at IS NULL
+                 GROUP BY mangas.manga_provider
+                 ORDER BY read_chapters DESC, manga_count DESC",
+            ) && let Ok(rows) = stmt.query_map([], |row| {
+                let prov_str: String = row.get(0)?;
+                let m_cnt: u32 = row.get(1)?;
+                let ch_cnt: u32 = row.get(2)?;
+                Ok(ProviderReadingStat {
+                    provider: prov_str.parse::<MangaProviders>().unwrap_or_default(),
+                    mangas_count: m_cnt,
+                    chapters_read: ch_cnt,
+                })
+            }) {
+                for r in rows.flatten() {
+                    list.push(r);
+                }
+            }
+            list
+        };
+
+        Ok(ExtendedReaderMetrics {
+            total_chapters_read,
+            chapters_read_today,
+            chapters_read_last_7_days,
+            chapters_read_last_30_days,
+            total_pages_read,
+            recorded_reading_seconds,
+            estimated_total_reading_minutes,
+            average_minutes_per_chapter,
+            active_days_count,
+            current_streak_days,
+            longest_streak_days,
+            reading_mangas,
+            plan_to_read_mangas,
+            favorites_count,
+            shelves_count,
+            downloaded_chapters,
+            top_genres,
+            top_read_mangas,
+            provider_breakdown,
+            daily_activity_last_14_days,
+            generated_at,
+            privacy_local_only: true,
         })
     }
 
@@ -4281,6 +4949,144 @@ mod test {
         let snap = database.export_library_sync_snapshot()?;
         assert_eq!(snap.collections.len(), 1);
         assert_eq!(snap.collections[0].shelf_name, PRESET_SHELVES[0]);
+
+        Ok(())
+    }
+
+    #[test]
+    fn compute_reading_streaks_handles_gaps_yesterday_and_empty() {
+        let today = NaiveDate::from_ymd_opt(2026, 11, 24).unwrap();
+        assert_eq!(compute_reading_streaks(&[], today), (0, 0));
+
+        // Streak active through today
+        let active_today = vec![
+            NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 22).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 23).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 24).unwrap(),
+        ];
+        assert_eq!(compute_reading_streaks(&active_today, today), (3, 3));
+
+        // Streak still alive if last read was yesterday, even with an older longer streak
+        let yesterday_only = vec![
+            NaiveDate::from_ymd_opt(2026, 11, 10).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 11).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 12).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 13).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 22).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 23).unwrap(),
+        ];
+        assert_eq!(compute_reading_streaks(&yesterday_only, today), (2, 4));
+
+        // Broken streak (> 1 day gap before today) resets current streak to 0 while keeping longest
+        let stale = vec![
+            NaiveDate::from_ymd_opt(2026, 11, 18).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 19).unwrap(),
+            NaiveDate::from_ymd_opt(2026, 11, 20).unwrap(),
+        ];
+        assert_eq!(compute_reading_streaks(&stale, today), (0, 3));
+    }
+
+    #[test]
+    fn extended_reader_metrics_tracks_sessions_genres_and_avoids_double_counting() -> Result<()> {
+        let conn = Connection::open_in_memory()?;
+        let database = Database::new(&conn);
+        database.setup()?;
+
+        // Manga 1 with two read chapters: one with a real session (180s), one legacy without session (360s fallback)
+        database.save_history(MangaReadingHistorySave {
+            id: "dandadan_1",
+            title: "Dandadan",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "dd_ch_1",
+                title: "Cap 1",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangadex,
+        })?;
+        database.save_history(MangaReadingHistorySave {
+            id: "dandadan_1",
+            title: "Dandadan",
+            img_url: None,
+            chapter: ChapterToSaveHistory {
+                id: "dd_ch_2",
+                title: "Cap 2",
+                translated_language: "es",
+            },
+            provider: MangaProviders::Mangadex,
+        })?;
+
+        let today_str = Utc::now().format("%Y-%m-%d 12:00:00").to_string();
+        let row_id = database.record_reading_session(ReadingSessionInput {
+            manga_id: "dandadan_1",
+            provider: MangaProviders::Mangadex,
+            chapter_id: "dd_ch_1",
+            duration_seconds: 180,
+            pages_read: 22,
+            completed_chapter: true,
+            started_at: Some(&today_str),
+        })?;
+        assert!(row_id > 0);
+
+        // Save genres across repeated calls with whitespace/case differences
+        let first_inserted = database.save_manga_genres("dandadan_1", MangaProviders::Mangadex, &[
+            "Action".to_string(),
+            "Sci-Fi".to_string(),
+            "  ".to_string(),
+        ])?;
+        assert_eq!(first_inserted, 2);
+
+        let second_inserted =
+            database.save_manga_genres("dandadan_1", MangaProviders::Mangadex, &["action".to_string(), " Comedy ".to_string()])?;
+        assert_eq!(second_inserted, 1);
+
+        let stored_genres = database.get_manga_genres("dandadan_1", MangaProviders::Mangadex)?;
+        assert_eq!(stored_genres, vec!["Action", "Comedy", "Sci-Fi"]);
+
+        let metrics = database.get_extended_reader_metrics()?;
+        assert!(metrics.privacy_local_only);
+        assert_eq!(metrics.total_chapters_read, 2);
+        assert_eq!(metrics.chapters_read_today, 2);
+        assert_eq!(metrics.chapters_read_last_7_days, 2);
+        assert_eq!(metrics.total_pages_read, 22);
+        assert_eq!(metrics.recorded_reading_seconds, 180);
+        // 180s real session + 360s fallback for dd_ch_2 = 540s = 9 min (no double counting of dd_ch_1)
+        assert_eq!(metrics.estimated_total_reading_minutes, 9);
+        assert_eq!(metrics.current_streak_days, 1);
+        assert_eq!(metrics.longest_streak_days, 1);
+        assert_eq!(metrics.daily_activity_last_14_days.len(), 14);
+        assert_eq!(metrics.top_read_mangas.len(), 1);
+        assert_eq!(metrics.top_read_mangas[0].title, "Dandadan");
+        assert_eq!(metrics.top_read_mangas[0].chapters_read, 2);
+        assert_eq!(metrics.top_read_mangas[0].reading_minutes, 9);
+        assert_eq!(metrics.top_genres.len(), 3);
+        assert_eq!(metrics.top_genres[0].chapters_read, 2);
+
+        // Cloud sync exports manga_genres metadata while keeping reading_sessions strictly local
+        let snapshot = database.export_library_sync_snapshot()?;
+        assert_eq!(snapshot.manga_genres.len(), 3);
+
+        // Merging snapshot with another genre from remote imports into a second database
+        let conn2 = Connection::open_in_memory()?;
+        let db2 = Database::new(&conn2);
+        db2.setup()?;
+        let merged = db2.import_and_merge_library_sync_snapshot(&snapshot)?;
+        assert_eq!(merged.manga_genres.len(), 3);
+        assert_eq!(db2.get_manga_genres("dandadan_1", MangaProviders::Mangadex)?, vec!["Action", "Comedy", "Sci-Fi"]);
+
+        // Ensure excessive duration (> 12h) is clamped to 43_200s
+        database.record_reading_session(ReadingSessionInput {
+            manga_id: "dandadan_1",
+            provider: MangaProviders::Mangadex,
+            chapter_id: "dd_ch_2",
+            duration_seconds: 999_999,
+            pages_read: 18,
+            completed_chapter: true,
+            started_at: Some(&today_str),
+        })?;
+        let after_clamp = database.get_extended_reader_metrics()?;
+        assert_eq!(after_clamp.recorded_reading_seconds, 180 + 43_200);
 
         Ok(())
     }

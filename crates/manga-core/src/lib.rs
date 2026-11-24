@@ -13,6 +13,9 @@ pub mod filter_schema;
 pub mod global;
 pub mod i18n;
 pub mod logger;
+pub mod mangora_appearance;
+pub mod mangora_hito5_api;
+pub mod mangora_metrics_card;
 pub mod runtime_settings;
 
 use std::cmp::Ordering;

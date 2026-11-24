@@ -16,7 +16,7 @@ flowchart LR
     H2["Hito 2<br/>Explorar + Biblioteca + Ficha AniList<br/>⏳ Pendiente"]
     H3["Hito 3<br/>Lector HD Nativo + Descargas Offline<br/>⏳ Pendiente"]
     H4["Hito 4<br/>Ajustes + Buzón + Monster 2€ + Instalador<br/>⏳ Pendiente"]
-    H5["Hito 5 (v1.1+)<br/>Personalización Visual + Métricas Locales<br/>⏳ Pendiente"]
+    H5["Hito 5 (v1.1+)<br/>Personalización Visual + Métricas Locales<br/>✅ Implementado (rama MANGORA_HITO5)"]
 
     Base --> H1 --> H2 --> H3 --> H4 --> H5
 ```
@@ -27,7 +27,7 @@ flowchart LR
 | **Hito 2** | ⏳ Pendiente | Explorar/Buscar con portadas HD, Biblioteca compartida SQLite y Ficha de serie con reseñas de AniList y acceso a Discord |
 | **Hito 3** | ⏳ Pendiente | Lector HD nativo (online + 100 % offline en CBZ/RAW/EPUB/PDF) y gestor de cola de descargas en tiempo real |
 | **Hito 4** | ⏳ Pendiente | Ajustes simples (Drive/AniList/MAL), Buzón de opiniones seguro, botón *"¿Me invitas a un Monster? ⚡ 2 €"* y empaquetado Windows |
-| **Hito 5 (v1.1+)** | ⏳ Pendiente | Personalización visual avanzada de temas/tarjetas y métricas locales ampliadas del lector |
+| **Hito 5 (v1.1+)** | ✅ Implementado (`MANGORA_HITO5`) | Personalización visual avanzada de temas/tarjetas y métricas locales ampliadas del lector |
 
 ---
 
@@ -228,7 +228,7 @@ Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.r
 
 ## Hito 5 (v1.1+) · Personalización Visual Avanzada y Métricas del Lector
 
-- **Estado:** `⏳ Pendiente`
+- **Estado:** `✅ Implementado` (rama `MANGORA_HITO5`, listo para integrarse sobre los Hitos 1–4 sin conflictos)
 
 ### Prompt sugerido para nuevo hilo
 
@@ -237,17 +237,22 @@ Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.r
 ### Alcance técnico y entregables
 
 1. **Personalización visual de la interfaz:**
-   - Paletas editoriales adicionales inspiradas en papel y manga (p. ej. *Papel Clásico*, *Tinta Nocturna*, *Sepia Editorial*, *Shonen Rojo*), guardadas en configuración local.
-   - Opciones de visualización en Biblioteca y Explorar: tamaño/densidad de tarjetas, ordenación personalizada y fondos sutiles de lectura.
+   - Paletas editoriales adicionales inspiradas en papel y manga (*Papel Clásico*, *Tinta Nocturna*, *Sepia Editorial*, *Shonen Rojo*, *Sumi Grafito*), guardadas atómicamente en `[mangora_appearance]` dentro de `config.toml`.
+   - Opciones de visualización en Biblioteca y Explorar: tamaño/densidad de tarjetas (`compact`, `comfortable`, `spacious`), vista cuadrícula/lista, ordenación personalizada y 7 fondos sutiles de lectura (`theme_default`, `pure_paper`, `warm_sepia`, `soft_gray`, `matte_ink`, `pitch_black`, `subtle_screentone`).
 2. **Métricas locales para el lector (100 % privadas en dispositivo):**
-   - Registrar en SQLite local (si requiere nuevas tablas/columnas, seguir la skill `db-migration-helper` manteniendo compatibilidad hacia atrás con `manga-tui`) estadísticas útiles para el propio usuario: capítulos leídos, tiempo aproximado de lectura, rachas de días leyendo y géneros más leídos.
-   - Vista de resumen/estadísticas con estética editorial lista para exportar como imagen/tarjeta si el usuario quiere compartirla.
+   - Migración SQLite `0.12.0` (`reading_sessions` 100 % local y `manga_genres` con índices) manteniendo compatibilidad total hacia atrás con `manga-tui` y `LibrarySyncSnapshot` (solo `manga_genres` sincroniza como metadato; `reading_sessions` nunca sale del equipo).
+   - Cálculo de estadísticas locales sin doble conteo (`ExtendedReaderMetrics`): capítulos leídos (hoy / 7d / 30d / total), tiempo real/estimado, promedio por capítulo, rachas actual y máxima, top géneros, top series, actividad diaria de 14 días y vista/tarjeta editorial SVG (`1200×675`) exportable a **SVG** y **PNG 2x**.
+
+### Archivos añadidos en `MANGORA_HITO5`
+
+- **Backend compartido (`crates/manga-core`):** [`mangora_appearance.rs`](crates/manga-core/src/mangora_appearance.rs), [`config.rs`](crates/manga-core/src/config.rs), [`migration.rs`](crates/manga-core/src/backend/migration.rs), [`database.rs`](crates/manga-core/src/backend/database.rs), [`cloud.rs`](crates/manga-core/src/backend/cloud.rs), [`database_scheme.md`](crates/manga-core/src/backend/database_scheme.md), [`mangora_metrics_card.rs`](crates/manga-core/src/mangora_metrics_card.rs), [`mangora_hito5_api.rs`](crates/manga-core/src/mangora_hito5_api.rs), [`lib.rs`](crates/manga-core/src/lib.rs).
+- **Módulos UI autocontenidos (`apps/mangora/src/features/hito5/`):** [`types.ts`](apps/mangora/src/features/hito5/types.ts), [`palettes.css`](apps/mangora/src/features/hito5/palettes.css), [`palettes.ts`](apps/mangora/src/features/hito5/palettes.ts), [`bridge.ts`](apps/mangora/src/features/hito5/bridge.ts), [`sorting.ts`](apps/mangora/src/features/hito5/sorting.ts), [`useMangoraAppearance.ts`](apps/mangora/src/features/hito5/useMangoraAppearance.ts), [`useReaderMetrics.ts`](apps/mangora/src/features/hito5/useReaderMetrics.ts), [`AppearanceCustomizerPanel.tsx`](apps/mangora/src/features/hito5/components/AppearanceCustomizerPanel.tsx), [`CollectionDisplayToolbar.tsx`](apps/mangora/src/features/hito5/components/CollectionDisplayToolbar.tsx), [`ReaderMetricsDashboard.tsx`](apps/mangora/src/features/hito5/components/ReaderMetricsDashboard.tsx), [`tauriCommandsTemplate.rs`](apps/mangora/src/features/hito5/tauriCommandsTemplate.rs), [`index.ts`](apps/mangora/src/features/hito5/index.ts), [`INTEGRATION.md`](apps/mangora/src/features/hito5/INTEGRATION.md).
 
 ### Criterios de aceptación
 
-- [ ] Los temas y ajustes de densidad se aplican en vivo y persisten entre reinicios.
-- [ ] Las métricas se calculan y almacenan 100 % en local sin telemetría oculta ni envío externo de hábitos de lectura.
-- [ ] Cualquier cambio en la base de datos SQLite conserva compatibilidad total con `manga-tui` y pasa las pruebas de migración y `cargo test`.
+- [x] Los temas y ajustes de densidad se aplican en vivo y persisten entre reinicios.
+- [x] Las métricas se calculan y almacenan 100 % en local sin telemetría oculta ni envío externo de hábitos de lectura.
+- [x] Cualquier cambio en la base de datos SQLite conserva compatibilidad total con `manga-tui` y pasa las pruebas de migración y `cargo test`.
 
 ---
 

@@ -487,8 +487,202 @@ fn config_params() -> Vec<Box<dyn ConfigParam>> {
     ]
 }
 
+#[derive(Debug, Default)]
+struct MangoraPaletteParam;
+
+impl ConfigParam for MangoraPaletteParam {
+    fn name(&self) -> &'static str {
+        "palette"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Editorial visual palette for the Mangora desktop interface"
+    }
+
+    fn values(&self) -> &'static str {
+        "classic_paper, night_ink, editorial_sepia, shonen_red, sumi_slate"
+    }
+
+    fn defaults(&self) -> &'static str {
+        r#""classic_paper""#
+    }
+}
+
+#[derive(Debug, Default)]
+struct MangoraLibraryDensityParam;
+
+impl ConfigParam for MangoraLibraryDensityParam {
+    fn name(&self) -> &'static str {
+        "library_density"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Card density in the Mangora Library view"
+    }
+
+    fn values(&self) -> &'static str {
+        "compact, comfortable, spacious"
+    }
+
+    fn defaults(&self) -> &'static str {
+        r#""comfortable""#
+    }
+}
+
+#[derive(Debug, Default)]
+struct MangoraExploreDensityParam;
+
+impl ConfigParam for MangoraExploreDensityParam {
+    fn name(&self) -> &'static str {
+        "explore_density"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Card density in the Mangora Explore / Search view"
+    }
+
+    fn values(&self) -> &'static str {
+        "compact, comfortable, spacious"
+    }
+
+    fn defaults(&self) -> &'static str {
+        r#""comfortable""#
+    }
+}
+
+#[derive(Debug, Default)]
+struct MangoraLibraryViewModeParam;
+
+impl ConfigParam for MangoraLibraryViewModeParam {
+    fn name(&self) -> &'static str {
+        "library_view_mode"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Layout mode for the Mangora Library view"
+    }
+
+    fn values(&self) -> &'static str {
+        "grid, list"
+    }
+
+    fn defaults(&self) -> &'static str {
+        r#""grid""#
+    }
+}
+
+#[derive(Debug, Default)]
+struct MangoraLibrarySortParam;
+
+impl ConfigParam for MangoraLibrarySortParam {
+    fn name(&self) -> &'static str {
+        "library_sort"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Default sorting order in the Mangora Library view"
+    }
+
+    fn values(&self) -> &'static str {
+        "last_read, title_asc, title_desc, chapters_read_desc, date_added_desc, favorites_first"
+    }
+
+    fn defaults(&self) -> &'static str {
+        r#""last_read""#
+    }
+}
+
+#[derive(Debug, Default)]
+struct MangoraExploreSortParam;
+
+impl ConfigParam for MangoraExploreSortParam {
+    fn name(&self) -> &'static str {
+        "explore_sort"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Default sorting order in the Mangora Explore view"
+    }
+
+    fn values(&self) -> &'static str {
+        "relevance, title_asc, title_desc, status_ongoing_first"
+    }
+
+    fn defaults(&self) -> &'static str {
+        r#""relevance""#
+    }
+}
+
+#[derive(Debug, Default)]
+struct MangoraReaderBackgroundParam;
+
+impl ConfigParam for MangoraReaderBackgroundParam {
+    fn name(&self) -> &'static str {
+        "reader_background"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Subtle background canvas inside the Mangora HD reader"
+    }
+
+    fn values(&self) -> &'static str {
+        "theme_default, pure_paper, warm_sepia, soft_gray, matte_ink, pitch_black, subtle_screentone"
+    }
+
+    fn defaults(&self) -> &'static str {
+        r#""theme_default""#
+    }
+}
+
+#[derive(Debug, Default)]
+struct MangoraScreentoneAccentsParam;
+
+impl ConfigParam for MangoraScreentoneAccentsParam {
+    fn name(&self) -> &'static str {
+        "show_screentone_accents"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Enable editorial screentone dot accents in Mangora UI cards"
+    }
+
+    fn values(&self) -> &'static str {
+        "bool (true/false)"
+    }
+
+    fn defaults(&self) -> &'static str {
+        "true"
+    }
+}
+
+#[derive(Debug, Default)]
+struct MangoraAppearanceConfigTable;
+
+impl TableParam for MangoraAppearanceConfigTable {
+    fn table_name(&self) -> &'static str {
+        "mangora_appearance"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Visual customization settings for the Mangora desktop interface"
+    }
+
+    fn parameters(&self) -> Vec<Box<dyn ConfigParam>> {
+        vec![
+            Box::new(MangoraPaletteParam),
+            Box::new(MangoraLibraryDensityParam),
+            Box::new(MangoraExploreDensityParam),
+            Box::new(MangoraLibraryViewModeParam),
+            Box::new(MangoraLibrarySortParam),
+            Box::new(MangoraExploreSortParam),
+            Box::new(MangoraReaderBackgroundParam),
+            Box::new(MangoraScreentoneAccentsParam),
+        ]
+    }
+}
+
 fn table_config_params() -> Vec<Box<dyn TableParam>> {
-    vec![Box::new(AnilistConfigTable)]
+    vec![Box::new(AnilistConfigTable), Box::new(MangoraAppearanceConfigTable)]
 }
 
 impl<'a> ConfigBuilder<'a> {
@@ -720,6 +914,9 @@ pub struct MangaTuiConfig {
     pub track_reading_history: bool,
     /// Anilist configuration.
     pub anilist: AnilistConfig,
+    /// Visual customization settings for the Mangora desktop interface.
+    #[serde(default)]
+    pub mangora_appearance: crate::mangora_appearance::MangoraAppearanceConfig,
 }
 
 /// Language used by the user interface.
@@ -840,6 +1037,7 @@ impl Default for MangaTuiConfig {
             default_manga_provider: MangaProviders::default(),
             default_language: Languages::default(),
             anilist: AnilistConfig::default(),
+            mangora_appearance: crate::mangora_appearance::MangoraAppearanceConfig::default(),
         }
     }
 }
@@ -909,6 +1107,13 @@ impl MangaTuiConfig {
         copy.image_protocol = crate::runtime_settings::active_image_protocol();
         copy
     }
+}
+
+/// Ensures `config.toml` exists inside `path` with all schema keys without mutating global static state.
+pub(crate) fn ensure_config_file_in_dir(path: &Path) -> Result<(), Box<dyn Error>> {
+    let config_builder = ConfigBuilder::new().dir_path(path);
+    let _ = config_builder.create_file_if_not_exists()?;
+    Ok(())
 }
 
 /// Builds or loads `config.toml` inside `path`, updating runtime settings and initializing `CONFIG` if unset.
@@ -1235,5 +1440,42 @@ param2 = ""
 
         config.download_dir = "   ".to_string();
         assert_eq!(config.get_custom_download_dir(), None);
+    }
+
+    #[test]
+    fn legacy_config_without_mangora_appearance_parses_and_upgrades_cleanly() -> Result<(), Box<dyn Error>> {
+        let legacy_toml = r#"
+ui_language = "es"
+theme = "tokyo_night"
+download_type = "cbz"
+download_dir = ""
+image_quality = "low"
+image_resize_filter = "lanczos3"
+image_protocol = "auto"
+auto_bookmark = true
+amount_pages = 5
+track_reading_when_download = false
+check_new_updates = true
+default_manga_provider = "mangadex"
+default_language = "en"
+track_reading_history = true
+
+[anilist]
+client_id = ""
+access_token = ""
+"#;
+
+        let parsed = MangaTuiConfig::from_str(legacy_toml)?;
+        assert_eq!(parsed.mangora_appearance, crate::mangora_appearance::MangoraAppearanceConfig::default());
+
+        let builder = ConfigBuilder::new();
+        let upgraded = builder.add_missing_params(legacy_toml)?;
+        let table = toml::Table::from_str(&upgraded)?;
+        assert!(table.contains_key("mangora_appearance"));
+
+        let parsed_upgraded = MangaTuiConfig::from_str(&upgraded)?;
+        assert_eq!(parsed_upgraded.mangora_appearance, crate::mangora_appearance::MangoraAppearanceConfig::default());
+
+        Ok(())
     }
 }
