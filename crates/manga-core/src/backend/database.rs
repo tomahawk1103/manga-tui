@@ -458,7 +458,7 @@ pub fn extract_normalized_chapter_number(text: &str) -> Option<String> {
 /// thread-safe by default, so ensure proper synchronization if using across threads.
 #[derive(Debug)]
 pub struct Database<'a> {
-    connection: &'a Connection,
+    pub(super) connection: &'a Connection,
 }
 
 impl<'a> Database<'a> {
@@ -659,6 +659,10 @@ impl<'a> Database<'a> {
 
         self.connection
             .execute("CREATE INDEX IF NOT EXISTS idx_manga_genres_genre ON manga_genres(genre, provider)", ())?;
+
+        for statement in super::anime_history::SCHEMA {
+            self.connection.execute(statement, [])?;
+        }
 
         Ok(())
     }

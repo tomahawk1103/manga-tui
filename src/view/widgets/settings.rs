@@ -7,7 +7,7 @@ use ratatui::widgets::{Block, BorderType, Clear, Paragraph, Widget, Wrap};
 
 use crate::backend::manga_provider::{Languages, MangaProviders};
 use crate::backend::multi_provider::{ProviderHealthStatus, get_provider_health_status};
-use crate::config::{DownloadType, ImageProtocol, UiLanguage};
+use crate::config::{AnimePlayer, AnimeProviders, AnimeVariant, DownloadType, ImageProtocol, UiLanguage};
 use crate::i18n::tr;
 pub use crate::runtime_settings::*;
 use crate::theme::{ThemePalette, theme};
@@ -21,16 +21,22 @@ pub enum SettingsField {
     UiLanguage,
     Theme,
     ImageProtocol,
+    AnimeProvider,
+    AnimePlayer,
+    AnimeVariant,
 }
 
 impl SettingsField {
-    pub const ALL: [SettingsField; 6] = [
+    pub const ALL: [SettingsField; 9] = [
         SettingsField::DefaultProvider,
         SettingsField::DownloadFormat,
         SettingsField::ChapterLanguage,
         SettingsField::UiLanguage,
         SettingsField::Theme,
         SettingsField::ImageProtocol,
+        SettingsField::AnimeProvider,
+        SettingsField::AnimePlayer,
+        SettingsField::AnimeVariant,
     ];
 
     pub fn from_index(index: usize) -> Self {
@@ -39,6 +45,9 @@ impl SettingsField {
 
     pub fn title(self) -> &'static str {
         match self {
+            Self::AnimeProvider => tr("Proveedor de anime", "Anime provider"),
+            Self::AnimePlayer => tr("Reproductor de anime", "Anime player"),
+            Self::AnimeVariant => tr("Variante de anime", "Anime variant"),
             Self::DefaultProvider => tr("📡 Proveedor por defecto", "📡 Default Provider"),
             Self::DownloadFormat => tr("📦 Formato de descarga", "📦 Download Format"),
             Self::ChapterLanguage => tr("🌐 Idioma de capítulos", "🌐 Chapter Language"),
@@ -50,6 +59,9 @@ impl SettingsField {
 
     pub fn description(self) -> &'static str {
         match self {
+            Self::AnimeProvider => tr("Fuente preferida al abrir la pestaña Anime", "Preferred source when opening the Anime tab"),
+            Self::AnimePlayer => tr("Reproductor web local, VLC o mpv", "Local web player, VLC or mpv"),
+            Self::AnimeVariant => tr("Subtitulado o doblado según disponibilidad", "Subbed or dubbed when available"),
             Self::DefaultProvider => tr(
                 "Cambia la fuente activa al instante y la guarda como predeterminada al iniciar",
                 "Switches active source immediately and saves it as startup default",
@@ -149,6 +161,31 @@ impl SettingsModalState {
 
     pub fn cycle_current(&mut self, forward: bool) -> SettingsOutcome {
         match self.current_field() {
+            field @ (SettingsField::AnimeProvider | SettingsField::AnimePlayer | SettingsField::AnimeVariant) => {
+                let active = active_anime_config();
+                let (setting, value) = match field {
+                    SettingsField::AnimeProvider => {
+                        let next = cycle_anime_choice(
+                            [AnimeProviders::AnimeAv1, AnimeProviders::JkAnime],
+                            active.preferred_provider,
+                            forward,
+                        );
+                        (AnimeSetting::Provider(next), next.to_string())
+                    },
+                    SettingsField::AnimePlayer => {
+                        let next =
+                            cycle_anime_choice([AnimePlayer::Web, AnimePlayer::Vlc, AnimePlayer::Mpv], active.player, forward);
+                        (AnimeSetting::Player(next), next.label().to_string())
+                    },
+                    SettingsField::AnimeVariant => {
+                        let next = cycle_anime_choice([AnimeVariant::Sub, AnimeVariant::Dub], active.preferred_variant, forward);
+                        (AnimeSetting::Variant(next), next.to_string())
+                    },
+                    _ => unreachable!(),
+                };
+                self.set_persist_status(field.title(), &value, apply_anime_setting(setting));
+                SettingsOutcome::Noop
+            },
             SettingsField::DefaultProvider => {
                 let current = active_default_provider();
                 let idx = ALL_PROVIDERS.iter().position(|&p| p == current).unwrap_or(0);
@@ -308,6 +345,11 @@ impl SettingsModalState {
             _ => SettingsOutcome::Noop,
         }
     }
+}
+
+fn cycle_anime_choice<T: Copy + Eq, const N: usize>(choices: [T; N], current: T, forward: bool) -> T {
+    let index = choices.iter().position(|choice| *choice == current).unwrap_or(0);
+    choices[(index + if forward { 1 } else { N - 1 }) % N]
 }
 
 #[derive(Debug)]
@@ -560,13 +602,13 @@ impl<'a> Widget for SettingsModal<'a> {
         .render(header_area, buf);
 
         let row_height = if rows_area.height >= (SettingsField::ALL.len() as u16) * 3 { 3 } else { 2 };
-        let constraints = vec![Constraint::Length(row_height); SettingsField::ALL.len()];
+        let visible = usize::from((rows_area.height / row_height).max(1)).min(SettingsField::ALL.len());
+        let offset = self.state.cursor.saturating_add(1).saturating_sub(visible);
+        let constraints = vec![Constraint::Length(row_height); visible];
         let row_rects = Layout::default().direction(Direction::Vertical).constraints(constraints).split(rows_area);
 
-        for (idx, field) in SettingsField::ALL.iter().enumerate() {
-            let Some(&row_area) = row_rects.get(idx) else {
-                break;
-            };
+        let anime = active_anime_config();
+        for ((idx, field), &row_area) in SettingsField::ALL.iter().enumerate().skip(offset).zip(row_rects.iter()) {
             if row_area.height == 0 || row_area.width == 0 {
                 continue;
             }
@@ -592,8 +634,9 @@ impl<'a> Widget for SettingsModal<'a> {
                 Style::default().fg(t.text_primary).add_modifier(Modifier::BOLD)
             };
 
+            let title_width = if row_area.width >= 45 { 28 } else { 0 };
             let mut top_spans =
-                vec![cursor_indicator, Span::styled(format!("{:<28}", field.title()), label_style), Span::raw("  ")];
+                vec![cursor_indicator, Span::styled(format!("{:<title_width$}", field.title()), label_style), Span::raw("  ")];
 
             let selector_spans = match field {
                 SettingsField::DefaultProvider => Self::render_provider_selector(is_focused),
@@ -602,6 +645,9 @@ impl<'a> Widget for SettingsModal<'a> {
                 SettingsField::UiLanguage => Self::render_ui_language_selector(is_focused),
                 SettingsField::Theme => Self::render_theme_selector(is_focused),
                 SettingsField::ImageProtocol => Self::render_image_protocol_selector(is_focused),
+                SettingsField::AnimeProvider => vec![Span::styled(anime.preferred_provider.to_string(), label_style)],
+                SettingsField::AnimePlayer => vec![Span::styled(anime.player.label(), label_style)],
+                SettingsField::AnimeVariant => vec![Span::styled(anime.preferred_variant.to_string(), label_style)],
             };
             top_spans.extend(selector_spans);
 
@@ -721,6 +767,42 @@ mod tests {
         set_active_ui_language(UiLanguage::Es);
         set_theme(ThemeVariant::TokyoNight);
         set_active_image_protocol(ImageProtocol::Auto);
+    }
+
+    #[test]
+    fn anime_settings_can_be_changed_in_a_short_terminal() {
+        let mut state = SettingsModalState {
+            cursor: SettingsField::AnimeProvider as usize,
+            ..Default::default()
+        };
+        apply_anime_setting(AnimeSetting::Provider(AnimeProviders::AnimeAv1)).unwrap();
+        apply_anime_setting(AnimeSetting::Player(AnimePlayer::Web)).unwrap();
+        apply_anime_setting(AnimeSetting::Variant(AnimeVariant::Sub)).unwrap();
+        assert_eq!(state.current_field(), SettingsField::AnimeProvider);
+        state.handle_key_event(KeyCode::Right.into());
+        assert_eq!(active_anime_config().preferred_provider, AnimeProviders::JkAnime);
+        state.handle_key_event(KeyCode::Down.into());
+        assert_eq!(state.current_field(), SettingsField::AnimePlayer);
+        state.handle_key_event(KeyCode::Left.into());
+        assert_eq!(active_anime_config().player, AnimePlayer::Mpv);
+        state.handle_key_event(KeyCode::Down.into());
+        assert_eq!(state.current_field(), SettingsField::AnimeVariant);
+        state.handle_key_event(KeyCode::Enter.into());
+        assert_eq!(active_anime_config().preferred_variant, AnimeVariant::Dub);
+
+        let area = Rect::new(0, 0, 60, 18);
+        let mut buffer = Buffer::empty(area);
+        SettingsModal::new(&state).render(area, &mut buffer);
+        assert!(
+            buffer
+                .content
+                .chunks(60)
+                .any(|row| { row.iter().map(|cell| cell.symbol()).collect::<String>().contains("  DUB") })
+        );
+
+        apply_anime_setting(AnimeSetting::Provider(AnimeProviders::AnimeAv1)).unwrap();
+        apply_anime_setting(AnimeSetting::Player(AnimePlayer::Web)).unwrap();
+        apply_anime_setting(AnimeSetting::Variant(AnimeVariant::Sub)).unwrap();
     }
 
     #[test]

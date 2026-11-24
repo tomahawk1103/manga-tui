@@ -2,13 +2,16 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::{Mutex, RwLock};
 
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use strum_macros::{Display, EnumIter};
 
 use crate::backend::manga_provider::{Languages, MangaProviders};
-use crate::config::{DownloadType, ImageProtocol, MangaTuiConfig, UiLanguage};
+use crate::config::{
+    AnimeConfig, AnimePlayer, AnimeProviders, AnimeVariant, DownloadType, ImageProtocol, MangaTuiConfig, UiLanguage,
+};
 use crate::i18n::tr;
 
 /// Visual theme variants supported across all tabs and widgets in `manga-tui`.
@@ -97,6 +100,71 @@ static ACTIVE_DOWNLOAD_TYPE: AtomicU8 = AtomicU8::new(u8::MAX);
 static ACTIVE_CHAPTER_LANG: AtomicU8 = AtomicU8::new(u8::MAX);
 static ACTIVE_UI_LANG: AtomicU8 = AtomicU8::new(u8::MAX);
 static ACTIVE_IMAGE_PROTOCOL: AtomicU8 = AtomicU8::new(u8::MAX);
+static ACTIVE_ANIME: RwLock<Option<AnimeConfig>> = RwLock::new(None);
+static CONFIG_WRITE_LOCK: Mutex<()> = Mutex::new(());
+
+pub fn active_anime_config() -> AnimeConfig {
+    ACTIVE_ANIME
+        .read()
+        .unwrap()
+        .clone()
+        .or_else(|| MangaTuiConfig::try_get().map(|config| config.anime.clone()))
+        .unwrap_or_default()
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum AnimeSetting {
+    Provider(AnimeProviders),
+    Player(AnimePlayer),
+    Variant(AnimeVariant),
+}
+
+pub fn apply_anime_setting(setting: AnimeSetting) -> Result<(), String> {
+    let _write = CONFIG_WRITE_LOCK.lock().unwrap();
+    let mut active = ACTIVE_ANIME.write().unwrap();
+    let config = active.get_or_insert_with(|| MangaTuiConfig::try_get().map(|config| config.anime.clone()).unwrap_or_default());
+    let (key, value) = match setting {
+        AnimeSetting::Provider(provider) => {
+            config.preferred_provider = provider;
+            ("preferred_provider", provider.as_id())
+        },
+        AnimeSetting::Player(player) => {
+            config.player = player;
+            ("player", match player {
+                AnimePlayer::Web => "web",
+                AnimePlayer::Vlc => "vlc",
+                AnimePlayer::Mpv => "mpv",
+            })
+        },
+        AnimeSetting::Variant(variant) => {
+            config.preferred_variant = variant;
+            ("preferred_variant", match variant {
+                AnimeVariant::Sub => "sub",
+                AnimeVariant::Dub => "dub",
+            })
+        },
+    };
+    drop(active);
+    if cfg!(any(test, feature = "test-utils")) {
+        return Ok(());
+    }
+    let path = crate::config::get_config_directory_path().join("config.toml");
+    let contents = fs::read_to_string(&path).map_err(|error| error.to_string())?;
+    let updated = update_anime_setting_in_content(&contents, key, value)?;
+    write_updated_config(&path, &updated)
+}
+
+fn update_anime_setting_in_content(contents: &str, key: &str, value: &str) -> Result<String, String> {
+    let mut document = contents.parse::<toml_edit::DocumentMut>().map_err(|error| error.to_string())?;
+    let anime = document.entry("anime").or_insert_with(|| toml_edit::Item::Table(toml_edit::Table::new()));
+    let anime = anime.as_table_like_mut().ok_or_else(|| "Expected [anime] to be a table".to_string())?;
+    let mut replacement = toml_edit::Value::from(value);
+    if let Some(previous) = anime.get(key).and_then(toml_edit::Item::as_value) {
+        *replacement.decor_mut() = previous.decor().clone();
+    }
+    anime.insert(key, toml_edit::Item::Value(replacement));
+    Ok(document.to_string())
+}
 
 pub const ALL_PROVIDERS: [MangaProviders; 7] = [
     MangaProviders::Mangadex,
@@ -350,6 +418,7 @@ pub fn init_runtime_settings(config: &MangaTuiConfig) {
     set_active_ui_language(config.ui_language);
     set_theme(config.theme);
     set_active_image_protocol(config.image_protocol);
+    *ACTIVE_ANIME.write().unwrap() = Some(config.anime.clone());
 }
 
 /// Updates a root-level TOML key (`key = "value"`) in `contents` while preserving comments and tables.
@@ -414,6 +483,7 @@ pub fn persist_setting_to_disk(key: &str, unquoted_value: &str) -> Result<(), St
 }
 
 pub fn persist_setting_in_dir(dir: &Path, key: &str, unquoted_value: &str) -> Result<(), String> {
+    let _write = CONFIG_WRITE_LOCK.lock().unwrap();
     let config_path = dir.join("config.toml");
     if !config_path.exists() {
         return Ok(());
@@ -422,13 +492,17 @@ pub fn persist_setting_in_dir(dir: &Path, key: &str, unquoted_value: &str) -> Re
     let quoted = format!("\"{}\"", unquoted_value.replace('"', "\\\""));
     let updated = update_toml_key_in_content(&current, key, &quoted);
 
-    let tmp_path = dir.join("config.toml.tmp");
+    write_updated_config(&config_path, &updated)
+}
+
+fn write_updated_config(config_path: &Path, updated: &str) -> Result<(), String> {
+    let tmp_path = config_path.with_extension("toml.tmp");
     {
         let mut tmp = File::create(&tmp_path).map_err(|e| e.to_string())?;
         tmp.write_all(updated.as_bytes()).map_err(|e| e.to_string())?;
         tmp.flush().map_err(|e| e.to_string())?;
     }
-    fs::rename(&tmp_path, &config_path).map_err(|e| e.to_string())?;
+    fs::rename(&tmp_path, config_path).map_err(|e| e.to_string())?;
     Ok(())
 }
 
@@ -461,6 +535,16 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use super::*;
+
+    #[test]
+    fn anime_settings_update_only_the_selected_value_and_preserve_comments() {
+        let sample = "theme = \"classic\"\n[anilist]\nclient_id = \"123\"\n\n[anime] # Anime\nplayer = \"web\" # player\ncustom_player_path = 'C:\\Players\\mpv.exe'\n";
+        let updated = update_anime_setting_in_content(sample, "player", "mpv").unwrap();
+        assert_eq!(updated, sample.replace("player = \"web\"", "player = \"mpv\""));
+        let missing = update_anime_setting_in_content("[anilist]\nclient_id = \"123\"\n", "preferred_variant", "dub").unwrap();
+        let config: toml::Table = toml::from_str(&missing).unwrap();
+        assert_eq!(config["anime"]["preferred_variant"].as_str(), Some("dub"));
+    }
 
     #[test]
     fn test_update_toml_key_in_content_preserves_comments_and_tables() {

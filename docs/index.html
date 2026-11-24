@@ -82,6 +82,7 @@
     .features { padding-block: clamp(3rem, 5.5vw, 5rem) }
     h2 { font-size: clamp(2.25rem, 4vw, 3.8rem); margin-bottom: 1.75rem }
     .grid { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 2px solid var(--ink) }
+    .features .grid { grid-template-columns: repeat(4, minmax(0, 1fr)) }
     .grid article { padding: 1.65rem clamp(1rem, 2.4vw, 2.5rem) 1.85rem }
     .grid article:first-child { padding-left: 0 }
     .grid article + article { border-left: 1px solid var(--line) }
@@ -129,7 +130,7 @@
       .intro { max-width: 50ch }
       .quick-cmd { max-width: 100% }
       .stage { width: min(100%, 560px); justify-self: center }
-      .grid, .privacy { grid-template-columns: 1fr }
+      .grid, .features .grid, .privacy { grid-template-columns: 1fr }
       .grid article, .grid article:first-child { padding: 1.35rem 0 }
       .grid article + article { border-left: 0; border-top: 1px solid var(--line) }
       .privacy { gap: 1rem }
@@ -214,6 +215,7 @@
         <article><span class="glyph" aria-hidden="true">[?]</span><h3>Encuentra tu serie</h3><p>Busca entre proveedores en español e inglés y sigue los capítulos nuevos de tus series.</p></article>
         <article><span class="glyph" aria-hidden="true">&gt;_</span><h3>Elige cómo leer</h3><p>Lee en terminal con Sixel, Kitty o iTerm2. Abre el Visor Web HD local para acercarte a los detalles con zoom.</p></article>
         <article><span class="glyph" aria-hidden="true">[↓]</span><h3>Llévatelo sin conexión</h3><p>Descarga los capítulos antes de salir. Los encontrarás en la pestaña Descargas incluso cuando estés sin internet.</p></article>
+        <article><span class="glyph" aria-hidden="true">[▶]</span><h3>Anime desde la terminal</h3><p>Abre Anime con F9 para buscar en AnimeAV1 y JKAnime. Reproduce los episodios en el navegador, VLC o mpv y recupera el progreso del reproductor web.</p></article>
       </div>
     </section>
     <section id="descargas" class="wrap downloads" aria-labelledby="descargas-titulo">

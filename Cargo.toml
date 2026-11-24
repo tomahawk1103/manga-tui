@@ -1,6 +1,6 @@
 [workspace]
-members = [".", "crates/manga-core", "apps/mangora/src-tauri"]
-default-members = [".", "crates/manga-core"]
+members = [".", "crates/manga-core", "crates/anime-core", "apps/mangora/src-tauri"]
+default-members = [".", "crates/manga-core", "crates/anime-core"]
 resolver = "3"
 
 [package]
@@ -22,6 +22,7 @@ exclude = [
 ]
 
 [dependencies]
+anime-core = { path = "crates/anime-core" }
 manga-core = { path = "crates/manga-core", features = ["clap"] }
 # ratatui related dependencies
 ratatui = { version = "0.29.0", features = ["all-widgets", "palette", "unstable-widget-ref"] }

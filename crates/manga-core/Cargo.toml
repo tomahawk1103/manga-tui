@@ -13,6 +13,7 @@ test-utils = []
 local_only = []
 
 [dependencies]
+anime-core = { path = "../anime-core" }
 directories = "6.0.0"
 image = "0.25.8"
 reqwest = { version = "0.12.24", default-features = false, features = ["json", "charset", "cookies", "http2", "gzip", "deflate"] }
@@ -28,6 +29,7 @@ chrono = { version = "0.4.42", features = ["serde"] }
 rusqlite = { version = "0.37.0", features = ["bundled"] }
 zip = "4.6.1"
 toml = "0.9.6"
+toml_edit = "0.23.9"
 epub-builder = "0.8.0"
 http = "1.3"
 log = { version = "0.4", features = ["std", "serde"] }

@@ -156,6 +156,41 @@ Stores normalized genres/tags associated with mangas in the user's library (expo
 
 PRIMARY KEY (manga_id, provider, genre)
 
+# animes
+
+Stores local anime metadata, favorites and the most recent playback time. Anime history stays outside the manga cloud snapshot.
+
+| Column | Type and constraints |
+| --- | --- |
+| id | INTEGER PRIMARY KEY AUTOINCREMENT |
+| provider | TEXT NOT NULL |
+| slug | TEXT NOT NULL |
+| title | TEXT NOT NULL |
+| cover_url | TEXT NULL |
+| status | TEXT NULL |
+| is_favorite | BOOLEAN NOT NULL DEFAULT 0 |
+| created_at | DATETIME NOT NULL DEFAULT (datetime('now')) |
+| last_watched_at | DATETIME NULL |
+
+`UNIQUE (provider, slug)`
+
+# anime_episodes
+
+Stores playback position, duration and watched status. Episode numbers remain text to support specials such as `12.5`.
+
+| Column | Type and constraints |
+| --- | --- |
+| id | INTEGER PRIMARY KEY AUTOINCREMENT |
+| anime_id | INTEGER NOT NULL REFERENCES animes(id) ON DELETE CASCADE |
+| episode_number | TEXT NOT NULL |
+| episode_slug | TEXT NOT NULL |
+| is_watched | BOOLEAN NOT NULL DEFAULT 0 |
+| progress_seconds | INTEGER NOT NULL DEFAULT 0 |
+| duration_seconds | INTEGER NOT NULL DEFAULT 0 |
+| last_watched_at | DATETIME NULL |
+
+`UNIQUE (anime_id, episode_number)`
+
 # SQLite Configuration & Pragmas
 
 To ensure high-performance concurrent reads and writes without `SQLITE_BUSY` contention:
@@ -182,5 +217,7 @@ To ensure high-performance concurrent reads and writes without `SQLITE_BUSY` con
   - Speeds up deduplication between session duration and legacy chapter read rows.
 - `idx_manga_genres_genre`: `CREATE INDEX IF NOT EXISTS idx_manga_genres_genre ON manga_genres(genre, provider);`
   - Optimizes top-genres aggregation across the local library.
+- `idx_animes_provider_last_watched`: Index on `animes(provider, last_watched_at DESC)`.
+- `idx_anime_episodes_anime_number`: Index on `anime_episodes(anime_id, episode_number)`.
 
 
