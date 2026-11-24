@@ -1,5 +1,7 @@
 pub mod extractor;
 pub mod model;
+pub mod playback_server;
+pub mod player;
 pub mod provider;
 
 use std::fmt::{Display, Formatter};
@@ -10,6 +12,8 @@ pub use model::{
     AnimeDetails, AnimeEpisode, AnimeEpisodesPage, AnimeProviders, AnimeSearchResult, AnimeStatus, AnimeSummary, AnimeType,
     AnimeVariant, ResolvedStream, StreamKind, VideoMirror,
 };
+pub use playback_server::{AnimePlaybackServer, PlaybackHistory, PlaybackProgress};
+pub use player::{ExternalPlayer, ExternalPlayerLauncher};
 pub use provider::AnimeProvider;
 
 pub const DEFAULT_USER_AGENT: &str =
@@ -27,6 +31,7 @@ pub enum AnimeError {
     UnsupportedMirror(String),
     ExtractionFailed(String),
     InvalidInput(String),
+    Persistence(String),
 }
 
 impl Display for AnimeError {
@@ -46,6 +51,7 @@ impl Display for AnimeError {
             Self::UnsupportedMirror(msg) => write!(f, "Unsupported mirror: {msg}"),
             Self::ExtractionFailed(msg) => write!(f, "Extraction failed: {msg}"),
             Self::InvalidInput(msg) => write!(f, "Invalid input: {msg}"),
+            Self::Persistence(msg) => write!(f, "Playback history error: {msg}"),
         }
     }
 }

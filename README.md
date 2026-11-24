@@ -33,6 +33,7 @@
 - [Installation](#installation)
 - [Image rendering](#image-rendering)
 - [Usage](#usage)
+- [Anime](#anime)
 - [Manga providers](#manga-providers)
 - [Configuration](#configuration)
 - [Motivation](#motivation)
@@ -66,6 +67,8 @@ so if any one goes down you can still use manga-tui
 <https://github.com/user-attachments/assets/26ad493f-633c-41fc-9d09-49b316118923>
 
 - Get an in-app prompt for new chapters of downloaded, ongoing manga. Checks run at startup and every 10 minutes while the app is open; press `<y>` to download or `<q>` to dismiss.
+
+- Browse anime from AnimeAV1 and JKAnime, play episodes through the local web player, and keep favorites and playback history in SQLite.
 
 ### Join the [discord](https://discord.gg/SeqsWUCpVx) server for further help, feature requests or to chat with contributors
 
@@ -187,6 +190,31 @@ After installation just run the binary
 
 ```shell
 manga-tui
+```
+
+## Anime
+
+Open **Anime** with `F9` or click the tab. Search for a series, press `Enter` to open its episodes, and press `Enter` again to play the selected episode. Use `Tab` to move between the search field, results, and episodes.
+
+| Key | Action |
+| --- | --- |
+| `p` | Switch between AnimeAV1 and JKAnime |
+| `s` | Pick a mirror and its SUB or DUB variant |
+| `w` / `v` | Open in the browser or an external player |
+| `h` / `b` | Open recent history or favorites |
+| `f` / `m` | Toggle favorite or watched status |
+
+The browser player uses a local proxy and saves your position. When playback reaches 85%, the episode is marked as watched by default. If the selected mirror cannot serve media, the app tries compatible mirrors and can switch catalogs when it finds a unique matching title.
+
+Use **Settings** (`F5`) to select the default provider, player and variant. For a VLC or mpv installation outside your PATH, set `custom_player_path` in `config.toml`.
+
+```toml
+[anime]
+preferred_provider = "animeav1"
+player = "web" # web, vlc, mpv
+custom_player_path = ""
+preferred_variant = "sub" # sub, dub
+auto_mark_watched_percent = 85
 ```
 
 ## Manga providers

@@ -253,6 +253,7 @@ pub fn update_database_with_migrations(
         migrate_version_0_6_0(connection, logger)?,
         migrate_version_0_10_1(connection, logger)?,
         migrate_version_0_11_0(connection, logger)?,
+        migrate_version_0_12_0(connection, logger)?,
     ];
 
     Ok(migrations)
@@ -389,6 +390,22 @@ fn migrate_version_0_11_0(connection: &mut Connection, logger: &impl ILogger) ->
     };
 
     Ok(migration_result)
+}
+
+fn migrate_version_0_12_0(connection: &mut Connection, logger: &impl ILogger) -> rusqlite::Result<Option<MigrationTable>> {
+    let queries = super::anime_history::SCHEMA.map(Query::Raw);
+    let migration = Migration::new(&queries)
+        .with_name("Create local anime history and favorites")
+        .with_version("0.12.0")
+        .up(connection)?;
+    migration
+        .map(|migration| {
+            logger.inform("Updating database");
+            let result = migration.update(connection)?;
+            logger.inform("Database updated");
+            Ok(result)
+        })
+        .transpose()
 }
 
 #[cfg(test)]
@@ -940,12 +957,13 @@ mod tests {
 
         let migrations = update_database_with_migrations(&mut conn, &DefaultLogger)?;
 
-        assert_eq!(4, migrations.len());
+        assert_eq!(5, migrations.len());
 
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.4.0"));
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.6.0"));
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.10.1"));
         assert!(migrations.iter().flatten().any(|migration| migration.version == "0.11.0"));
+        assert!(migrations.iter().flatten().any(|migration| migration.version == "0.12.0"));
 
         let table_exists: bool = conn.query_row(
             "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'manga_collections')",
@@ -954,6 +972,28 @@ mod tests {
         )?;
         assert!(table_exists);
 
+        Ok(())
+    }
+
+    #[test]
+    fn anime_migration_upgrades_legacy_database_once() -> rusqlite::Result<()> {
+        let mut connection = Connection::open_in_memory()?;
+        migrate_version_0_11_0(&mut connection, &DefaultLogger)?;
+        assert!(migrate_version_0_12_0(&mut connection, &DefaultLogger)?.is_some());
+        assert!(migrate_version_0_12_0(&mut connection, &DefaultLogger)?.is_none());
+        let number_type: String = connection.query_row(
+            "SELECT type FROM pragma_table_info('anime_episodes') WHERE name = 'episode_number'",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(number_type, "TEXT");
+        let indexes: u8 = connection.query_row(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'index'
+             AND name IN ('idx_animes_provider_last_watched', 'idx_anime_episodes_anime_number')",
+            [],
+            |row| row.get(0),
+        )?;
+        assert_eq!(indexes, 2);
         Ok(())
     }
 }

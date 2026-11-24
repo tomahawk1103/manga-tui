@@ -1,5 +1,6 @@
 use strum_macros::{Display, EnumCount, EnumIter, FromRepr};
 
+pub mod anime;
 pub mod feed;
 pub mod home;
 pub mod manga;
@@ -16,4 +17,5 @@ pub enum SelectedPage {
     Search,
     Feed,
     News,
+    Anime,
 }

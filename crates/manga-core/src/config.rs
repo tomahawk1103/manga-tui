@@ -458,6 +458,27 @@ impl TableParam for AnilistConfigTable {
     }
 }
 
+struct AnimeConfigTable;
+
+impl TableParam for AnimeConfigTable {
+    fn table_name(&self) -> &'static str {
+        "anime"
+    }
+
+    fn comments(&self) -> &'static str {
+        "Anime playback preferences"
+    }
+
+    fn parameters(&self) -> Vec<Box<dyn ConfigParam>> {
+        Vec::new()
+    }
+
+    fn build_full_table(&self) -> String {
+        let defaults = toml::to_string(&AnimeConfig::default()).expect("anime defaults must serialize");
+        format!("\n# {}\n[{}]\n{defaults}", self.comments(), self.table_name())
+    }
+}
+
 /// Builder for the configuration file.
 /// Handles creation, updating, and writing of the config file and its directory.
 struct ConfigBuilder<'a> {
@@ -488,7 +509,7 @@ fn config_params() -> Vec<Box<dyn ConfigParam>> {
 }
 
 fn table_config_params() -> Vec<Box<dyn TableParam>> {
-    vec![Box::new(AnilistConfigTable)]
+    vec![Box::new(AnilistConfigTable), Box::new(AnimeConfigTable)]
 }
 
 impl<'a> ConfigBuilder<'a> {
@@ -677,12 +698,80 @@ pub struct AnilistConfig {
     pub credentials: Credentials,
 }
 
+pub use anime_core::{AnimeProviders, AnimeVariant};
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum AnimePlayer {
+    #[default]
+    Web,
+    Vlc,
+    Mpv,
+}
+
+impl AnimePlayer {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Web => crate::i18n::tr("Web (local)", "Web (local)"),
+            Self::Vlc => "VLC",
+            Self::Mpv => "mpv",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(default)]
+pub struct AnimeConfig {
+    #[serde(with = "AnimeProviderConfig")]
+    pub preferred_provider: AnimeProviders,
+    pub player: AnimePlayer,
+    pub custom_player_path: String,
+    #[serde(with = "AnimeVariantConfig")]
+    pub preferred_variant: AnimeVariant,
+    #[serde(deserialize_with = "deserialize_anime_watched_percent")]
+    pub auto_mark_watched_percent: u8,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "AnimeProviders")]
+enum AnimeProviderConfig {
+    #[serde(rename = "animeav1")]
+    AnimeAv1,
+    #[serde(rename = "jkanime")]
+    JkAnime,
+}
+
+#[derive(Serialize, Deserialize)]
+#[serde(remote = "AnimeVariant", rename_all = "lowercase")]
+enum AnimeVariantConfig {
+    Sub,
+    Dub,
+}
+
+impl Default for AnimeConfig {
+    fn default() -> Self {
+        Self {
+            preferred_provider: AnimeProviders::default(),
+            player: AnimePlayer::default(),
+            custom_player_path: String::new(),
+            preferred_variant: AnimeVariant::default(),
+            auto_mark_watched_percent: 85,
+        }
+    }
+}
+
+fn deserialize_anime_watched_percent<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<u8, D::Error> {
+    Ok(i64::deserialize(deserializer)?.clamp(50, 100) as u8)
+}
+
 /// Main configuration struct for manga-tui.
 ///
 /// This struct is deserialized from the config file and contains all
 /// user-configurable options.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MangaTuiConfig {
+    #[serde(default)]
+    pub anime: AnimeConfig,
     /// Language of the user interface, spanish by default
     #[serde(default)]
     pub ui_language: UiLanguage,
@@ -825,6 +914,7 @@ impl ImageProtocol {
 impl Default for MangaTuiConfig {
     fn default() -> Self {
         Self {
+            anime: AnimeConfig::default(),
             ui_language: UiLanguage::default(),
             theme: ThemeVariant::default(),
             amount_pages: 5,
@@ -907,6 +997,7 @@ impl MangaTuiConfig {
         copy.ui_language = crate::runtime_settings::active_ui_language();
         copy.theme = crate::runtime_settings::current_theme();
         copy.image_protocol = crate::runtime_settings::active_image_protocol();
+        copy.anime = crate::runtime_settings::active_anime_config();
         copy
     }
 }
@@ -959,6 +1050,22 @@ pub fn read_config_file() -> Result<MangaTuiConfig, Box<dyn Error>> {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn old_and_partial_configs_load_anime_defaults() {
+        let default = super::MangaTuiConfig::default();
+        let mut document = toml::to_string(&default).unwrap().parse::<toml_edit::DocumentMut>().unwrap();
+        document.remove("anime");
+        let old: super::MangaTuiConfig = toml::from_str(&document.to_string()).unwrap();
+        assert_eq!(old.anime, default.anime);
+
+        let partial = format!("{document}\n[anime]\nplayer = \"vlc\"\npreferred_provider = \"jkanime\"\n");
+        let loaded: super::MangaTuiConfig = toml::from_str(&partial).unwrap();
+        assert_eq!(loaded.anime.player, super::AnimePlayer::Vlc);
+        assert_eq!(loaded.anime.preferred_provider, super::AnimeProviders::JkAnime);
+        assert_eq!(loaded.anime.auto_mark_watched_percent, 85);
+        assert_eq!(loaded.anime.preferred_variant, super::AnimeVariant::Sub);
+    }
 
     use std::fs;
     use std::io::Cursor;

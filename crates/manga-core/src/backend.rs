@@ -10,6 +10,7 @@ use crate::config::build_config_file;
 use crate::exists;
 use crate::logger::ILogger;
 
+pub mod anime_history;
 pub mod cache;
 pub mod cloud;
 pub mod database;

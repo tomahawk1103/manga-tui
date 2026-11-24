@@ -36,10 +36,10 @@ Convertir `manga-tui` en una experiencia unificada de **Manga + Anime** sin romp
 flowchart LR
     Base["Base Actual (main)<br/>SQLite + Web Viewer + 7 Proveedores Manga"]
     H1["Hito 1<br/>crates/anime-core<br/>AnimeAV1 + JKAnime + 3 Extractores<br/>✅ Implementado y verificado"]
-    H2["Hito 2<br/>Proxy HTTP Range/HLS + Web Player<br/>+ Lanzador VLC / mpv"]
-    H3["Hito 3<br/>SQLite Migración 0.12.0<br/>+ Config [anime] y Ajustes"]
-    H4["Hito 4<br/>Pestaña Anime en TUI<br/>Ratatui + Sixel + Ratón + i18n"]
-    H5["Hito 5<br/>Tests Live, Fallbacks<br/>y QA en Windows"]
+    H2["Hito 2<br/>Proxy HTTP Range/HLS + Web Player<br/>+ Lanzador VLC / mpv<br/>Implementado en anime-core"]
+    H3["Hito 3<br/>SQLite Migración 0.12.0<br/>+ Config [anime] y Ajustes<br/>Implementado"]
+    H4["Hito 4<br/>Pestaña Anime en TUI<br/>Ratatui + Sixel + Ratón + i18n<br/>Implementado"]
+    H5["Hito 5<br/>Fallbacks y pruebas en Windows<br/>Implementado"]
 
     Base --> H1 --> H2 --> H3 --> H4 --> H5
 ```
@@ -241,7 +241,7 @@ pub trait VideoExtractor: Send + Sync {
   1. `ZillaHlsExtractor` (`HLS` / `player.zilla-networks.com`)
   2. `JkPlayerExtractor` (`Magi` / `Desu` / `Desuka`)
   3. `Mp4UploadExtractor` (`MP4Upload`)
-- Si el mirror elegido por el usuario (o el preferido por defecto) falla al extraer o responde con error HTTP, el orquestador intenta automáticamente el siguiente extractor compatible y registra qué mirror acabó funcionando.
+- Antes de abrir el reproductor, el orquestador comprueba el manifiesto y una muestra de los medios. Si un mirror falla al extraer o al entregar los primeros fragmentos, prueba el siguiente mirror compatible. Cuando se agotan, la TUI busca una coincidencia única del título en el otro catálogo, valida la ficha y pide el mismo episodio. El historial se guarda en el catálogo elegido inicialmente.
 
 ---
 
@@ -249,13 +249,17 @@ pub trait VideoExtractor: Send + Sync {
 
 ### 5.1 `AnimePlaybackServer` (Proxy HTTP dedicado en `127.0.0.1`)
 
+El hito 2 implementa las rutas de reproducción y el lanzador en `anime-core`. El hito 3 añade la persistencia SQLite mediante `start_anime_playback` de `manga-core` y las preferencias en Ajustes. La pestaña Anime del hito 4 usa esta entrada para abrir episodios.
+
+En la prueba en Windows, Edge reprodujo HLS tanto con vídeo sintético como con JKAnime, con salto de tiempo, cambio de episodio y reanudación. VLC y mpv decodificaron vídeo y audio de ambas fuentes a través del proxy. En el episodio probado de AnimeAV1, ZillaHLS devolvió la playlist y rechazó los fragmentos con HTTP 403. El mirror alternativo probado tampoco resolvió.
+
 A diferencia de [`web_viewer.rs`](crates/manga-core/src/backend/web_viewer.rs) (optimizado para páginas de cómic pequeñas en memoria), el servidor de anime debe manejar archivos MP4 de cientos de MB y flujos HLS segmentados sin consumir RAM innecesaria:
 
 - **Dirección y ciclo de vida:** `TcpListener::bind("127.0.0.1:0")` bajo demanda al reproducir el primer episodio (una sola instancia compartida por sesión, puerto efímero).
 - **Streaming real por chunks:** uso de `reqwest::Response::bytes_stream()` reenviado directamente al `TcpStream` sin almacenar el vídeo completo en memoria.
 - **Soporte HTTP `Range` (`206 Partial Content`):** reenvía la cabecera entrante `Range` al servidor remoto y devuelve `206 Partial Content`, `Content-Range`, `Accept-Ranges: bytes` y `Content-Length` para que tanto `<video>` como VLC/mpv puedan saltar a cualquier minuto al instante.
 - **Reescritura `.m3u8`:**
-  - Convierte todas las URLs absolutas o relativas de sub-playlists y segmentos a `/proxy/<token>/seg?u=<base64url>`.
+  - Convierte las URLs absolutas o relativas de sub-playlists y segmentos a `/proxy/<token>/seg?g=<generación>&u=<id>`. Cada ID identifica un recurso registrado al reescribir la playlist activa.
   - Reescribe también los atributos `URI="..."` dentro de `#EXT-X-MAP` y `#EXT-X-KEY` (imprescindible para `ZillaHLS`).
   - Si un segmento termina en `.html` pero proviene de una playlist HLS (caso `player.zilla-networks.com`), fuerza `Content-Type: video/mp4` (o `application/octet-stream`).
 - **Protección anti-SSRF:** cada sesión genera un `<token>` aleatorio por arranque; el endpoint `/proxy/<token>/seg` **solo** permite descargar URLs cuyo host/ruta pertenezcan al `ResolvedStream` activo o hayan sido emitidos por la playlist `.m3u8` verificada de esa sesión.
@@ -265,11 +269,11 @@ A diferencia de [`web_viewer.rs`](crates/manga-core/src/backend/web_viewer.rs) (
 - `GET /assets/<token>/hls.min.js` — Copia embebida (`include_str!`) de `hls.js` para funcionar sin depender de CDNs externos ni bloqueadores de anuncios.
 - `GET /stream/<token>/master.m3u8` — Playlist HLS reescrita apuntando al proxy local.
 - `GET /stream/<token>/video.mp4` — Proxy directo MP4 con soporte `Range` e inyección de `Referer`.
-- `GET /proxy/<token>/seg?u=<b64url>` — Proxy de segmentos HLS / sub-playlists / llaves con cabeceras originales.
+- `GET /proxy/<token>/seg?g=<generación>&u=<id>` — Proxy de segmentos HLS, sub-playlists y llaves con cabeceras originales.
 - `GET /api/<token>/state` — JSON con título, portada, lista de episodios, episodio actual, mirrors disponibles, progreso guardado y estado de reproducción.
 - `POST /api/<token>/episode` — Cambia al episodio seleccionado (anterior/siguiente/lista) y actualiza el stream activo.
 - `POST /api/<token>/mirror` — Cambia a otro servidor de vídeo si el actual falla o va lento.
-- `POST /api/<token>/progress` — Recibe `{ episode_number, position_seconds, duration_seconds }` cada ~10 s, guarda posición en SQLite y marca `is_watched = 1` al alcanzar `auto_mark_watched_percent`.
+- `POST /api/<token>/progress` — Recibe `{ generation, episode_number, position_seconds, duration_seconds }` cada ~10 s. Las sesiones abiertas con historial guardan la posición en SQLite y marcan el episodio como visto al alcanzar el umbral.
 
 ### 5.2 Reproductor Web Local (modo por defecto)
 
@@ -415,7 +419,8 @@ En `SettingsModal` (`src/view/widgets/settings.rs`) se añaden los controles equ
 ```
 
 ### Atajos de teclado y flujo de usuario
-- `Tab` / clic en barra superior → entrar/salir entre buscador, lista de resultados y lista de episodios.
+- `F9` o clic en **Anime** en la barra superior abre la pestaña. `Tab` alterna el foco entre buscador, resultados y episodios. `/` vuelve al buscador.
+- `h` abre el historial reciente y `b` los favoritos del proveedor activo. `PgUp` y `PgDn` cambian la página de resultados.
 - `Enter` sobre un resultado → carga ficha y episodios (y precarga portada).
 - `Enter` sobre un episodio → resuelve el mejor mirror compatible, inicia el proxy local y abre el reproductor configurado en `[anime].player` (`Web` por defecto o `VLC`/`mpv`).
 - `w` → fuerza apertura en el **Reproductor Web local** sin cambiar Ajustes.
@@ -438,7 +443,14 @@ En `SettingsModal` (`src/view/widgets/settings.rs`) se añaden los controles equ
    - Migración SQLite `0.12.0`: creación limpia, actualización desde DB `0.11.0` existente e idempotencia al ejecutarse dos veces.
    - Retrocompatibilidad de `config.toml`: cargar configuraciones antiguas sin sección `[anime]` con valores por defecto intactos.
 2. **Tests de integración en vivo (`#[ignore]`):**
-   - `cargo test -p anime-core -- --ignored` para validar búsqueda, ficha y extracción real contra `animeav1.com` y `jkanime.net` antes de cada release (patrón `provider-doctor`).
+   - `cargo test -p anime-core --test live_providers -- --ignored` valida búsqueda, ficha, disponibilidad de los primeros fragmentos y respuesta del proxy con cada proveedor.
+
+### Resultado del hito 5 en Windows
+
+- JKAnime entregó vídeo de *One Piece* a través del proxy en la prueba directa. El episodio seleccionado de AnimeAV1 agotó sus mirrors para *Sousou no Frieren 2nd Season*.
+- En la prueba del portable mediante ConPTY, `F9` abrió la pestaña Anime. El episodio 1 de *Sousou no Frieren 2nd Season* arrancó automáticamente desde JKAnime (Magi) después de fallar AnimeAV1. mpv decodificó audio y vídeo. Un evento de progreso de prueba guardó la posición y el estado de visto en el SQLite del portable.
+- Se generaron el ZIP portable y el instalador con sus SHA-256. La prueba aislada de instalación, actualización y desinstalación preservó la configuración, el SQLite y las descargas de prueba.
+- El test del renderizador comprobó que la portada genera una secuencia Sixel por encima de la lista de episodios. Queda pendiente la inspección visual en Windows Terminal.
 
 ### Criterios de aceptación para dar por cerrada la v1
 - [ ] Buscar un anime desde la pestaña `Anime` en **AnimeAV1** y **JKAnime**, ver su portada, sinopsis y lista completa de episodios.

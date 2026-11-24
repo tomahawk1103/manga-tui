@@ -13,6 +13,7 @@ use ratatui::widgets::{Block, Borders, Paragraph, Tabs, Widget};
 use ratatui_image::picker::Picker;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 
+use self::anime::AnimePage;
 use self::feed::Feed;
 use self::home::Home;
 use self::manga::MangaPage;
@@ -177,6 +178,7 @@ where
     pub home_page: Home<T>,
     pub feed_page: Feed<T>,
     pub news_page: NewsPage,
+    anime_page: AnimePage,
     manga_provider: Arc<T>,
     pub active_provider: MangaProviders,
     pub is_checking_provider: bool,
@@ -367,6 +369,7 @@ where
                             SelectedPage::Home => self.go_to_home(),
                             SelectedPage::Feed => self.go_feed_page(),
                             SelectedPage::Search => self.go_search_page(),
+                            SelectedPage::Anime => self.go_anime_page(),
                             _ => self.go_search_page(),
                         }
                     }
@@ -378,6 +381,7 @@ where
                         SelectedPage::Home => self.go_to_home(),
                         SelectedPage::Feed => self.go_feed_page(),
                         SelectedPage::Search => self.go_search_page(),
+                        SelectedPage::Anime => self.go_anime_page(),
                         _ => self.go_search_page(),
                     }
                 }
@@ -517,7 +521,9 @@ where
         }
     }
 
-    fn clean_up(&mut self) {}
+    fn clean_up(&mut self) {
+        self.anime_page.clean_up();
+    }
 }
 
 impl<T, S> App<T, S>
@@ -567,6 +573,7 @@ where
                 .with_api_client(Arc::clone(&provider)),
             home_page: Home::new(picker, Arc::clone(&provider)).with_global_sender(global_event_tx.clone()),
             news_page: NewsPage::new(picker),
+            anime_page: AnimePage::new(picker),
             manga_page: None,
             manga_reader_page: None,
             global_action_tx,
@@ -1285,7 +1292,12 @@ where
         };
 
         let pill_color = t.title_chip_primary_bg;
-        if self.current_tab == SelectedPage::Search && self.search_page.search_scope == SearchScope::AllProviders {
+        if self.current_tab == SelectedPage::Anime {
+            right_spans.push(Span::styled(
+                format!(" {} ", self.anime_page.provider()),
+                Style::default().fg(t.text_primary).bg(pill_color).bold(),
+            ));
+        } else if self.current_tab == SelectedPage::Search && self.search_page.search_scope == SearchScope::AllProviders {
             let lang_tag = match self.search_page.language_filter {
                 crate::view::pages::search::SearchLanguageFilter::All => "ALL",
                 crate::view::pages::search::SearchLanguageFilter::Spanish => "ES",
@@ -1330,12 +1342,23 @@ where
         spans.push(brand_span);
         spans.push(arrow_span);
 
-        let mut tab_defs: Vec<(SelectedPage, String)> = vec![
-            (SelectedPage::Home, tr(" 🏠 Inicio <u/F1> ", " 🏠 Home <u/F1> ").to_string()),
-            (SelectedPage::Search, tr(" 🔍 Buscar <i/F2> ", " 🔍 Search <i/F2> ").to_string()),
-            (SelectedPage::Feed, tr(" 📚 Seguimiento <o/F3> ", " 📚 Feed <o/F3> ").to_string()),
-            (SelectedPage::News, tr(" 📰 Noticias <p/F8> ", " 📰 News <p/F8> ").to_string()),
-        ];
+        let mut tab_defs: Vec<(SelectedPage, String)> = if left_area.width < 108 {
+            vec![
+                (SelectedPage::Home, tr(" Inicio ", " Home ").to_owned()),
+                (SelectedPage::Search, tr(" Buscar ", " Search ").to_owned()),
+                (SelectedPage::Feed, tr(" Lista ", " Feed ").to_owned()),
+                (SelectedPage::Anime, " Anime ".to_owned()),
+                (SelectedPage::News, tr(" Noticias ", " News ").to_owned()),
+            ]
+        } else {
+            vec![
+                (SelectedPage::Home, tr(" 🏠 Inicio <u/F1> ", " 🏠 Home <u/F1> ").to_string()),
+                (SelectedPage::Search, tr(" 🔍 Buscar <i/F2> ", " 🔍 Search <i/F2> ").to_string()),
+                (SelectedPage::Feed, tr(" 📚 Seguimiento <o/F3> ", " 📚 Feed <o/F3> ").to_string()),
+                (SelectedPage::News, tr(" 📰 Noticias <p/F8> ", " 📰 News <p/F8> ").to_string()),
+                (SelectedPage::Anime, " Anime <F9> ".to_owned()),
+            ]
+        };
 
         if self.current_tab == SelectedPage::MangaTab {
             let manga_label = self
@@ -1416,10 +1439,11 @@ where
             buf[(x, area.y)].set_bg(bar_bg).set_symbol(" ");
         }
 
-        let is_typing = self.search_page.input_mode == InputMode::Typing
-            || self.search_page.is_typing_filter()
-            || self.feed_page.is_typing()
-            || self.manga_page.as_ref().is_some_and(|p| p.is_typing_chapter_search());
+        let is_typing = self.current_tab != SelectedPage::Anime
+            && (self.search_page.input_mode == InputMode::Typing
+                || self.search_page.is_typing_filter()
+                || self.feed_page.is_typing()
+                || self.manga_page.as_ref().is_some_and(|p| p.is_typing_chapter_search()));
 
         let (mode_label, mode_color) = if self.is_help_modal_open {
             (tr(" ❓ AYUDA ", " ❓ HELP "), t.accent_primary)
@@ -1435,7 +1459,7 @@ where
             (tr(" ⬆ ACTUALIZACIÓN ", " ⬆ UPDATE "), t.accent_highlight)
         } else if is_typing {
             (tr(" ⌨  ESCRIBIENDO ", " ⌨  TYPING "), t.accent_highlight)
-        } else if self.search_page.is_filter_open() {
+        } else if self.current_tab != SelectedPage::Anime && self.search_page.is_filter_open() {
             (tr(" ⚙  FILTROS ", " ⚙  FILTERS "), t.accent_secondary)
         } else {
             match self.current_tab {
@@ -1443,6 +1467,7 @@ where
                 SelectedPage::Search => (tr(" 🔍 EXPLORAR ", " 🔍 SEARCH "), t.accent_primary),
                 SelectedPage::Feed => (tr(" 📚 BIBLIOTECA ", " 📚 LIBRARY "), t.status_success),
                 SelectedPage::News => (tr(" 📰 NOTICIAS ", " 📰 NEWS "), t.accent_highlight),
+                SelectedPage::Anime => (" ANIME ", t.accent_highlight),
                 SelectedPage::MangaTab => (tr(" 📖 FICHA ", " 📖 MANGA "), t.accent_secondary),
                 SelectedPage::ReaderTab => (tr(" 👁 LECTOR ", " 👁 READER "), t.accent_highlight),
             }
@@ -1464,6 +1489,7 @@ where
                     ("o", tr("Biblioteca", "Library")),
                     ("g", "GitHub"),
                 ],
+                SelectedPage::Anime => self.anime_page.shortcuts(),
                 SelectedPage::News => vec![
                     ("j/k", tr("Mover", "Move")),
                     ("Enter", tr("Abrir en navegador", "Open in browser")),
@@ -1686,6 +1712,9 @@ where
 
     /// Returns `true` when any global modal or page-level popup overlay is currently open.
     pub fn is_overlay_open(&self) -> bool {
+        if self.current_tab == SelectedPage::Anime {
+            return self.is_displaying_modal() || self.anime_page.mirror_menu_open();
+        }
         self.is_displaying_modal()
             || self.search_page.is_filter_open()
             || self.feed_page.is_overlay_open()
@@ -1702,6 +1731,7 @@ where
         self.picker = new_picker;
         self.home_page.set_picker(new_picker);
         self.news_page.set_picker(new_picker);
+        self.anime_page.set_picker(new_picker);
         self.search_page.set_picker(new_picker);
         if let Some(manga_page) = self.manga_page.as_mut() {
             manga_page.set_picker(new_picker);
@@ -1721,6 +1751,13 @@ where
             SelectedPage::Home => self.render_home_page(area, frame),
             SelectedPage::Feed => self.render_feed_page(area, frame),
             SelectedPage::News => self.news_page.render(area, frame),
+            SelectedPage::Anime => {
+                if self.is_displaying_modal() {
+                    self.anime_page.render_page(area, frame, true);
+                } else {
+                    self.anime_page.render(area, frame);
+                }
+            },
             // Reader tab should be on full screen
             SelectedPage::ReaderTab => {},
         }
@@ -1756,6 +1793,7 @@ where
 
     fn quit(&mut self) {
         self.auto_bookmark_on_quit();
+        self.anime_page.clean_up();
         self.global_action_tx.send(Action::Quit).ok();
     }
 
@@ -1800,6 +1838,9 @@ where
             match self.settings_state.handle_key_event(key_event) {
                 SettingsOutcome::Close => {
                     self.is_settings_modal_open = false;
+                    if self.current_tab == SelectedPage::Anime {
+                        self.anime_page.apply_settings();
+                    }
                 },
                 SettingsOutcome::ProviderChanged(new_provider) => {
                     self.is_checking_provider = false;
@@ -2047,10 +2088,22 @@ where
             return;
         }
 
-        let is_typing = self.search_page.input_mode == InputMode::Typing
-            || self.search_page.is_typing_filter()
-            || self.feed_page.is_typing()
-            || self.manga_page.as_ref().is_some_and(|p| p.is_typing_chapter_search());
+        if self.current_tab == SelectedPage::Anime && self.anime_page.mirror_menu_open() {
+            return;
+        }
+        if key_event.code == KeyCode::F(9) && self.current_tab != SelectedPage::ReaderTab {
+            self.go_anime_page();
+            return;
+        }
+        let is_typing = if self.current_tab == SelectedPage::Anime {
+            self.anime_page.captures_keys()
+        } else {
+            self.search_page.input_mode == InputMode::Typing
+                || self.search_page.is_typing_filter()
+                || self.feed_page.is_typing()
+                || self.manga_page.as_ref().is_some_and(|p| p.is_typing_chapter_search())
+        };
+        let is_filter_open = self.current_tab != SelectedPage::Anime && self.search_page.is_filter_open();
 
         if !is_typing && key_event.code == KeyCode::Char('T') && self.current_tab != SelectedPage::ReaderTab {
             cycle_theme();
@@ -2067,8 +2120,8 @@ where
                 .as_ref()
                 .is_some_and(|p| !p.selected_chapters.is_empty() || p.is_provider_switcher_open || p.is_list_languages_open);
 
-        if !is_typing
-            && !self.search_page.is_filter_open()
+        if (!is_typing || (self.current_tab == SelectedPage::Anime && key_event.code == KeyCode::F(5)))
+            && !is_filter_open
             && self.current_tab != SelectedPage::ReaderTab
             && (key_event.code == KeyCode::F(5) || (key_event.code == KeyCode::Char('c') && !manga_page_blocks_c))
         {
@@ -2079,7 +2132,7 @@ where
         }
 
         if !is_typing
-            && !self.search_page.is_filter_open()
+            && !is_filter_open
             && self.current_tab != SelectedPage::ReaderTab
             && matches!(key_event.code, KeyCode::Char('C') | KeyCode::F(6))
         {
@@ -2088,7 +2141,7 @@ where
         }
 
         if !is_typing
-            && !self.search_page.is_filter_open()
+            && !is_filter_open
             && self.current_tab != SelectedPage::ReaderTab
             && matches!(key_event.code, KeyCode::Char('S') | KeyCode::F(7))
         {
@@ -2113,7 +2166,9 @@ where
             return;
         }
 
-        if !is_typing && !self.search_page.is_filter_open() {
+        if (!is_typing || (self.current_tab == SelectedPage::Anime && matches!(key_event.code, KeyCode::F(1 | 2 | 3 | 8))))
+            && !is_filter_open
+        {
             match key_event.code {
                 KeyCode::Char('u') | KeyCode::F(1) if self.current_tab != SelectedPage::ReaderTab => {
                     self.global_event_tx.send(Events::GoToHome).ok();
@@ -2129,7 +2184,11 @@ where
                 KeyCode::Char('p')
                     if !matches!(
                         self.current_tab,
-                        SelectedPage::ReaderTab | SelectedPage::Search | SelectedPage::MangaTab | SelectedPage::News
+                        SelectedPage::ReaderTab
+                            | SelectedPage::Search
+                            | SelectedPage::MangaTab
+                            | SelectedPage::News
+                            | SelectedPage::Anime
                     ) =>
                 {
                     self.go_news_page();
@@ -2141,7 +2200,10 @@ where
     }
 
     fn handle_mouse_events(&mut self, mouse_event: MouseEvent) {
-        if self.current_tab == SelectedPage::ReaderTab || self.is_displaying_modal() {
+        if self.current_tab == SelectedPage::ReaderTab
+            || self.is_displaying_modal()
+            || (self.current_tab == SelectedPage::Anime && self.anime_page.mirror_menu_open())
+        {
             return;
         }
         if let MouseEventKind::Down(MouseButton::Left) = mouse_event.kind {
@@ -2162,6 +2224,7 @@ where
                             self.global_event_tx.send(Events::GoFeedPage).ok();
                         },
                         SelectedPage::News => self.go_news_page(),
+                        SelectedPage::Anime => self.go_anime_page(),
                         _ => {},
                     }
                     return;
@@ -2325,6 +2388,17 @@ where
         self.current_tab = SelectedPage::News;
     }
 
+    fn go_anime_page(&mut self) {
+        if self.current_tab != SelectedPage::Anime {
+            if let Some(mut manga) = self.manga_page.take() {
+                manga.clean_up();
+            }
+            self.feed_page.clean_up();
+            self.anime_page.enter();
+            self.current_tab = SelectedPage::Anime;
+        }
+    }
+
     pub fn process_global_event(&mut self, event: Events) {
         let was_displaying_modal = self.is_displaying_modal();
 
@@ -2332,6 +2406,7 @@ where
 
         if event == Events::Tick {
             self.ui_tick = self.ui_tick.wrapping_add(1);
+            self.anime_page.tick_background();
         }
 
         if event == Events::Tick && self.last_new_chapter_check.elapsed() >= NEW_CHAPTER_CHECK_INTERVAL {
@@ -2372,6 +2447,7 @@ where
             SelectedPage::News => {
                 self.news_page.handle_events(event);
             },
+            SelectedPage::Anime => self.anime_page.handle_events(event),
         };
     }
 
@@ -2433,7 +2509,7 @@ where
                     self.feed_page.update(feed_event);
                 }
             },
-            SelectedPage::News => {},
+            SelectedPage::News | SelectedPage::Anime => {},
         };
     }
 
@@ -2575,6 +2651,34 @@ mod tests {
         assert_eq!(app.current_tab, SelectedPage::Home);
     }
 
+    #[tokio::test]
+    async fn anime_tab_opens_with_f9_and_a_mouse_click() {
+        use ratatui::Terminal;
+        use ratatui::backend::TestBackend;
+
+        let mut app: App<MockMangaPageProvider, TrackerTest> =
+            App::new(MockMangaPageProvider::new(), None, None, MockFiltersHandler::new(MockFilterState {}), MockWidgetFilter {});
+        app.listen_to_event().await;
+        app.process_global_event(Events::Key(KeyCode::F(9).into()));
+        assert_eq!(app.current_tab, SelectedPage::Anime);
+        app.process_global_event(Events::Key(KeyCode::Char('p').into()));
+        assert_eq!(app.current_tab, SelectedPage::Anime);
+        app.process_global_event(Events::Key(KeyCode::F(1).into()));
+        app.listen_to_event().await;
+        assert_eq!(app.current_tab, SelectedPage::Home);
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).unwrap();
+        terminal.draw(|frame| app.render(frame.area(), frame)).unwrap();
+        let &(column, _, _) = app.tab_hit_boxes.iter().find(|&&(_, _, tab)| tab == SelectedPage::Anime).unwrap();
+        app.process_global_event(Events::Mouse(MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column,
+            row: 0,
+            modifiers: KeyModifiers::NONE,
+        }));
+        assert_eq!(app.current_tab, SelectedPage::Anime);
+    }
+
     #[test]
     fn can_go_to_search_page_by_pressing_i() {
         let mut app: App<MockMangaPageProvider, TrackerTest> =
@@ -2706,7 +2810,7 @@ mod tests {
             })
             .unwrap();
 
-        assert_eq!(app.tab_hit_boxes.len(), 4);
+        assert_eq!(app.tab_hit_boxes.len(), 5);
 
         // Sending 'n' again while modal is open closes it
         app.global_event_tx.send(Events::Key(KeyCode::Char('n').into())).unwrap();
@@ -2996,7 +3100,7 @@ mod tests {
         let area = Rect::new(0, 0, 100, 30);
         terminal.draw(|f| app.render(area, f)).unwrap();
 
-        assert_eq!(app.tab_hit_boxes.len(), 4);
+        assert_eq!(app.tab_hit_boxes.len(), 5);
         let (home_start, home_end, _) = app.tab_hit_boxes[0];
         let (search_start, search_end, _) = app.tab_hit_boxes[1];
         let (feed_start, feed_end, _) = app.tab_hit_boxes[2];
@@ -3004,7 +3108,7 @@ mod tests {
         let top_row: String = (0..100).map(|x| terminal.backend().buffer()[(x, 0)].symbol()).collect();
         assert!(top_row.contains("●"), "Provider badge on the right must stay visible: {top_row}");
 
-        // Second row highlight '━' must cover the exact column range of the active Home tab (which includes a 2-col emoji)
+        // The underline must cover the exact column range of the active Home tab.
         let active_bar_cols: Vec<u16> = (0..100).filter(|&x| terminal.backend().buffer()[(x, 1)].symbol() == "━").collect();
         assert_eq!(active_bar_cols.first().copied(), Some(home_start));
         assert_eq!(active_bar_cols.last().map(|x| x + 1), Some(home_end));
