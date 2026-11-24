@@ -81,6 +81,7 @@ pub async fn start_or_update_web_viewer(session: WebViewerSession) -> Result<Str
 /// Starts/updates the local web viewer and opens the URL in the user's default web browser.
 pub async fn open_chapter_in_browser(session: WebViewerSession) -> Result<String, String> {
     let url = start_or_update_web_viewer(session).await?;
+    #[cfg(not(any(target_os = "android", target_os = "ios")))]
     if !cfg!(any(test, feature = "test-utils")) {
         open::that(&url).map_err(|e| format!("Could not open browser for {url}: {e}"))?;
     }

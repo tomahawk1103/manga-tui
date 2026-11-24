@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
+import { BottomNav } from "./components/BottomNav";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
@@ -48,6 +49,10 @@ export function App() {
     if (!appState) return;
     document.documentElement.dataset.theme = appState.themeMode;
     document.documentElement.lang = appState.uiLanguage;
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      themeColorMeta.setAttribute("content", appState.themeMode === "ink" ? "#141413" : "#f8f7f1");
+    }
   }, [appState]);
 
   const showToast = useCallback((message: string) => {
@@ -76,7 +81,7 @@ export function App() {
   if (!appState) {
     const fallbackT = getTranslations("es");
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[var(--paper)] p-6 text-[var(--ink)]">
+      <div className="flex min-h-dvh items-center justify-center bg-[var(--paper)] p-6 text-[var(--ink)]">
         <div className="editorial-card max-w-md p-6">
           <div className="mb-3 flex items-center gap-3">
             <span className="mark" aria-hidden="true">
@@ -140,7 +145,7 @@ export function App() {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-[var(--paper)] text-[var(--ink)]">
+    <div className="flex h-dvh overflow-hidden bg-[var(--paper)] text-[var(--ink)]">
       <Sidebar
         activeSection={activeSection}
         onSelectSection={navigate}
@@ -161,7 +166,7 @@ export function App() {
           onChangeLanguage={(lang) => void runMutation(() => setUiLanguage(lang), true)}
         />
 
-        <main className="flex-1 overflow-y-auto px-6 py-7 md:px-10 md:py-9">
+        <main className="flex-1 overflow-x-hidden overflow-y-auto px-4 py-5 sm:px-6 md:px-10 md:py-9">
           <div className="mx-auto max-w-5xl">
             {errorMessage && (
               <div className="editorial-callout mb-6 px-4 py-3 font-mono-editorial text-xs text-[var(--red-text)]">
@@ -244,13 +249,19 @@ export function App() {
             )}
           </div>
         </main>
+
+        <BottomNav
+          activeSection={activeSection}
+          onSelectSection={navigate}
+          uiLanguage={appState.uiLanguage}
+        />
       </div>
 
       {toastMessage && (
         <div
           role="status"
           aria-live="polite"
-          className="ink-bar fixed right-6 bottom-5 border-2 border-[var(--ink)] px-4 py-2 text-xs font-bold shadow-[4px_4px_0_var(--red)]"
+          className="ink-bar fixed right-4 bottom-20 border-2 border-[var(--ink)] px-4 py-2 text-xs font-bold shadow-[4px_4px_0_var(--red)] md:right-6 md:bottom-5"
         >
           ✓ {toastMessage}
         </div>

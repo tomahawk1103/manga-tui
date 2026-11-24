@@ -245,12 +245,14 @@ impl Anilist {
         default_headers.insert(CONTENT_TYPE, HeaderValue::from_static("application/json"));
         default_headers.insert(ACCEPT, HeaderValue::from_static("application/json"));
 
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .default_headers(default_headers)
             .timeout(Duration::from_secs(10))
-            .user_agent(&*APP_USER_AGENT)
-            .build()
-            .unwrap();
+            .user_agent(&*APP_USER_AGENT);
+        if cfg!(any(test, feature = "test-utils")) {
+            builder = builder.no_proxy();
+        }
+        let client = builder.build().unwrap();
 
         Self {
             base_url,

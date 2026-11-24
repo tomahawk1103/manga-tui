@@ -31,7 +31,7 @@ export function Sidebar({
   return (
     <aside
       aria-label="Mangora"
-      className="flex w-64 shrink-0 flex-col justify-between border-r-2 border-[var(--ink)] bg-[var(--surface)]"
+      className="hidden w-64 shrink-0 flex-col justify-between border-r-2 border-[var(--ink)] bg-[var(--surface)] md:flex"
     >
       <div>
         <div className="border-b-2 border-[var(--ink)] bg-[var(--paper)] px-5 py-4">

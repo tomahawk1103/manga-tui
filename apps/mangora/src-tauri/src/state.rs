@@ -137,6 +137,9 @@ pub struct InitialAppState {
     pub app_version: String,
     pub ui_language: String,
     pub theme_mode: ThemeMode,
+    pub platform: String,
+    pub is_mobile: bool,
+    pub can_open_data_folder: bool,
     pub storage_mode: String,
     pub storage_mode_label: String,
     pub data_dir: String,
@@ -477,6 +480,18 @@ fn storage_mode_id(mode: StorageMode) -> &'static str {
         StorageMode::EnvOverride => "env",
         StorageMode::Portable => "portable",
         StorageMode::System => "system",
+        StorageMode::AppSandbox => "sandbox",
+    }
+}
+
+pub fn platform_capabilities(os: &str) -> (&'static str, bool, bool) {
+    match os {
+        "windows" => ("windows", false, true),
+        "macos" => ("macos", false, true),
+        "linux" => ("linux", false, true),
+        "android" => ("android", true, false),
+        "ios" => ("ios", true, false),
+        _ => ("unknown", false, false),
     }
 }
 
@@ -569,11 +584,15 @@ pub fn detect_library_in_paths(db_path: &Path, downloads_dir: &Path) -> LibraryD
 fn build_initial_state(inner: &AppStateInner) -> InitialAppState {
     let recommended = recommended_provider_for_language(inner.ui_language);
     let library = detect_library_in_paths(&inner.db_path, &inner.downloads_dir);
+    let (platform, is_mobile, can_open_data_folder) = platform_capabilities(std::env::consts::OS);
 
     InitialAppState {
         app_version: env!("CARGO_PKG_VERSION").to_string(),
         ui_language: ui_lang_toml_value(inner.ui_language).to_string(),
         theme_mode: inner.prefs.theme_mode,
+        platform: platform.to_string(),
+        is_mobile,
+        can_open_data_folder,
         storage_mode: storage_mode_id(inner.storage_mode).to_string(),
         storage_mode_label: inner.storage_mode.label().to_string(),
         data_dir: inner.data_dir.display().to_string(),
@@ -813,5 +832,16 @@ mod tests {
 
         let reloaded_prefs = load_prefs_from_dir(&temp.path.join("config"));
         assert_eq!(reloaded_prefs.reader_prefs, updated.reader_prefs);
+    }
+
+    #[test]
+    fn platform_capabilities_and_sandbox_storage_id_match_expected_targets() {
+        assert_eq!(platform_capabilities("windows"), ("windows", false, true));
+        assert_eq!(platform_capabilities("macos"), ("macos", false, true));
+        assert_eq!(platform_capabilities("linux"), ("linux", false, true));
+        assert_eq!(platform_capabilities("android"), ("android", true, false));
+        assert_eq!(platform_capabilities("ios"), ("ios", true, false));
+        assert_eq!(platform_capabilities("freebsd"), ("unknown", false, false));
+        assert_eq!(storage_mode_id(StorageMode::AppSandbox), "sandbox");
     }
 }

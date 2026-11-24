@@ -34,8 +34,12 @@ pub static COVER_IMG_URL_BASE: &str = "https://uploads.mangadex.org/covers";
 pub static MANGADEX_CACHE_FILENAME: &str = "filters.toml";
 
 pub static MANGADEX_CACHE_BASE_DIRECTORY: LazyLock<PathBuf> = LazyLock::new(|| {
+    if let Some(custom) = crate::backend::custom_cache_dir() {
+        return custom.join("mangadex");
+    }
     directories::ProjectDirs::from("", "", "manga-tui")
         .map(|project_dirs| project_dirs.cache_dir().join("mangadex").to_path_buf())
+        .or_else(|| crate::backend::APP_DATA_DIR.as_ref().map(|dir| dir.join("cache").join("mangadex")))
         .unwrap_or_default()
 });
 

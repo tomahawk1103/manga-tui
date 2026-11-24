@@ -6,6 +6,7 @@ use manga_core::backend::manga_provider::{MangaProviders, Pagination};
 use manga_core::backend::multi_provider::search_mangas_for_provider;
 use serde::Serialize;
 use tauri::State;
+use tauri_plugin_opener::OpenerExt;
 
 use crate::state::{AppState, InitialAppState, OnboardingPreferencesPayload};
 
@@ -104,31 +105,67 @@ pub fn set_onboarding_completed(state: State<'_, AppState>, completed: bool) -> 
     state.set_onboarding_completed(completed)
 }
 
-#[tauri::command]
-pub fn open_external_url(url: String) -> Result<(), String> {
+fn validate_external_https_url(url: &str) -> Result<&str, String> {
     let trimmed = url.trim();
-    if !trimmed.starts_with("https://") {
+    if trimmed.is_empty() || !trimmed.starts_with("https://") {
         return Err("Only HTTPS URLs can be opened externally".to_string());
     }
-    open::that(trimmed).map_err(|e| format!("Could not open URL: {e}"))
+    Ok(trimmed)
+}
+
+fn open_folder_in_file_manager(
+    app: &tauri::AppHandle,
+    dir: &std::path::Path,
+    label: &str,
+    create_if_missing: bool,
+) -> Result<(), String> {
+    #[cfg(desktop)]
+    {
+        if create_if_missing {
+            std::fs::create_dir_all(dir).map_err(|e| format!("Could not create {label} folder {}: {e}", dir.display()))?;
+        }
+        app.opener()
+            .open_path(dir.to_string_lossy().to_string(), None::<&str>)
+            .map_err(|e| format!("Could not open {label} folder {}: {e}", dir.display()))
+    }
+    #[cfg(mobile)]
+    {
+        let _ = (app, dir, label, create_if_missing);
+        Err("Opening the file manager is not supported on mobile devices".to_string())
+    }
 }
 
 #[tauri::command]
-pub fn open_data_folder(state: State<'_, AppState>) -> Result<(), String> {
+pub fn open_external_url(app: tauri::AppHandle, url: String) -> Result<(), String> {
+    let trimmed = validate_external_https_url(&url)?;
+    app.opener()
+        .open_url(trimmed, None::<&str>)
+        .map_err(|e| format!("Could not open URL: {e}"))
+}
+
+#[tauri::command]
+pub fn open_data_folder(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let dir = state.data_dir()?;
-    open::that(&dir).map_err(|e| format!("Could not open data folder {}: {e}", dir.display()))
+    open_folder_in_file_manager(&app, &dir, "data", false)
 }
 
 #[tauri::command]
-pub fn open_downloads_folder(state: State<'_, AppState>) -> Result<(), String> {
+pub fn open_downloads_folder(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<(), String> {
     let dir = state.downloads_dir()?;
-    std::fs::create_dir_all(&dir).map_err(|e| format!("Could not create downloads folder {}: {e}", dir.display()))?;
-    open::that(&dir).map_err(|e| format!("Could not open downloads folder {}: {e}", dir.display()))
+    open_folder_in_file_manager(&app, &dir, "downloads", true)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_external_https_url_allows_only_https() {
+        assert_eq!(validate_external_https_url("  https://discord.gg/SeqsWUCpVx  ").unwrap(), "https://discord.gg/SeqsWUCpVx");
+        for invalid in ["", "   ", "http://example.com", "javascript:alert(1)", "file:///etc/passwd"] {
+            assert!(validate_external_https_url(invalid).is_err());
+        }
+    }
 
     #[tokio::test]
     async fn catalog_rejects_invalid_input_before_querying_the_provider() {

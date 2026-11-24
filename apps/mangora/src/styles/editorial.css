@@ -38,13 +38,22 @@
 }
 
 :root {
-  --font-display: "Arial Black", "Archivo Black", Arial, sans-serif;
-  --font-sans: "Segoe UI", Arial, sans-serif;
-  --font-mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+  --font-display: "Arial Black", "Archivo Black", "Helvetica Neue", Arial, sans-serif;
+  --font-sans: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+  --font-mono: "Cascadia Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-right: env(safe-area-inset-right, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+  --safe-left: env(safe-area-inset-left, 0px);
 }
 
 * {
   box-sizing: border-box;
+}
+
+html,
+body {
+  overscroll-behavior: none;
 }
 
 html,
@@ -147,6 +156,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.55rem;
+  min-height: 44px;
   padding: 0.72rem 1.2rem;
   border: 2px solid var(--ink);
   background: var(--red);
@@ -154,6 +164,8 @@ body {
   font-weight: 700;
   box-shadow: 3px 3px 0 var(--shadow-color);
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   transition: transform 90ms ease, box-shadow 90ms ease, background-color 120ms ease;
 }
 
@@ -176,6 +188,7 @@ body {
   align-items: center;
   justify-content: center;
   gap: 0.5rem;
+  min-height: 44px;
   padding: 0.72rem 1.1rem;
   border: 2px solid var(--ink);
   background: var(--paper);
@@ -183,6 +196,8 @@ body {
   font-weight: 700;
   box-shadow: 3px 3px 0 var(--shadow-color);
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   transition: transform 90ms ease, box-shadow 90ms ease, background-color 120ms ease, color 120ms ease;
 }
 
@@ -205,6 +220,7 @@ body {
   display: inline-flex;
   align-items: center;
   gap: 0.45rem;
+  min-height: 44px;
   padding: 0.5rem 0.85rem;
   border: 2px solid var(--ink);
   background: var(--paper);
@@ -212,6 +228,8 @@ body {
   font-weight: 600;
   box-shadow: 2px 2px 0 var(--shadow-color);
   cursor: pointer;
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
   transition: background-color 110ms ease, color 110ms ease, transform 90ms ease;
 }
 
@@ -252,4 +270,12 @@ body {
 .ink-dots i:first-child {
   background: #ec554a;
   border-color: #ec554a;
+}
+
+.safe-top-bar {
+  padding-top: max(0.625rem, var(--safe-top));
+}
+
+.safe-bottom-nav {
+  padding-bottom: max(0.375rem, var(--safe-bottom));
 }

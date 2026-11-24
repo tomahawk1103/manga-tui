@@ -27,7 +27,10 @@ export interface InitialAppState {
   appVersion: string;
   uiLanguage: UiLanguage;
   themeMode: ThemeMode;
-  storageMode: "env" | "portable" | "system";
+  platform: "windows" | "macos" | "linux" | "android" | "ios" | "unknown";
+  isMobile: boolean;
+  canOpenDataFolder: boolean;
+  storageMode: "env" | "portable" | "system" | "sandbox";
   storageModeLabel: string;
   dataDir: string;
   configDir: string;
@@ -37,6 +40,7 @@ export interface InitialAppState {
   availableProviders: ProviderOption[];
   favoriteGenres: string[];
   onboardingCompleted: boolean;
+  downloadFormat?: string;
   library: LibraryDetection;
 }
 

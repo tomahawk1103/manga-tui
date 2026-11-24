@@ -88,16 +88,18 @@ impl WeebcentralProvider {
         chapter_pages_header
             .insert(ACCEPT, HeaderValue::from_static("image/avif,image/webp,image/png,image/svg+xml,image/*;q=0.8,*/*;q=0.5"));
 
-        let client = Client::builder()
+        let mut builder = Client::builder()
             .cookie_store(true)
             .timeout(Duration::from_secs(30))
             .default_headers(default_headers)
             .user_agent(get_random_user_agent())
             .resolve("weebcentral.com", std::net::SocketAddr::from(([104, 21, 65, 2], 443)))
             .resolve("temp.compsci88.com", std::net::SocketAddr::from(([104, 21, 65, 2], 443)))
-            .resolve("scans.lastation.us", std::net::SocketAddr::from(([104, 21, 65, 2], 443)))
-            .build()
-            .unwrap();
+            .resolve("scans.lastation.us", std::net::SocketAddr::from(([104, 21, 65, 2], 443)));
+        if cfg!(any(test, feature = "test-utils")) {
+            builder = builder.no_proxy();
+        }
+        let client = builder.build().unwrap();
 
         Self {
             client,

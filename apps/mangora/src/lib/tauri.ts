@@ -95,6 +95,9 @@ function defaultBrowserState(): InitialAppState {
     appVersion: "0.1.0",
     uiLanguage: "es",
     themeMode: "paper",
+    platform: "unknown",
+    isMobile: false,
+    canOpenDataFolder: true,
     storageMode: "system",
     storageModeLabel: "Browser Preview",
     dataDir: "AppData/manga-tui/data",
@@ -105,6 +108,7 @@ function defaultBrowserState(): InitialAppState {
     availableProviders: FALLBACK_PROVIDERS,
     favoriteGenres: [],
     onboardingCompleted: false,
+    downloadFormat: "cbz",
     library: {
       hasExistingData: false,
       libraryMangas: 0,

@@ -236,16 +236,24 @@ export function SettingsView({
             </div>
           </dl>
 
-          <button
-            type="button"
-            disabled={!desktop}
-            onClick={() => void onOpenDataFolder()}
-            className="editorial-btn-secondary mt-5 text-xs"
-          >
-            <FolderOpen className="h-4 w-4" aria-hidden="true" />
-            <span>{t.settings.openFolderBtn}</span>
-          </button>
-          {!desktop && <p className="mt-2 text-xs text-[var(--muted)]">{t.folderDesktopOnly}</p>}
+          {appState.canOpenDataFolder ? (
+            <>
+              <button
+                type="button"
+                disabled={!desktop}
+                onClick={() => void onOpenDataFolder()}
+                className="editorial-btn-secondary mt-5 text-xs"
+              >
+                <FolderOpen className="h-4 w-4" aria-hidden="true" />
+                <span>{t.settings.openFolderBtn}</span>
+              </button>
+              {!desktop && <p className="mt-2 text-xs text-[var(--muted)]">{t.folderDesktopOnly}</p>}
+            </>
+          ) : (
+            <p className="editorial-callout mt-5 p-3 text-xs text-[var(--muted)]">
+              {t.settings.mobileStorageNote}
+            </p>
+          )}
         </section>
 
         <section className="editorial-callout flex flex-col justify-between p-6">

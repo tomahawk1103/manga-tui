@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { ArrowRight } from "lucide-react";
 import { getTranslations } from "../lib/i18n";
 import { isTauriRuntime, searchCatalog, type CatalogItem, type CatalogPage } from "../lib/tauri";
 import type { ProviderOption, UiLanguage } from "../types/mangora";
@@ -67,10 +68,20 @@ export function CatalogSearch({ provider, language, focusSearch, onChooseSource 
       }}>
         <label className="min-w-48 flex-1 font-bold">{t.searchTitle}
           <input ref={searchInput} type="search" value={input} onChange={event => setInput(event.target.value)}
-            className="mt-1 block w-full border-2 border-[var(--ink)] bg-[var(--paper)] p-2" />
+            className="mt-1 block min-h-[44px] w-full border-2 border-[var(--ink)] bg-[var(--paper)] px-3 py-2" />
         </label>
-        <button className="editorial-btn-primary" disabled={!desktop || !input.trim()}>{t.search} · {provider.name}</button>
+        <button type="submit" className="editorial-btn-primary w-full sm:w-auto" disabled={!desktop || !input.trim()}>{t.search}</button>
       </form>
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
+        <p className="text-[var(--muted)]">
+          {t.providerLabel}: <strong className="text-[var(--ink)]">{provider.name}</strong>
+        </p>
+        {onChooseSource && (
+          <button type="button" className="editorial-btn-secondary px-3 py-1.5 text-xs" onClick={onChooseSource}>
+            {failed || (result && items.length === 0) ? t.chooseAnotherSource : t.changeSource}
+          </button>
+        )}
+      </div>
       {!desktop && <p>{t.desktopOnly}</p>}
       {request && !result && <p role="status">{failed ? t.unavailable : t.loading}</p>}
       {request && failed && (
@@ -84,11 +95,11 @@ export function CatalogSearch({ provider, language, focusSearch, onChooseSource 
       )}
       {result && request && <>
         <div className="flex flex-wrap gap-4">
-          {languages.length > 0 && <label>{t.language} <select value={lang} onChange={event => setLang(event.target.value)}>
+          {languages.length > 0 && <label className="flex items-center gap-2">{t.language} <select value={lang} onChange={event => setLang(event.target.value)} className="min-h-[44px] border-2 border-[var(--ink)] bg-[var(--paper)] px-2.5 py-2">
             <option value="">{t.all}</option>
             {languages.map(value => <option key={value}>{value}</option>)}
           </select></label>}
-          {genres.length > 0 && <label>{t.genre} <select value={genre} onChange={event => setGenre(event.target.value)}>
+          {genres.length > 0 && <label className="flex items-center gap-2">{t.genre} <select value={genre} onChange={event => setGenre(event.target.value)} className="min-h-[44px] border-2 border-[var(--ink)] bg-[var(--paper)] px-2.5 py-2">
             <option value="">{t.all}</option>
             {genres.map(value => <option key={value}>{value}</option>)}
           </select></label>}
@@ -99,21 +110,19 @@ export function CatalogSearch({ provider, language, focusSearch, onChooseSource 
             <button
               type="button"
               aria-haspopup="dialog"
-              className="block h-full w-full cursor-pointer text-left hover:bg-[var(--surface)] focus-visible:outline-offset-[-4px]"
+              className="flex h-full w-full cursor-pointer flex-col text-left hover:bg-[var(--surface)] focus-visible:outline-offset-[-4px]"
               onClick={() => setSelected(item)}
             >
               {/^https?:\/\//i.test(item.coverUrl) && <img src={item.coverUrl} alt="" loading="lazy"
                 className="aspect-[2/3] w-full object-cover" onError={event => { event.currentTarget.hidden = true; }} />}
               <span className="font-display block p-3">{item.title}</span>
+              <span className="mt-auto flex items-center gap-1.5 px-3 pb-3 text-sm font-bold text-[var(--red-text)]">
+                {t.viewDetails} <ArrowRight size={14} aria-hidden="true" />
+              </span>
             </button>
           </li>)}
         </ul>
       </>}
-      {onChooseSource && (failed || (result && items.length === 0)) && (
-        <button type="button" className="editorial-btn-secondary" onClick={onChooseSource}>
-          {t.chooseAnotherSource}
-        </button>
-      )}
       {request && (result || failed) && (page > 1 || result?.hasNext) && <div className="flex gap-3">
         <button className="editorial-btn-secondary" disabled={page === 1}
           onClick={() => setRequest({ ...request, provider: provider.id, page: page - 1 })}>{t.previous}</button>

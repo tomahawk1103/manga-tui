@@ -33,8 +33,8 @@ export function TopBar({
   const currentProvider = availableProviders.find((p) => p.id === activeProvider);
 
   return (
-    <header className="ink-bar flex shrink-0 items-center justify-between gap-4 border-b-2 border-[var(--ink)] px-6 py-2.5 text-xs">
-      <div className="flex min-w-0 items-center gap-3">
+    <header className="ink-bar safe-top-bar flex shrink-0 items-center justify-between gap-2 border-b-2 border-[var(--ink)] px-3 pb-2.5 text-xs sm:gap-4 sm:px-6">
+      <div className="flex min-w-0 items-center gap-2 sm:gap-3">
         <span className="ink-dots shrink-0" aria-hidden="true">
           <i />
           <i />
@@ -61,7 +61,7 @@ export function TopBar({
                 key={lang}
                 type="button"
                 onClick={() => onChangeLanguage(lang)}
-                className={`cursor-pointer px-2.5 py-1 text-[11px] font-bold uppercase transition-colors ${
+                className={`min-h-[36px] cursor-pointer touch-manipulation px-2.5 py-1 text-[11px] font-bold uppercase transition-colors ${
                   active ? "bg-[var(--red)] text-white" : "bg-transparent text-[#e4e3db] hover:bg-[#2d2d2a]"
                 }`}
               >
@@ -75,7 +75,7 @@ export function TopBar({
           type="button"
           onClick={onToggleTheme}
           title={t.themeToggleLabel}
-          className="inline-flex cursor-pointer items-center gap-1.5 border border-[#55554f] px-2.5 py-1 text-[11px] font-bold text-[#f8f7f1] transition-colors hover:border-[var(--red)] hover:bg-[var(--red)]"
+          className="inline-flex min-h-[36px] cursor-pointer touch-manipulation items-center gap-1.5 border border-[#55554f] px-2.5 py-1 text-[11px] font-bold text-[#f8f7f1] transition-colors hover:border-[var(--red)] hover:bg-[var(--red)]"
         >
           {themeMode === "paper" ? (
             <Moon className="h-3.5 w-3.5" aria-hidden="true" />

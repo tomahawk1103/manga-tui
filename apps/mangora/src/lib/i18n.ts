@@ -91,6 +91,7 @@ export interface TourCardCopy {
 export interface Translations {
   brandSubtitle: string;
   nav: Record<NavSection, string>;
+  navMobile: Record<NavSection, string>;
   themePaper: string;
   themeInk: string;
   themeToggleLabel: string;
@@ -177,6 +178,8 @@ export interface Translations {
     empty: string;
     unavailable: string;
     chooseAnotherSource: string;
+    changeSource: string;
+    viewDetails: string;
     providerLabel: string;
     closeDetails: string;
     noSynopsis: string;
@@ -196,6 +199,7 @@ export interface Translations {
     folderCardTitle: string;
     folderCardDesc: string;
     openFolderBtn: string;
+    mobileStorageNote: string;
     detectedOfflineTitle: string;
     detectedOfflineCount: (count: number) => string;
     queuePreviewTitle: string;
@@ -223,6 +227,7 @@ export interface Translations {
     configDirLabel: string;
     downloadsDirLabel: string;
     openFolderBtn: string;
+    mobileStorageNote: string;
     tourTitle: string;
     tourDesc: string;
     relaunchTourBtn: string;
@@ -251,13 +256,20 @@ export interface Translations {
 }
 
 const ES: Translations = {
-  brandSubtitle: "Lector de escritorio",
+  brandSubtitle: "Lector de manga",
   nav: {
     home: "Inicio / Biblioteca",
     explore: "Explorar",
     downloads: "Descargas",
     settings: "Ajustes",
     support: "Apoyar / Discord",
+  },
+  navMobile: {
+    home: "Biblioteca",
+    explore: "Explorar",
+    downloads: "Descargas",
+    settings: "Ajustes",
+    support: "Apoyar",
   },
   themePaper: "Modo Papel",
   themeInk: "Modo Tinta",
@@ -385,10 +397,12 @@ const ES: Translations = {
     empty: "No hay coincidencias en esta página.",
     unavailable: "La fuente no ha respondido.",
     chooseAnotherSource: "Buscar en otra fuente",
+    changeSource: "Cambiar fuente",
+    viewDetails: "Ver ficha",
     providerLabel: "Fuente",
     closeDetails: "Cerrar",
     noSynopsis: "Esta fuente no incluye una sinopsis en el resultado.",
-    desktopOnly: "Abre Mangora en el escritorio para buscar en el catálogo.",
+    desktopOnly: "Abre la app de Mangora (escritorio o móvil) para buscar en el catálogo.",
     previous: "Página anterior",
     next: "Página siguiente",
     language: "Idioma en esta página",
@@ -406,6 +420,8 @@ const ES: Translations = {
     folderCardDesc:
       "Los capítulos descargados desde manga-tui o Mangora conviven en la misma ubicación local.",
     openFolderBtn: "Abrir carpeta de descargas en el Explorador",
+    mobileStorageNote:
+      "En móvil las descargas se guardan en el almacenamiento privado de Mangora y puedes sincronizarlas con Google Drive en Ajustes.",
     detectedOfflineTitle: "Escáner local conectado",
     detectedOfflineCount: (count) =>
       count === 1
@@ -438,6 +454,8 @@ const ES: Translations = {
     configDirLabel: "Configuración",
     downloadsDirLabel: "Descargas",
     openFolderBtn: "Abrir carpeta de datos",
+    mobileStorageNote:
+      "En Android e iOS los datos viven en el sandbox privado de la app; usa Google Drive para sincronizarlos entre dispositivos.",
     tourTitle: "Asistente de primeros pasos",
     tourDesc: "Puedes repetir la bienvenida en cualquier momento para repasar las secciones o reconfigurar todo.",
     relaunchTourBtn: "Volver a lanzar el tour",
@@ -471,13 +489,20 @@ const ES: Translations = {
 };
 
 const EN: Translations = {
-  brandSubtitle: "Desktop reader",
+  brandSubtitle: "Manga reader",
   nav: {
     home: "Home / Library",
     explore: "Explore",
     downloads: "Downloads",
     settings: "Settings",
     support: "Support / Discord",
+  },
+  navMobile: {
+    home: "Library",
+    explore: "Explore",
+    downloads: "Downloads",
+    settings: "Settings",
+    support: "Support",
   },
   themePaper: "Paper Mode",
   themeInk: "Ink Mode",
@@ -605,10 +630,12 @@ const EN: Translations = {
     empty: "No matches on this page.",
     unavailable: "The source didn’t respond.",
     chooseAnotherSource: "Search another source",
+    changeSource: "Change source",
+    viewDetails: "View details",
     providerLabel: "Source",
     closeDetails: "Close",
     noSynopsis: "This source doesn’t include a synopsis in the result.",
-    desktopOnly: "Open the Mangora desktop app to search the catalog.",
+    desktopOnly: "Open the Mangora app (desktop or mobile) to search the catalog.",
     previous: "Previous page",
     next: "Next page",
     language: "Language on this page",
@@ -626,6 +653,8 @@ const EN: Translations = {
     folderCardDesc:
       "Chapters downloaded from manga-tui or Mangora live together in the same folder.",
     openFolderBtn: "Open downloads folder in Explorer",
+    mobileStorageNote:
+      "On mobile, downloads are stored in Mangora's private app storage and can be synced with Google Drive in Settings.",
     detectedOfflineTitle: "Local scanner connected",
     detectedOfflineCount: (count) =>
       count === 1
@@ -658,6 +687,8 @@ const EN: Translations = {
     configDirLabel: "Config folder",
     downloadsDirLabel: "Downloads",
     openFolderBtn: "Open data folder",
+    mobileStorageNote:
+      "On Android and iOS, data lives in the app's private sandbox; use Google Drive to sync across devices.",
     tourTitle: "First-steps guide",
     tourDesc: "You can relaunch the onboarding assistant anytime to review sections or update your setup.",
     relaunchTourBtn: "Relaunch onboarding tour",

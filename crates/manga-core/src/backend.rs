@@ -88,6 +88,7 @@ pub enum StorageMode {
     EnvOverride,
     Portable,
     System,
+    AppSandbox,
 }
 
 impl StorageMode {
@@ -96,6 +97,7 @@ impl StorageMode {
             Self::EnvOverride => "MANGA_TUI_DATA_DIR",
             Self::Portable => "Portable (data/)",
             Self::System => "Sistema / System",
+            Self::AppSandbox => "App Sandbox",
         }
     }
 }
@@ -132,6 +134,9 @@ pub fn current_executable_dir() -> Option<PathBuf> {
 }
 
 pub fn current_storage_mode() -> StorageMode {
+    if CUSTOM_DATA_DIR.get().is_some() {
+        return StorageMode::AppSandbox;
+    }
     let env_dir = std::env::var("MANGA_TUI_DATA_DIR").ok();
     let exe_dir = current_executable_dir();
     let (_, mode) = resolve_data_dir_with_precedence(env_dir.as_deref(), exe_dir.as_deref(), None);
@@ -139,11 +144,23 @@ pub fn current_storage_mode() -> StorageMode {
 }
 
 static CUSTOM_DATA_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
+static CUSTOM_CACHE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
-/// Sets an explicit application data directory provided by the host (e.g. Tauri on desktop or Android).
+/// Sets an explicit application data directory provided by the host (e.g. Tauri on desktop or Android/iOS).
 /// Must be called before `APP_DATA_DIR` is initialized.
 pub fn set_custom_data_dir(dir: PathBuf) -> Result<(), PathBuf> {
     CUSTOM_DATA_DIR.set(dir)
+}
+
+/// Sets an explicit application cache directory provided by the host (e.g. Tauri on Android/iOS).
+/// Must be called before cache directories are resolved.
+pub fn set_custom_cache_dir(dir: PathBuf) -> Result<(), PathBuf> {
+    CUSTOM_CACHE_DIR.set(dir)
+}
+
+/// Returns the explicit host-provided cache directory, if configured.
+pub fn custom_cache_dir() -> Option<&'static PathBuf> {
+    CUSTOM_CACHE_DIR.get()
 }
 
 #[cfg(not(any(test, feature = "test-utils")))]
@@ -361,5 +378,10 @@ mod test {
         assert_eq!(fs::read(&cbz_path).unwrap(), b"downloaded-cbz-bytes");
 
         let _ = fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn app_sandbox_storage_mode_has_expected_label() {
+        assert_eq!(StorageMode::AppSandbox.label(), "App Sandbox");
     }
 }

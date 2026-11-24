@@ -1,7 +1,9 @@
+#[cfg(not(target_os = "android"))]
 use keyring::Entry;
 
 use super::SecretStorage;
 
+#[cfg(not(target_os = "android"))]
 const SERVICE_NAME: &str = "manga-tui";
 
 /// The [`keyring`](https://crates.io/crates/keyring) secret storage provider which uses each operating
@@ -10,12 +12,14 @@ const SERVICE_NAME: &str = "manga-tui";
 /// secrets stored with this service
 #[derive(Debug)]
 pub struct KeyringStorage {
+    #[cfg(not(target_os = "android"))]
     service_name: &'static str,
 }
 
 impl KeyringStorage {
     pub fn new() -> Self {
         Self {
+            #[cfg(not(target_os = "android"))]
             service_name: SERVICE_NAME,
         }
     }
@@ -27,6 +31,7 @@ impl Default for KeyringStorage {
     }
 }
 
+#[cfg(not(target_os = "android"))]
 impl SecretStorage for KeyringStorage {
     fn save_secret<T: Into<String>, S: Into<String>>(&self, secret_name: T, value: S) -> Result<(), Box<dyn std::error::Error>> {
         let secret = Entry::new(self.service_name, &secret_name.into())?;
@@ -57,7 +62,22 @@ impl SecretStorage for KeyringStorage {
     }
 }
 
-#[cfg(test)]
+#[cfg(target_os = "android")]
+impl SecretStorage for KeyringStorage {
+    fn save_secret<T: Into<String>, S: Into<String>>(&self, _secret_name: T, _value: S) -> Result<(), Box<dyn std::error::Error>> {
+        Err("OS keyring is unavailable on Android; app-sandbox fallback is used".into())
+    }
+
+    fn get_secret<T: Into<String>>(&self, _secret_name: T) -> Result<Option<String>, Box<dyn std::error::Error>> {
+        Ok(None)
+    }
+
+    fn remove_secret<T: AsRef<str>>(&self, _secret_name: T) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+}
+
+#[cfg(all(test, not(target_os = "android")))]
 mod tests {
     use std::collections::HashMap;
     use std::error::Error;

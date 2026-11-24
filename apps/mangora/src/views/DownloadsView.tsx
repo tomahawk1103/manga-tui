@@ -39,16 +39,24 @@ export function DownloadsView({ appState, onOpenDownloadsFolder }: DownloadsView
           <div className="mb-4 border border-[var(--ink)] bg-[var(--surface)] px-3 py-2 font-mono-editorial text-xs break-all">
             {appState.downloadsDir}
           </div>
-          <button
-            type="button"
-            disabled={!desktop}
-            onClick={() => void onOpenDownloadsFolder()}
-            className="editorial-btn-primary text-xs"
-          >
-            <FolderOpen className="h-4 w-4" aria-hidden="true" />
-            <span>{t.downloads.openFolderBtn}</span>
-          </button>
-          {!desktop && <p className="mt-2 text-xs text-[var(--muted)]">{t.folderDesktopOnly}</p>}
+          {appState.canOpenDataFolder ? (
+            <>
+              <button
+                type="button"
+                disabled={!desktop}
+                onClick={() => void onOpenDownloadsFolder()}
+                className="editorial-btn-primary text-xs"
+              >
+                <FolderOpen className="h-4 w-4" aria-hidden="true" />
+                <span>{t.downloads.openFolderBtn}</span>
+              </button>
+              {!desktop && <p className="mt-2 text-xs text-[var(--muted)]">{t.folderDesktopOnly}</p>}
+            </>
+          ) : (
+            <p className="editorial-callout p-3 text-xs text-[var(--muted)]">
+              {t.downloads.mobileStorageNote}
+            </p>
+          )}
         </section>
 
         <section className="editorial-card-muted p-5">

@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Moon, Sparkles, Sun, X } from "lucide-react";
 import type { InitialAppState, NavSection, ThemeMode, UiLanguage } from "../types/mangora";
 import { GENRE_OPTIONS, getTranslations } from "../lib/i18n";
@@ -66,8 +66,19 @@ export function OnboardingWizard({
 
   const nextTheme: ThemeMode = selectedTheme === "paper" ? "ink" : "paper";
 
+  useEffect(() => {
+    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+    if (themeColorMeta) {
+      themeColorMeta.setAttribute("content", selectedTheme === "ink" ? "#141413" : "#f8f7f1");
+    }
+  }, [selectedTheme]);
+
   return (
-    <div data-theme={selectedTheme} lang={selectedLang} className="min-h-screen bg-[var(--paper)] px-4 py-6 text-[var(--ink)] md:px-8 md:py-10">
+    <div
+      data-theme={selectedTheme}
+      lang={selectedLang}
+      className="min-h-dvh overflow-x-hidden bg-[var(--paper)] px-4 pt-[max(1.5rem,var(--safe-top))] pb-[max(1.5rem,var(--safe-bottom))] text-[var(--ink)] md:px-8 md:py-10"
+    >
       <div className="mx-auto max-w-4xl">
         {/* Editorial header bar */}
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3 border-b-2 border-[var(--ink)] pb-4">
