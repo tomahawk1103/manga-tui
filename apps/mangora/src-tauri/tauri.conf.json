@@ -1,0 +1,39 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Mangora",
+  "version": "0.1.0",
+  "identifier": "io.github.tomahawk1103.mangora",
+  "build": {
+    "beforeDevCommand": "npm.cmd run dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "npm.cmd run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "Mangora",
+        "width": 1240,
+        "height": 820,
+        "minWidth": 940,
+        "minHeight": 640,
+        "center": true,
+        "backgroundColor": "#f8f7f1"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost http://asset.localhost mangora: http://mangora.localhost https://mangora.localhost blob: data: https: http:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost mangora: http://mangora.localhost https://mangora.localhost; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico"
+    ]
+  }
+}

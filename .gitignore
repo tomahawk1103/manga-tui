@@ -25,3 +25,8 @@ dist/
 *.code-workspace
 .env
 .env.local
+
+# Mangora desktop frontend & Tauri generated schemas
+node_modules/
+apps/mangora/dist/
+apps/mangora/src-tauri/gen/schemas/

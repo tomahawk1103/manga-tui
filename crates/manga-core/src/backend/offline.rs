@@ -511,6 +511,121 @@ impl LocalChapterSource {
     }
 }
 
+enum LocalChapterHandleKind {
+    Cbz { path: PathBuf, entries: Vec<String> },
+    Epub { path: PathBuf, entries: Vec<String> },
+    Directory { dir: PathBuf, paths: Vec<PathBuf> },
+    Pdf { path: PathBuf, doc: std::sync::Mutex<Document>, page_ids: Vec<ObjectId> },
+}
+
+/// Cached handle for fast random-access local page loading across CBZ, EPUB, PDF, and RAW.
+pub struct LocalChapterHandle {
+    kind: LocalChapterHandleKind,
+}
+
+impl std::fmt::Debug for LocalChapterHandle {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LocalChapterHandle")
+            .field("format", &self.format_label())
+            .field("path", &self.path())
+            .field("page_count", &self.page_count())
+            .finish()
+    }
+}
+
+impl LocalChapterHandle {
+    pub fn open(source: &LocalChapterSource) -> Result<Self, Box<dyn Error + Send + Sync>> {
+        let kind = match source {
+            LocalChapterSource::Cbz(path) => LocalChapterHandleKind::Cbz {
+                path: path.clone(),
+                entries: collect_zip_image_names(path)?,
+            },
+            LocalChapterSource::Epub(path) => LocalChapterHandleKind::Epub {
+                path: path.clone(),
+                entries: collect_zip_image_names(path)?,
+            },
+            LocalChapterSource::Directory(dir) => LocalChapterHandleKind::Directory {
+                dir: dir.clone(),
+                paths: collect_dir_image_paths(dir)?,
+            },
+            LocalChapterSource::Pdf(path) => {
+                let doc = Document::load(path)?;
+                let page_ids = doc
+                    .get_pages()
+                    .into_values()
+                    .filter(|&page_id| extract_page_image_stream(&doc, page_id).is_some())
+                    .collect();
+                LocalChapterHandleKind::Pdf {
+                    path: path.clone(),
+                    doc: std::sync::Mutex::new(doc),
+                    page_ids,
+                }
+            },
+        };
+        Ok(Self { kind })
+    }
+
+    pub fn page_count(&self) -> usize {
+        match &self.kind {
+            LocalChapterHandleKind::Cbz { entries, .. } | LocalChapterHandleKind::Epub { entries, .. } => entries.len(),
+            LocalChapterHandleKind::Directory { paths, .. } => paths.len(),
+            LocalChapterHandleKind::Pdf { page_ids, .. } => page_ids.len(),
+        }
+    }
+
+    pub fn format_label(&self) -> &'static str {
+        match &self.kind {
+            LocalChapterHandleKind::Cbz { .. } => "CBZ",
+            LocalChapterHandleKind::Epub { .. } => "EPUB",
+            LocalChapterHandleKind::Directory { .. } => "RAW",
+            LocalChapterHandleKind::Pdf { .. } => "PDF",
+        }
+    }
+
+    pub fn path(&self) -> &Path {
+        match &self.kind {
+            LocalChapterHandleKind::Cbz { path, .. }
+            | LocalChapterHandleKind::Epub { path, .. }
+            | LocalChapterHandleKind::Pdf { path, .. } => path.as_path(),
+            LocalChapterHandleKind::Directory { dir, .. } => dir.as_path(),
+        }
+    }
+
+    pub fn load_page_bytes(&self, index: usize) -> Result<Vec<u8>, Box<dyn Error + Send + Sync>> {
+        match &self.kind {
+            LocalChapterHandleKind::Cbz { path, entries } | LocalChapterHandleKind::Epub { path, entries } => {
+                let entry_name = entries.get(index).ok_or_else(|| format!("Page index {index} out of bounds"))?;
+                let file = File::open(path)?;
+                let mut archive = ZipArchive::new(file)?;
+                let mut entry_file = archive.by_name(entry_name)?;
+                let mut bytes = Vec::new();
+                entry_file.read_to_end(&mut bytes)?;
+                Ok(bytes)
+            },
+            LocalChapterHandleKind::Directory { paths, .. } => {
+                let page_path = paths.get(index).ok_or_else(|| format!("Page index {index} out of bounds"))?;
+                Ok(std::fs::read(page_path)?)
+            },
+            LocalChapterHandleKind::Pdf { doc, page_ids, .. } => {
+                let &page_id = page_ids
+                    .get(index)
+                    .ok_or_else(|| format!("Page index {index} out of bounds in PDF"))?;
+                let guard = doc.lock().map_err(|_| "PDF document lock poisoned")?;
+                let stream = extract_page_image_stream(&guard, page_id)
+                    .ok_or_else(|| format!("Page index {index} image stream missing in PDF"))?;
+                match decode_pdf_image_stream(&guard, stream)? {
+                    DecodedPdfImage::EncodedBytes(bytes) => Ok(bytes),
+                    DecodedPdfImage::Dynamic(img) => {
+                        let mut out = Vec::new();
+                        img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png)?;
+                        Ok(out)
+                    },
+                }
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ParsedDiskChapterName {
     pub chapter_number: String,
@@ -1262,6 +1377,10 @@ pub fn scan_offline_mangas_in_dir(base_dir: &Path, db: Option<&Database<'_>>) ->
             added_bytes = added_bytes.saturating_add(d.size_bytes);
             let format_label = d.source.format_label();
             let chapter_id = format!("offline::root::{folder_name}::{}", d.entry_name);
+            let matched_ch = metadata.chapters.iter().find(|ch| ch.id == chapter_id);
+            let is_read = matched_ch.is_some_and(|c| c.is_read);
+            let is_bookmarked = matched_ch.is_some_and(|c| c.is_bookmarked);
+            let bookmarked_page = matched_ch.and_then(|c| c.number_page_bookmarked);
             let chapter = Chapter {
                 id: chapter_id,
                 id_safe_for_download: SanitizedFilename::new(&d.entry_name).to_string(),
@@ -1278,9 +1397,9 @@ pub fn scan_offline_mangas_in_dir(base_dir: &Path, db: Option<&Database<'_>>) ->
                 source: d.source,
                 format_label,
                 size_bytes: d.size_bytes,
-                is_read: false,
-                is_bookmarked: false,
-                bookmarked_page: None,
+                is_read,
+                is_bookmarked,
+                bookmarked_page,
             });
         }
 
@@ -1783,5 +1902,66 @@ mod tests {
         let imported = import_external_archives_into_downloads(&ext_cbz, root).unwrap();
         assert_eq!(imported, 1);
         assert!(root.join("Chainsaw Man").join("Chainsaw Man - Cap 150.cbz").exists());
+    }
+
+    #[test]
+    fn local_chapter_handle_reads_all_four_formats_cbz_epub_pdf_raw() {
+        let temp = TempDir::new("offline_handle_all_four");
+        let root = &temp.0;
+
+        let p0 = ChapterPage {
+            bytes: Bytes::from(sample_png_bytes(8, 10)),
+            extension: "png".to_string(),
+        };
+        let p1 = ChapterPage {
+            bytes: Bytes::from(sample_png_bytes(12, 16)),
+            extension: "png".to_string(),
+        };
+
+        CbzDownloader::new()
+            .save_chapter_in_file_system(
+                root,
+                sample_chapter_sanitized("h_cbz", "1", vec![p0.clone(), p1.clone()], DownloadType::Cbz),
+            )
+            .unwrap();
+        EpubDownloader::new()
+            .save_chapter_in_file_system(
+                root,
+                sample_chapter_sanitized("h_epub", "2", vec![p0.clone(), p1.clone()], DownloadType::Epub),
+            )
+            .unwrap();
+        PdfDownloader::new()
+            .save_chapter_in_file_system(
+                root,
+                sample_chapter_sanitized("h_pdf", "3", vec![p0.clone(), p1.clone()], DownloadType::Pdf),
+            )
+            .unwrap();
+        RawImagesDownloader::new()
+            .save_chapter_in_file_system(
+                root,
+                sample_chapter_sanitized("h_raw", "4", vec![p0, p1], DownloadType::Raw),
+            )
+            .unwrap();
+
+        for (id, expected_label, expected_dims) in [
+            ("h_cbz", "CBZ", (8, 10)),
+            ("h_epub", "EPUB", (8, 10)),
+            ("h_pdf", "PDF", (8, 10)),
+            ("h_raw", "RAW", (8, 10)),
+        ] {
+            let src = LocalChapterSource::find_in_dir(root, "Test Offline Manga", id).expect("local source exists");
+            let handle = LocalChapterHandle::open(&src).expect("handle opens");
+            assert_eq!(handle.format_label(), expected_label);
+            assert_eq!(handle.page_count(), 2);
+            assert!(handle.path().exists());
+
+            let b0 = handle.load_page_bytes(0).expect("load page 0");
+            let img0 = image::load_from_memory(&b0).expect("decode page 0");
+            assert_eq!(img0.dimensions(), expected_dims);
+
+            let b1 = handle.load_page_bytes(1).expect("load page 1");
+            let img1 = image::load_from_memory(&b1).expect("decode page 1");
+            assert_eq!(img1.dimensions(), (12, 16));
+        }
     }
 }

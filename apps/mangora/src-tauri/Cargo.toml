@@ -1,0 +1,29 @@
+[package]
+name = "mangora"
+version = "0.1.0"
+edition = "2024"
+authors = ["tomahawk1103", "drodri22"]
+license = "MIT"
+description = "Mangora desktop manga reader powered by manga-core"
+
+[lib]
+name = "mangora_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.7", features = [] }
+
+[dependencies]
+manga-core = { path = "../../../crates/manga-core" }
+tauri = { version = "2.12", features = [] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+rusqlite = { version = "0.37.0", features = ["bundled"] }
+open = "5"
+log = "0.4"
+tokio = { version = "1.47.1", features = ["sync", "rt-multi-thread", "time"] }
+base64 = "0.22"
+
+[dev-dependencies]
+pretty_assertions = "1.4.0"
+uuid = { version = "1.18.1", features = ["v4"] }
