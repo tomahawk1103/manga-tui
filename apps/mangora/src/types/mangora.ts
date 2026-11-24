@@ -91,6 +91,118 @@ export interface ToggleFavoriteResult {
   library: LibraryOverview;
 }
 
+export interface ToggleChapterReadPayload {
+  mangaId: string;
+  provider: string;
+  mangaTitle: string;
+  coverUrl?: string | null;
+  chapterId: string;
+  chapterTitle: string;
+  translatedLanguage: string;
+}
+
+export interface ToggleChapterReadResult {
+  isRead: boolean;
+  appState: InitialAppState;
+  library: LibraryOverview;
+}
+
+export interface SeriesSelection {
+  mangaId: string;
+  provider: string;
+  title: string;
+  coverUrl?: string | null;
+  description?: string | null;
+}
+
+export interface SeriesChapterItem {
+  id: string;
+  title: string;
+  chapterNumber: string;
+  volumeNumber: string | null;
+  language: string;
+  scanlator: string | null;
+  publicationDate: string | null;
+  isRead: boolean;
+  isDownloaded: boolean;
+  isAvailableOnline: boolean;
+  isBookmarked: boolean;
+  bookmarkedPage: number | null;
+  offlineFormat: string | null;
+}
+
+export interface SeriesDetailResponse {
+  id: string;
+  provider: string;
+  providerLabel: string;
+  title: string;
+  coverUrl: string | null;
+  description: string | null;
+  author: string | null;
+  artist: string | null;
+  status: string;
+  genres: string[];
+  availableLanguages: string[];
+  activeLanguage: string;
+  order: "asc" | "desc";
+  page: number;
+  totalChapters: number;
+  hasNextPage: boolean;
+  isFavorite: boolean;
+  isOfflineFallback: boolean;
+  offlineChapterCount: number;
+  readChapterCount: number;
+  nextUnreadChapter: SeriesChapterItem | null;
+  chapters: SeriesChapterItem[];
+  onlineWarning: string | null;
+}
+
+export interface AniListTag {
+  name: string;
+  rank: number | null;
+}
+
+export interface AniListReview {
+  id: number;
+  summary: string;
+  rating: number | null;
+  ratingAmount: number | null;
+  score: number | null;
+  userName: string;
+  siteUrl: string | null;
+}
+
+export interface AniListCommunityInfo {
+  found: boolean;
+  anilistId: number | null;
+  siteUrl: string | null;
+  title: string | null;
+  averageScore: number | null;
+  meanScore: number | null;
+  popularity: number | null;
+  favourites: number | null;
+  status: string | null;
+  genres: string[];
+  tags: AniListTag[];
+  reviews: AniListReview[];
+  note: string | null;
+}
+
+export interface ForYouResponse {
+  provider: string;
+  providerLabel: string;
+  matchedGenres: string[];
+  items: Array<{
+    id: string;
+    title: string;
+    description: string | null;
+    coverUrl: string;
+    genres: string[];
+    languages: string[];
+  }>;
+  fallbackPopular: boolean;
+}
+
 export function libraryKey(mangaId: string, provider: string): string {
   return `${provider.trim().toLowerCase()}::${mangaId.trim()}`;
 }

@@ -187,12 +187,18 @@ export interface Translations {
     emptyRecent: string;
     emptyFilter: string;
     emptyCta: string;
+    openSeriesBtn: string;
   };
   explore: {
     eyebrow: string;
     title: string;
     subtitle: string;
     forYouTitle: string;
+    forYouLoading: string;
+    forYouMatched: (genresLabel: string) => string;
+    forYouPopularFallback: string;
+    forYouUnavailable: string;
+    forYouEmpty: string;
     noGenresHint: string;
     editGenresBtn: string;
     providerSelectorTitle: string;
@@ -216,6 +222,59 @@ export interface Translations {
     language: string;
     genre: string;
     all: string;
+  };
+  series: {
+    backBtn: string;
+    eyebrow: string;
+    loading: string;
+    loadErrorTitle: string;
+    offlineBannerTitle: string;
+    offlineBannerDesc: string;
+    warningBannerTitle: string;
+    authorLabel: string;
+    artistLabel: string;
+    statusLabel: string;
+    statusNames: Record<string, string>;
+    noSynopsis: string;
+    nextUnreadLabel: string;
+    nextUnreadAction: string;
+    readerComingSoonToast: string;
+    chaptersTitle: string;
+    chaptersCount: (total: number) => string;
+    readCountLabel: (count: number) => string;
+    offlineCountLabel: (count: number) => string;
+    sortNewest: string;
+    sortOldest: string;
+    languageLabel: string;
+    filterAll: string;
+    filterOffline: string;
+    emptyChapters: string;
+    emptyOfflineChapters: string;
+    chapterPrefix: string;
+    statusRead: string;
+    statusUnread: string;
+    statusOffline: string;
+    statusOnline: string;
+    markReadBtn: string;
+    markUnreadBtn: string;
+    markedReadToast: string;
+    markedUnreadToast: string;
+    openReaderBtn: string;
+    communityEyebrow: string;
+    communityTitle: string;
+    communityLoading: string;
+    communityUnavailable: string;
+    communityNotFound: string;
+    communityScoreLabel: string;
+    communityPopularityLabel: string;
+    communityFavoritesLabel: string;
+    communityTagsLabel: string;
+    communityReviewsTitle: string;
+    communityNoReviews: string;
+    communityOpenAniList: string;
+    communityDiscordTitle: string;
+    communityDiscordDesc: string;
+    communityDiscordBtn: string;
   };
   downloads: {
     eyebrow: string;
@@ -435,14 +494,20 @@ const ES: Translations = {
     emptyRecent: "No hay historial reciente registrado todavía.",
     emptyFilter: "Ninguna serie de esta pestaña coincide con tu filtro.",
     emptyCta: "Ir a Explorar",
+    openSeriesBtn: "Ver ficha y capítulos",
   },
   explore: {
     eyebrow: "Explorar · Catálogo y servidores",
     title: "Encuentra tu próxima serie.",
     subtitle:
       "Busca una serie por su título en el catálogo del servidor que elijas.",
-    forYouTitle: "Tus géneros favoritos",
-    noGenresHint: "Aún no has elegido géneros favoritos. Márcalos en Ajustes para personalizar esta zona.",
+    forYouTitle: "Para ti según tus gustos",
+    forYouLoading: "Buscando recomendaciones en tu fuente activa…",
+    forYouMatched: (genresLabel) => `Priorizado por tus gustos: ${genresLabel}`,
+    forYouPopularFallback: "Mostrando destacados populares de tu fuente activa.",
+    forYouUnavailable: "No pudimos cargar sugerencias ahora mismo.",
+    forYouEmpty: "Usa el buscador de arriba para explorar el catálogo de esta fuente.",
+    noGenresHint: "Aún no has elegido géneros favoritos. Márcalos en Ajustes para afinar estas recomendaciones.",
     editGenresBtn: "Editar gustos en Ajustes",
     providerSelectorTitle: "Dónde buscar",
     providerSelectorDesc:
@@ -466,6 +531,68 @@ const ES: Translations = {
     language: "Idioma en esta página",
     genre: "Género en esta página",
     all: "Todos",
+  },
+  series: {
+    backBtn: "Volver",
+    eyebrow: "Ficha de serie",
+    loading: "Cargando ficha y listado de capítulos…",
+    loadErrorTitle: "No se pudo cargar esta serie",
+    offlineBannerTitle: "Mostrando copia local offline",
+    offlineBannerDesc:
+      "La fuente online no devolvió capítulos o no hay conexión, así que ves tus capítulos descargados en este dispositivo.",
+    warningBannerTitle: "Aviso de conexión con el servidor",
+    authorLabel: "Autor",
+    artistLabel: "Arte",
+    statusLabel: "Estado",
+    statusNames: {
+      ongoing: "En publicación",
+      completed: "Finalizado",
+      hiatus: "En pausa",
+      cancelled: "Cancelado",
+      unknown: "Desconocido",
+    },
+    noSynopsis: "Esta fuente no incluye sinopsis para esta serie.",
+    nextUnreadLabel: "Siguiente capítulo pendiente",
+    nextUnreadAction: "Leer / Marcar leído",
+    readerComingSoonToast:
+      "El lector HD integrado llega en el Hito 3. De momento puedes marcar el progreso desde aquí.",
+    chaptersTitle: "Capítulos",
+    chaptersCount: (total) => (total === 1 ? "1 capítulo" : `${total} capítulos`),
+    readCountLabel: (count) => (count === 1 ? "1 leído" : `${count} leídos`),
+    offlineCountLabel: (count) => (count === 1 ? "1 offline" : `${count} offline`),
+    sortNewest: "Más recientes primero",
+    sortOldest: "Desde el cap. 1",
+    languageLabel: "Idioma",
+    filterAll: "Todos",
+    filterOffline: "Solo offline",
+    emptyChapters: "No hay capítulos disponibles en este idioma o página.",
+    emptyOfflineChapters: "No tienes capítulos descargados para esta serie todavía.",
+    chapterPrefix: "Cap.",
+    statusRead: "Leído",
+    statusUnread: "Pendiente",
+    statusOffline: "Offline",
+    statusOnline: "Online",
+    markReadBtn: "Marcar leído",
+    markUnreadBtn: "Quitar leído",
+    markedReadToast: "Capítulo marcado como leído",
+    markedUnreadToast: "Capítulo marcado como pendiente",
+    openReaderBtn: "Abrir lector",
+    communityEyebrow: "Comunidad · AniList + Discord",
+    communityTitle: "Opinión y reseñas",
+    communityLoading: "Consultando ficha pública de AniList…",
+    communityUnavailable: "AniList no respondió en este momento; tu ficha y capítulos siguen operativos.",
+    communityNotFound: "No encontramos coincidencia pública automática en AniList para este título.",
+    communityScoreLabel: "Puntuación media",
+    communityPopularityLabel: "Lectores AniList",
+    communityFavoritesLabel: "Favoritos AniList",
+    communityTagsLabel: "Etiquetas destacadas",
+    communityReviewsTitle: "Reseñas públicas de lectores",
+    communityNoReviews: "Todavía no hay reseñas públicas registradas en AniList para esta serie.",
+    communityOpenAniList: "Ver en AniList ↗",
+    communityDiscordTitle: "Comenta esta serie en Discord",
+    communityDiscordDesc:
+      "¿Quieres recomendarla, comentar el último capítulo o avisar si un servidor falla? Pásate por el Discord oficial.",
+    communityDiscordBtn: "Abrir Discord ↗",
   },
   downloads: {
     eyebrow: "Descargas · Lectura offline",
@@ -699,13 +826,19 @@ const EN: Translations = {
     emptyRecent: "No recent reading history recorded yet.",
     emptyFilter: "No series in this tab match your filter.",
     emptyCta: "Go to Explore",
+    openSeriesBtn: "View series & chapters",
   },
   explore: {
     eyebrow: "Explore · Catalog & sources",
     title: "Find your next series.",
     subtitle:
       "Search for a series by title in your chosen source’s catalog.",
-    forYouTitle: "Your favorite genres",
+    forYouTitle: "For you based on your tastes",
+    forYouLoading: "Loading picks from your active source…",
+    forYouMatched: (genresLabel) => `Matched with your genres: ${genresLabel}`,
+    forYouPopularFallback: "Showing popular highlights from your active source.",
+    forYouUnavailable: "Could not load recommendations right now.",
+    forYouEmpty: "Use the search bar above to browse titles from this source.",
     noGenresHint: "No favorite genres chosen yet. Select a few in Settings to personalize this section.",
     editGenresBtn: "Edit genres in Settings",
     providerSelectorTitle: "Where to search",
@@ -730,6 +863,68 @@ const EN: Translations = {
     language: "Language on this page",
     genre: "Genre on this page",
     all: "All",
+  },
+  series: {
+    backBtn: "Back",
+    eyebrow: "Series page",
+    loading: "Loading series metadata and chapters…",
+    loadErrorTitle: "Could not load this series",
+    offlineBannerTitle: "Showing local offline copy",
+    offlineBannerDesc:
+      "The online source is unavailable or returned no chapters, so your downloaded local chapters are shown instead.",
+    warningBannerTitle: "Source connection notice",
+    authorLabel: "Author",
+    artistLabel: "Artist",
+    statusLabel: "Status",
+    statusNames: {
+      ongoing: "Ongoing",
+      completed: "Completed",
+      hiatus: "Hiatus",
+      cancelled: "Cancelled",
+      unknown: "Unknown",
+    },
+    noSynopsis: "This source didn’t include a synopsis for this series.",
+    nextUnreadLabel: "Next unread chapter",
+    nextUnreadAction: "Read / Mark read",
+    readerComingSoonToast:
+      "The built-in HD reader arrives in Milestone 3. You can track chapter progress from here right now.",
+    chaptersTitle: "Chapters",
+    chaptersCount: (total) => (total === 1 ? "1 chapter" : `${total} chapters`),
+    readCountLabel: (count) => (count === 1 ? "1 read" : `${count} read`),
+    offlineCountLabel: (count) => (count === 1 ? "1 offline" : `${count} offline`),
+    sortNewest: "Newest first",
+    sortOldest: "From Ch. 1",
+    languageLabel: "Language",
+    filterAll: "All",
+    filterOffline: "Offline only",
+    emptyChapters: "No chapters available for this language or page.",
+    emptyOfflineChapters: "No downloaded chapters found for this series yet.",
+    chapterPrefix: "Ch.",
+    statusRead: "Read",
+    statusUnread: "Unread",
+    statusOffline: "Offline",
+    statusOnline: "Online",
+    markReadBtn: "Mark read",
+    markUnreadBtn: "Mark unread",
+    markedReadToast: "Chapter marked as read",
+    markedUnreadToast: "Chapter marked as unread",
+    openReaderBtn: "Open reader",
+    communityEyebrow: "Community · AniList + Discord",
+    communityTitle: "Community & reviews",
+    communityLoading: "Fetching public AniList data…",
+    communityUnavailable: "AniList didn’t respond right now; series details and chapters remain available.",
+    communityNotFound: "No automatic public AniList match was found for this title.",
+    communityScoreLabel: "Average score",
+    communityPopularityLabel: "AniList readers",
+    communityFavoritesLabel: "AniList favorites",
+    communityTagsLabel: "Top tags",
+    communityReviewsTitle: "Public reader reviews",
+    communityNoReviews: "No public AniList reviews yet for this series.",
+    communityOpenAniList: "Open on AniList ↗",
+    communityDiscordTitle: "Chat about this series on Discord",
+    communityDiscordDesc:
+      "Share thoughts, ask for features, or report a broken source in the official Discord server.",
+    communityDiscordBtn: "Open Discord ↗",
   },
   downloads: {
     eyebrow: "Downloads · Offline reading",

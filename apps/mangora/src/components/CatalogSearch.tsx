@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { ArrowRight, Heart } from "lucide-react";
 import { getTranslations } from "../lib/i18n";
-import { isTauriRuntime, searchCatalog, type CatalogItem, type CatalogPage } from "../lib/tauri";
+import { isTauriRuntime, searchCatalog, type CatalogPage } from "../lib/tauri";
 import {
   type ProviderOption,
+  type SeriesSelection,
   type ToggleFavoritePayload,
   type UiLanguage,
   libraryKey,
@@ -22,6 +23,7 @@ interface CatalogSearchProps {
   isMutating?: boolean;
   favoriteKeys?: Set<string>;
   onToggleFavorite?: (payload: ToggleFavoritePayload) => Promise<void>;
+  onOpenSeries: (series: SeriesSelection) => void;
   onChooseSource?: () => void;
 }
 
@@ -32,13 +34,12 @@ export function CatalogSearch({
   isMutating = false,
   favoriteKeys,
   onToggleFavorite,
+  onOpenSeries,
   onChooseSource,
 }: CatalogSearchProps) {
   const translations = getTranslations(language);
   const t = translations.explore;
   const searchInput = useRef<HTMLInputElement>(null);
-  const details = useRef<HTMLDialogElement>(null);
-  const [selected, setSelected] = useState<CatalogItem | null>(null);
   const [input, setInput] = useState("");
   const [request, setRequest] = useState<SearchRequest | null>(null);
   const [result, setResult] = useState<CatalogPage | null>(null);
@@ -51,11 +52,6 @@ export function CatalogSearch({
   useEffect(() => {
     if (focusSearch && desktop) searchInput.current?.focus();
   }, [focusSearch, desktop]);
-
-  useEffect(() => {
-    const dialog = details.current;
-    if (selected && dialog && !dialog.open) dialog.showModal();
-  }, [selected]);
 
   useEffect(() => {
     if (!request) return;
@@ -75,7 +71,6 @@ export function CatalogSearch({
   const genres = [...new Set(items.flatMap(item => item.genres))].sort();
   const languages = [...new Set(items.flatMap(item => item.languages))].sort();
   const visible = items.filter(item => (!genre || item.genres.includes(genre)) && (!lang || item.languages.includes(lang)));
-  const languageNames = new Intl.DisplayNames([language], { type: "language" });
   return (
     <section className="space-y-4" aria-label={t.search}>
       <form className="flex flex-wrap items-end gap-3" onSubmit={event => {
@@ -122,21 +117,92 @@ export function CatalogSearch({
         </div>
         {!visible.length && <p role="status">{t.empty}</p>}
         <ul className="grid grid-cols-2 gap-4 md:grid-cols-4">
-          {visible.map(item => <li key={item.id} className="editorial-card overflow-hidden">
-            <button
-              type="button"
-              aria-haspopup="dialog"
-              className="flex h-full w-full cursor-pointer flex-col text-left hover:bg-[var(--surface)] focus-visible:outline-offset-[-4px]"
-              onClick={() => setSelected(item)}
-            >
-              {/^https?:\/\//i.test(item.coverUrl) && <img src={item.coverUrl} alt="" loading="lazy"
-                className="aspect-[2/3] w-full object-cover" onError={event => { event.currentTarget.hidden = true; }} />}
-              <span className="font-display block p-3">{item.title}</span>
-              <span className="mt-auto flex items-center gap-1.5 px-3 pb-3 text-sm font-bold text-[var(--red-text)]">
-                {t.viewDetails} <ArrowRight size={14} aria-hidden="true" />
-              </span>
-            </button>
-          </li>)}
+          {visible.map((item) => {
+            const isFavorite = favoriteKeys?.has(libraryKey(item.id, provider.id)) ?? false;
+            const seriesPayload: SeriesSelection = {
+              mangaId: item.id,
+              provider: provider.id,
+              title: item.title,
+              coverUrl: item.coverUrl || null,
+              description: item.description,
+            };
+
+            return (
+              <li
+                key={item.id}
+                className="editorial-card flex flex-col justify-between overflow-hidden"
+              >
+                <button
+                  type="button"
+                  className="group flex flex-1 cursor-pointer touch-manipulation flex-col text-left hover:bg-[var(--surface)] focus-visible:outline-offset-[-4px]"
+                  onClick={() => onOpenSeries(seriesPayload)}
+                >
+                  {/^https?:\/\//i.test(item.coverUrl) ? (
+                    <img
+                      src={item.coverUrl}
+                      alt=""
+                      loading="lazy"
+                      className="aspect-[2/3] w-full border-b border-[var(--ink)] object-cover"
+                      onError={(event) => {
+                        event.currentTarget.hidden = true;
+                      }}
+                    />
+                  ) : (
+                    <div className="screentone-bg flex aspect-[2/3] w-full items-center justify-center border-b border-[var(--ink)] p-3">
+                      <span className="border-2 border-[var(--ink)] bg-[var(--paper)] px-2 py-1 font-display text-lg text-[var(--ink)]">
+                        {item.title.slice(0, 2).toUpperCase()}
+                      </span>
+                    </div>
+                  )}
+                  <span className="font-display line-clamp-2 block p-3 text-sm leading-snug group-hover:text-[var(--red-text)] sm:text-base">
+                    {item.title}
+                  </span>
+                </button>
+
+                <div className="flex items-center justify-between gap-2 border-t border-[var(--line)] bg-[var(--surface)] px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() => onOpenSeries(seriesPayload)}
+                    className="inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-1.5 text-xs font-bold text-[var(--red-text)] hover:underline"
+                  >
+                    <span>{t.viewDetails}</span>
+                    <ArrowRight size={14} aria-hidden="true" />
+                  </button>
+
+                  {onToggleFavorite && (
+                    <button
+                      type="button"
+                      disabled={isMutating}
+                      aria-pressed={isFavorite}
+                      aria-label={
+                        isFavorite
+                          ? translations.library.removeFavorite
+                          : translations.library.addFavorite
+                      }
+                      onClick={() =>
+                        void onToggleFavorite({
+                          mangaId: item.id,
+                          provider: provider.id,
+                          title: item.title,
+                          coverUrl: item.coverUrl || null,
+                        })
+                      }
+                      className={`inline-flex min-h-[44px] min-w-[44px] cursor-pointer touch-manipulation items-center justify-center border-2 border-[var(--ink)] transition-colors ${
+                        isFavorite
+                          ? "bg-[var(--red)] text-white"
+                          : "bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--ink)] hover:text-[var(--paper)]"
+                      }`}
+                    >
+                      <Heart
+                        className={`h-4 w-4 ${isFavorite ? "fill-current" : ""}`}
+                        aria-hidden="true"
+                      />
+                    </button>
+                  )}
+                </div>
+              </li>
+            );
+          })}
         </ul>
       </>}
       {request && (result || failed) && (page > 1 || result?.hasNext) && <div className="flex gap-3">
@@ -145,63 +211,6 @@ export function CatalogSearch({
         <button className="editorial-btn-secondary" disabled={!result?.hasNext}
           onClick={() => setRequest({ ...request, provider: provider.id, page: page + 1 })}>{t.next}</button>
       </div>}
-      <dialog
-        ref={details}
-        aria-labelledby="catalog-details-title"
-        onClose={() => setSelected(null)}
-        className="editorial-card fixed inset-0 m-auto max-h-[85vh] w-[calc(100%-2rem)] max-w-2xl overflow-y-auto p-5 text-[var(--ink)] backdrop:bg-black/65"
-      >
-        {selected && (() => {
-          const selectedIsFavorite = favoriteKeys?.has(libraryKey(selected.id, provider.id)) ?? false;
-          return (
-            <div className="space-y-4">
-              <div className="flex items-start justify-between gap-4">
-                <h2 id="catalog-details-title" className="font-display text-2xl">{selected.title}</h2>
-                <form method="dialog">
-                  <button type="submit" className="editorial-btn-secondary text-xs">{t.closeDetails}</button>
-                </form>
-              </div>
-              {/^https?:\/\//i.test(selected.coverUrl) && (
-                <img src={selected.coverUrl} alt="" className="max-h-64 max-w-full object-contain"
-                  onError={event => { event.currentTarget.hidden = true; }} />
-              )}
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <p className="text-sm text-[var(--muted)]">{t.providerLabel}: {provider.name}</p>
-                {onToggleFavorite && (
-                  <button
-                    type="button"
-                    disabled={isMutating}
-                    aria-pressed={selectedIsFavorite}
-                    onClick={() =>
-                      void onToggleFavorite({
-                        mangaId: selected.id,
-                        provider: provider.id,
-                        title: selected.title,
-                        coverUrl: selected.coverUrl || null,
-                      })
-                    }
-                    className={selectedIsFavorite ? "editorial-btn-primary text-xs" : "editorial-btn-secondary text-xs"}
-                  >
-                    <Heart className={`h-4 w-4 ${selectedIsFavorite ? "fill-current" : ""}`} aria-hidden="true" />
-                    <span>{selectedIsFavorite ? translations.library.removeFavorite : translations.library.addFavorite}</span>
-                  </button>
-                )}
-              </div>
-              <p className="whitespace-pre-line">{selected.description?.trim() || t.noSynopsis}</p>
-              {selected.genres.length > 0 && <p>{t.genre}: {selected.genres.join(", ")}</p>}
-              {selected.languages.length > 0 && (
-                <p>{t.language}: {selected.languages.map(code => {
-                  try {
-                    return languageNames.of(code) ?? code;
-                  } catch {
-                    return code;
-                  }
-                }).join(", ")}</p>
-              )}
-            </div>
-          );
-        })()}
-      </dialog>
     </section>
   );
 }

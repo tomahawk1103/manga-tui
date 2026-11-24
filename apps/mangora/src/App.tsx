@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BottomNav } from "./components/BottomNav";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { Sidebar } from "./components/Sidebar";
@@ -15,19 +15,23 @@ import {
   setFavoriteGenres,
   setThemeMode,
   setUiLanguage,
+  toggleChapterRead,
   toggleLibraryFavorite,
 } from "./lib/tauri";
 import {
   type InitialAppState,
   type LibraryOverview,
   type NavSection,
+  type SeriesSelection,
   type ThemeMode,
+  type ToggleChapterReadPayload,
   type ToggleFavoritePayload,
   libraryKey,
 } from "./types/mangora";
 import { DownloadsView } from "./views/DownloadsView";
 import { ExploreView } from "./views/ExploreView";
 import { HomeView } from "./views/HomeView";
+import { SeriesDetailView } from "./views/SeriesDetailView";
 import { SettingsView } from "./views/SettingsView";
 import { SupportView } from "./views/SupportView";
 
@@ -36,11 +40,13 @@ export function App() {
   const [libraryOverview, setLibraryOverview] = useState<LibraryOverview | null>(null);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [activeSection, setActiveSection] = useState<NavSection>("home");
+  const [selectedSeries, setSelectedSeries] = useState<SeriesSelection | null>(null);
   const [navigationTarget, setNavigationTarget] = useState<"genres" | "search" | null>(null);
   const [replayOnboarding, setReplayOnboarding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
+  const mainRef = useRef<HTMLElement>(null);
 
   const loadLibrary = useCallback(async (search?: string) => {
     setLibraryLoading(true);
@@ -144,6 +150,20 @@ export function App() {
     }
   };
 
+  const handleToggleChapterRead = async (payload: ToggleChapterReadPayload): Promise<boolean> => {
+    setErrorMessage(null);
+    const result = await toggleChapterRead(payload);
+    setAppState(result.appState);
+    setLibraryOverview(result.library);
+    return result.isRead;
+  };
+
+  const openSeries = (series: SeriesSelection) => {
+    setErrorMessage(null);
+    setSelectedSeries(series);
+    mainRef.current?.scrollTo({ top: 0 });
+  };
+
   if (!appState) {
     const fallbackT = getTranslations("es");
     return (
@@ -193,6 +213,7 @@ export function App() {
             const next = await saveOnboardingPreferences({
               uiLanguage, favoriteGenres, provider, themeMode, onboardingCompleted: true,
             });
+            setSelectedSeries(null);
             setReplayOnboarding(false);
             setActiveSection("home");
             return next;
@@ -206,6 +227,7 @@ export function App() {
   const nextTheme: ThemeMode = appState.themeMode === "paper" ? "ink" : "paper";
 
   const navigate = (section: NavSection) => {
+    setSelectedSeries(null);
     setNavigationTarget(null);
     setActiveSection(section);
   };
@@ -232,7 +254,10 @@ export function App() {
           onChangeLanguage={(lang) => void runMutation(() => setUiLanguage(lang), true)}
         />
 
-        <main className="flex-1 overflow-x-hidden overflow-y-auto px-4 py-5 sm:px-6 md:px-10 md:py-9">
+        <main
+          ref={mainRef}
+          className="flex-1 overflow-x-hidden overflow-y-auto px-4 py-5 sm:px-6 md:px-10 md:py-9"
+        >
           <div className="mx-auto max-w-5xl">
             {errorMessage && (
               <div className="editorial-callout mb-6 px-4 py-3 font-mono-editorial text-xs text-[var(--red-text)]">
@@ -240,78 +265,18 @@ export function App() {
               </div>
             )}
 
-            {activeSection === "home" && (
-              <HomeView
-                appState={appState}
-                library={libraryOverview}
-                libraryLoading={libraryLoading}
+            {selectedSeries ? (
+              <SeriesDetailView
+                selection={selectedSeries}
+                language={appState.uiLanguage}
                 isSaving={isSaving}
-                favoriteKeys={favoriteKeys}
-                onRefreshLibrary={loadLibrary}
+                isFavoriteInLibrary={favoriteKeys.has(
+                  libraryKey(selectedSeries.mangaId, selectedSeries.provider),
+                )}
+                onBack={() => setSelectedSeries(null)}
                 onToggleFavorite={handleToggleFavorite}
-                onSearch={() => {
-                  setNavigationTarget("search");
-                  setActiveSection("explore");
-                }}
-                onRelaunchTour={() => setReplayOnboarding(true)}
-              />
-            )}
-
-            {activeSection === "explore" && (
-              <ExploreView
-                appState={appState}
-                isSaving={isSaving}
-                focusSearch={navigationTarget === "search"}
-                favoriteKeys={favoriteKeys}
-                onToggleFavorite={handleToggleFavorite}
-                onSelectProvider={(provider) =>
-                  runMutation(() => setDefaultProvider(provider), true)
-                }
-                onEditGenres={() => {
-                  setNavigationTarget("genres");
-                  setActiveSection("settings");
-                }}
-              />
-            )}
-
-            {activeSection === "downloads" && (
-              <DownloadsView
-                appState={appState}
-                onOpenDownloadsFolder={async () => {
-                  try {
-                    await openDownloadsFolder();
-                  } catch (err) {
-                    setErrorMessage(err instanceof Error ? err.message : String(err));
-                  }
-                }}
-              />
-            )}
-
-            {activeSection === "settings" && (
-              <SettingsView
-                appState={appState}
-                focusGenres={navigationTarget === "genres"}
-                isSaving={isSaving}
-                onChangeLanguage={(lang) => runMutation(() => setUiLanguage(lang), true)}
-                onChangeTheme={(mode) => runMutation(() => setThemeMode(mode), true)}
-                onChangeProvider={(provider) =>
-                  runMutation(() => setDefaultProvider(provider), true)
-                }
-                onSaveGenres={(genres) => runMutation(() => setFavoriteGenres(genres), true)}
-                onRelaunchTour={() => setReplayOnboarding(true)}
-                onOpenDataFolder={async () => {
-                  try {
-                    await openDataFolder();
-                  } catch (err) {
-                    setErrorMessage(err instanceof Error ? err.message : String(err));
-                  }
-                }}
-              />
-            )}
-
-            {activeSection === "support" && (
-              <SupportView
-                appState={appState}
+                onToggleChapterRead={handleToggleChapterRead}
+                onNotify={showToast}
                 onOpenExternal={async (url) => {
                   try {
                     await openExternalUrl(url);
@@ -320,6 +285,100 @@ export function App() {
                   }
                 }}
               />
+            ) : (
+              <>
+                {activeSection === "home" && (
+                  <HomeView
+                    appState={appState}
+                    library={libraryOverview}
+                    libraryLoading={libraryLoading}
+                    isSaving={isSaving}
+                    favoriteKeys={favoriteKeys}
+                    onRefreshLibrary={loadLibrary}
+                    onToggleFavorite={handleToggleFavorite}
+                    onOpenSeries={openSeries}
+                    onSearch={() => {
+                      setSelectedSeries(null);
+                      setNavigationTarget("search");
+                      setActiveSection("explore");
+                    }}
+                    onRelaunchTour={() => {
+                      setSelectedSeries(null);
+                      setReplayOnboarding(true);
+                    }}
+                  />
+                )}
+
+                {activeSection === "explore" && (
+                  <ExploreView
+                    appState={appState}
+                    isSaving={isSaving}
+                    focusSearch={navigationTarget === "search"}
+                    favoriteKeys={favoriteKeys}
+                    onToggleFavorite={handleToggleFavorite}
+                    onOpenSeries={openSeries}
+                    onSelectProvider={(provider) =>
+                      runMutation(() => setDefaultProvider(provider), true)
+                    }
+                    onEditGenres={() => {
+                      setSelectedSeries(null);
+                      setNavigationTarget("genres");
+                      setActiveSection("settings");
+                    }}
+                  />
+                )}
+
+                {activeSection === "downloads" && (
+                  <DownloadsView
+                    appState={appState}
+                    onOpenDownloadsFolder={async () => {
+                      try {
+                        await openDownloadsFolder();
+                      } catch (err) {
+                        setErrorMessage(err instanceof Error ? err.message : String(err));
+                      }
+                    }}
+                  />
+                )}
+
+                {activeSection === "settings" && (
+                  <SettingsView
+                    appState={appState}
+                    focusGenres={navigationTarget === "genres"}
+                    isSaving={isSaving}
+                    onChangeLanguage={(lang) => runMutation(() => setUiLanguage(lang), true)}
+                    onChangeTheme={(mode) => runMutation(() => setThemeMode(mode), true)}
+                    onChangeProvider={(provider) =>
+                      runMutation(() => setDefaultProvider(provider), true)
+                    }
+                    onSaveGenres={(genres) => runMutation(() => setFavoriteGenres(genres), true)}
+                    onRelaunchTour={() => {
+                      setSelectedSeries(null);
+                      setReplayOnboarding(true);
+                    }}
+                    onOpenDataFolder={async () => {
+                      try {
+                        await openDataFolder();
+                      } catch (err) {
+                        setErrorMessage(err instanceof Error ? err.message : String(err));
+                      }
+                    }}
+                  />
+                )}
+
+                {activeSection === "support" && (
+                  <SupportView
+                    appState={appState}
+                    onOpenExternal={async (url) => {
+                      try {
+                        await openExternalUrl(url);
+                      } catch (err) {
+                        setErrorMessage(err instanceof Error ? err.message : String(err));
+                      }
+                    }}
+                  />
+                )}
+              </>
             )}
           </div>
         </main>

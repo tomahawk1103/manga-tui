@@ -3,6 +3,7 @@ import { LibraryShelf } from "../components/LibraryShelf";
 import type {
   InitialAppState,
   LibraryOverview,
+  SeriesSelection,
   ToggleFavoritePayload,
 } from "../types/mangora";
 import { getGenreLabel, getTranslations } from "../lib/i18n";
@@ -15,6 +16,7 @@ interface HomeViewProps {
   favoriteKeys: Set<string>;
   onRefreshLibrary: (search?: string) => Promise<void>;
   onToggleFavorite: (payload: ToggleFavoritePayload) => Promise<void>;
+  onOpenSeries: (series: SeriesSelection) => void;
   onSearch: () => void;
   onRelaunchTour: () => void;
 }
@@ -27,6 +29,7 @@ export function HomeView({
   favoriteKeys,
   onRefreshLibrary,
   onToggleFavorite,
+  onOpenSeries,
   onSearch,
   onRelaunchTour,
 }: HomeViewProps) {
@@ -129,6 +132,7 @@ export function HomeView({
         favoriteKeys={favoriteKeys}
         onRefresh={onRefreshLibrary}
         onToggleFavorite={onToggleFavorite}
+        onOpenSeries={onOpenSeries}
         onExplore={onSearch}
       />
 

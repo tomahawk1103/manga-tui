@@ -13,7 +13,7 @@
 flowchart LR
     Base["Base Actual<br/>crates/manga-core + docs/index.html"]
     H1["Hito 1<br/>Tauri v2 + Diseño Editorial + Onboarding<br/>En validación"]
-    H2["Hito 2<br/>Explorar + Biblioteca + Ficha AniList<br/>En curso"]
+    H2["Hito 2<br/>Explorar + Biblioteca + Ficha AniList<br/>En validación"]
     H3["Hito 3<br/>Lector HD Nativo + Descargas Offline<br/>En curso"]
     H4["Hito 4<br/>Ajustes + Buzón + Monster 2€ + Escritorio/Android/iOS<br/>⏳ Pendiente"]
     H5["Hito 5 (v1.1+)<br/>Personalización Visual + Métricas Locales<br/>Integración pendiente"]
@@ -24,7 +24,7 @@ flowchart LR
 | Hito | Estado | Objetivo principal |
 | :--- | :--- | :--- |
 | **Hito 1** | En validación | Scaffold Tauri v2 multiplataforma en `apps/mangora/`, sistema de diseño editorial (`docs/index.html`), shell móvil (`BottomNav` + *safe areas*) y Onboarding |
-| **Hito 2** | En curso | Explorar/Buscar con portadas HD, Biblioteca compartida SQLite y Ficha de serie adaptada a escritorio y móvil con reseñas de AniList y Discord |
+| **Hito 2** | En validación | Explorar/Buscar con portadas HD y bloque *"Para ti"*, Biblioteca compartida SQLite y Ficha de serie completa con capítulos, AniList y Discord |
 | **Hito 3** | En curso | Lector HD nativo táctil y de escritorio (online + 100 % offline en CBZ/RAW/EPUB/PDF) y gestor de cola de descargas en tiempo real |
 | **Hito 4** | ⏳ Pendiente | Ajustes simples (Drive/AniList/MAL con *deep links* en móvil), Buzón seguro, *"¿Me invitas a un Monster? ⚡ 2 €"* y empaquetado Windows/Android/iOS |
 | **Hito 5 (v1.1+)** | Módulos en `MANGORA`, integración pendiente | Personalización visual avanzada de temas/tarjetas y métricas locales ampliadas del lector |
@@ -33,14 +33,14 @@ flowchart LR
 
 ## Estado de la app y cambios integrados
 
-El trabajo de Mangora está reunido en `manga-tui/`, rama local `MANGORA`. La aplicación vive en `apps/mangora/` y comparte el motor Rust de `crates/manga-core/`. Los cambios recientes de **Explorar** y del asistente inicial están preparados en Git, pendientes de commit por un error de permisos al escribir el registro de la rama.
+El trabajo de Mangora está reunido en `manga-tui/`, rama `MANGORA`. La aplicación vive en `apps/mangora/` y comparte el motor Rust de `crates/manga-core/`.
 
 | Área | Disponible ahora | Pendiente |
 | :--- | :--- | :--- |
 | Base y navegación | Proyecto Tauri v2 multiplataforma (escritorio + base Android/iOS) con React, TypeScript, Vite (`TAURI_DEV_HOST`) y Tailwind; `Sidebar` en escritorio y `BottomNav` táctil en móvil con `viewport-fit=cover`, `safe-area-inset-*`, `h-dvh`, objetivos `>= 44px` y temas Papel/Tinta. | Validar la ventana nativa en Windows y ejecutar `tauri android init` / `tauri ios init` con los SDKs de cada plataforma. |
 | Primer inicio | Selección de idioma, géneros y proveedor recomendado; detección de biblioteca previa; tour que se puede repetir desde Ajustes. Un fallo al guardar muestra el error y permite reintentar. | Validación manual completa en la app nativa. |
-| Explorar | Búsqueda por título en el proveedor activo mediante `search_catalog` y `multi_provider`; portadas, paginación, filtros por idioma y género de los resultados visibles, modal de detalle con sinopsis y favorito en 1 clic (`toggle_library_favorite`). | Buscar contra un proveedor real en red; bloque «Para ti según tus gustos» y filtros aplicados a todo el catálogo. |
-| Biblioteca y lector | Biblioteca visual interactiva conectada a `history/manga-tui-history.db` (`get_library_overview`, `toggle_library_favorite`) con pestañas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente**, filtro por título y compatibilidad bidireccional con `manga-tui`; motor Rust con lectura local y cola de descargas. | Ficha de serie completa con capítulos + AniList, lector HD dentro de Mangora, progreso de lectura y controles de cola en la interfaz. |
+| Explorar | Búsqueda por título en el proveedor activo (`search_catalog` + `multi_provider`), bloque *«Para ti según tus gustos»* (`get_for_you_recommendations`), portadas HD, paginación, filtros por idioma/género en resultados visibles, favorito en 1 clic (`toggle_library_favorite`) y apertura directa de la Ficha de serie. | Validación en red real contra proveedores activos y filtros aplicados a todo el catálogo remoto. |
+| Biblioteca y ficha de serie | Biblioteca visual interactiva conectada a `history/manga-tui-history.db` (`get_library_overview`, `toggle_library_favorite`) con pestañas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente**, y **Ficha de serie completa** (`SeriesDetailView`, `get_series_detail`, `toggle_chapter_read`, `get_anilist_community`) abierta desde Inicio y Explorar con capítulos online/offline, marcación leído/pendiente en SQLite, reseñas/etiquetas públicas de AniList y enlace a Discord. | Validación manual con red real, Lector HD nativo dentro de Mangora (el botón de capítulo enlaza de momento un aviso hacia Hito 3) y controles de cola en Descargas. |
 | Ajustes y apoyo | Cambio de idioma, tema, proveedor y géneros; apertura de la carpeta de datos; enlaces a Discord y GitHub. | Drive y trackers guiados, buzón de opiniones, donaciones activas y paquete instalable. |
 | Apariencia y métricas | Módulos, migración y componentes del hito 5 presentes en el repositorio. | Registrar sus comandos Tauri e incorporar sus componentes a las pantallas. |
 
@@ -156,11 +156,11 @@ El ejecutable de Windows compila. El asistente permite reintentar un guardado fa
 
 ## Hito 2 · Explorar, Biblioteca Visual y Ficha de Manga (AniList + Discord)
 
-- **Estado:** `En curso`
+- **Estado:** `En validación`
 
-La pantalla **Explorar** ya busca títulos por proveedor con `search_catalog`, muestra portadas, detalle en modal con sinopsis y permite marcar/desmarcar favoritos en 1 clic (`toggle_library_favorite`). En **Inicio**, `LibraryShelf` ya muestra las pestañas interactivas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente** conectadas al SQLite compartido (`get_library_overview`). Quedan pendientes las recomendaciones *"Para ti"*, abrir capítulo siguiente desde Biblioteca y la Ficha de serie con capítulos + AniList y Discord.
+Hito 2 está integrado en UI y backend: **Explorar** busca por proveedor (`search_catalog`), muestra el bloque *«Para ti según tus gustos»* (`get_for_you_recommendations`) y permite abrir la ficha o marcar favoritos; **Inicio** (`LibraryShelf`) conecta las pestañas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente** al SQLite compartido (`get_library_overview`, `toggle_library_favorite`) y abre cualquier serie en la **Ficha de serie completa** (`SeriesDetailView`) con listado de capítulos conciliado contra lectura en SQLite (`toggle_chapter_read`) y descargas locales, indicador de siguiente capítulo pendiente, panel no bloqueante de comunidad **AniList** (`get_anilist_community`) y CTA a **Discord**. Queda pendiente la validación manual en `tauri dev` con red real frente a MangaDex/AniList (el botón *«Abrir lector»* queda enlazado a Hito 3).
 
-Se verificaron paginación, filtros y errores en Chromium con respuestas simuladas. La prueba de conexión real a MangaDex está en `apps/mangora/src-tauri/src/commands.rs` y requiere acceso de red.
+Se verificaron la conciliación de capítulos, el ranking *«Para ti»*, el cliente GraphQL de AniList (con `httpmock`) y la escritura en SQLite mediante tests unitarios. La prueba de conexión real a MangaDex está en `apps/mangora/src-tauri/src/commands.rs` y requiere acceso de red.
 
 ### Prompt sugerido para nuevo hilo
 
@@ -185,7 +185,7 @@ Se verificaron paginación, filtros y errores en Chromium con respuestas simulad
 - [ ] Buscar un manga devuelve portadas y resultados reales desde `multi_provider` y permite filtrar por idioma/proveedor tanto en escritorio como en móvil.
 - [ ] Marcar favoritos o abrir capítulos desde Mangora actualiza `history/manga-tui-history.db` y se refleja correctamente al abrir `manga-tui` (y viceversa).
 - [ ] La Ficha de Serie muestra capítulos online/descargados y carga valoración/reseñas públicas de AniList de forma no bloqueante (con fallback limpio si AniList no encuentra la serie o falla la red).
-- [ ] `cargo check` y `cargo test` pasan en todo el workspace.
+- [x] `cargo check` y `cargo test` pasan en todo el workspace.
 
 ---
 

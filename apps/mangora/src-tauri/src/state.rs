@@ -6,7 +6,9 @@ use std::str::FromStr;
 use std::sync::{Mutex, MutexGuard};
 
 use manga_core::SearchTerm;
-use manga_core::backend::database::{Database, GetHistoryArgs, HomeStats, MangaHistory, MangaHistoryType};
+use manga_core::backend::database::{
+    ChapterToSaveHistory, Database, GetHistoryArgs, HomeStats, MangaHistory, MangaHistoryType, MangaReadingHistorySave,
+};
 use manga_core::backend::manga_provider::{Languages, MangaProviders};
 use manga_core::backend::migration::update_database_with_migrations;
 use manga_core::backend::offline::scan_offline_mangas_in_dir;
@@ -214,6 +216,26 @@ pub struct ToggleFavoriteResult {
     pub library: LibraryOverview,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleChapterReadPayload {
+    pub manga_id: String,
+    pub provider: String,
+    pub manga_title: String,
+    pub cover_url: Option<String>,
+    pub chapter_id: String,
+    pub chapter_title: String,
+    pub translated_language: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleChapterReadResult {
+    pub is_read: bool,
+    pub app_state: InitialAppState,
+    pub library: LibraryOverview,
+}
+
 #[derive(Debug)]
 struct AppStateInner {
     data_dir: PathBuf,
@@ -316,6 +338,11 @@ impl AppState {
     pub fn db_path(&self) -> Result<PathBuf, String> {
         let inner = self.lock_inner()?;
         Ok(inner.db_path.clone())
+    }
+
+    pub fn default_chapter_language(&self) -> Result<Languages, String> {
+        let inner = self.lock_inner()?;
+        Ok(inner.default_chapter_language)
     }
 
     pub fn get_reader_prefs(&self) -> Result<ReaderPrefs, String> {
@@ -432,6 +459,46 @@ impl AppState {
 
         Ok(ToggleFavoriteResult {
             is_favorite,
+            app_state: self.snapshot()?,
+            library: self.get_library_overview(None)?,
+        })
+    }
+
+    pub fn toggle_chapter_read(&self, payload: ToggleChapterReadPayload) -> Result<ToggleChapterReadResult, String> {
+        let manga_id = payload.manga_id.trim();
+        let manga_title = payload.manga_title.trim();
+        let chapter_id = payload.chapter_id.trim();
+        let chapter_title = payload.chapter_title.trim();
+        if manga_id.is_empty() || manga_title.is_empty() || chapter_id.is_empty() || chapter_title.is_empty() {
+            return Err("Missing manga or chapter identifier".to_string());
+        }
+        let provider = parse_provider(&payload.provider)?;
+        let cover_url = payload
+            .cover_url
+            .as_deref()
+            .map(str::trim)
+            .filter(|url| url.starts_with("https://") || url.starts_with("http://"));
+        let translated_language = payload.translated_language.trim();
+
+        let is_read = {
+            let conn = self.open_db_connection()?;
+            let db = Database::new(&conn);
+            db.toggle_chapter_read(MangaReadingHistorySave {
+                id: manga_id,
+                title: manga_title,
+                img_url: cover_url,
+                chapter: ChapterToSaveHistory {
+                    id: chapter_id,
+                    title: chapter_title,
+                    translated_language,
+                },
+                provider,
+            })
+            .map_err(|e| format!("Could not update chapter reading status: {e}"))?
+        };
+
+        Ok(ToggleChapterReadResult {
+            is_read,
             app_state: self.snapshot()?,
             library: self.get_library_overview(None)?,
         })
@@ -1107,5 +1174,43 @@ mod tests {
         assert!(!removed.is_favorite);
         assert_eq!(removed.app_state.library.favorites, 0);
         assert_eq!(removed.library.total_favorites, 0);
+    }
+
+    #[test]
+    fn toggle_chapter_read_updates_shared_sqlite_and_library_overview() {
+        let temp = TempTestDir::new("toggle_chapter_read");
+        let state = make_test_state(&temp.path);
+
+        let marked = state
+            .toggle_chapter_read(ToggleChapterReadPayload {
+                manga_id: "m-dandadan".to_string(),
+                provider: "inmanga".to_string(),
+                manga_title: "Dandadan".to_string(),
+                cover_url: Some("https://example.com/dandadan.jpg".to_string()),
+                chapter_id: "ch-001".to_string(),
+                chapter_title: "Capítulo 1".to_string(),
+                translated_language: "es".to_string(),
+            })
+            .unwrap();
+
+        assert!(marked.is_read);
+        assert_eq!(marked.app_state.library.chapters_read, 1);
+        assert_eq!(marked.library.total_recent, 1);
+        assert_eq!(marked.library.recent_history[0].total_read_count, 1);
+
+        let unmarked = state
+            .toggle_chapter_read(ToggleChapterReadPayload {
+                manga_id: "m-dandadan".to_string(),
+                provider: "inmanga".to_string(),
+                manga_title: "Dandadan".to_string(),
+                cover_url: None,
+                chapter_id: "ch-001".to_string(),
+                chapter_title: "Capítulo 1".to_string(),
+                translated_language: "es".to_string(),
+            })
+            .unwrap();
+
+        assert!(!unmarked.is_read);
+        assert_eq!(unmarked.app_state.library.chapters_read, 0);
     }
 }

@@ -1,3 +1,4 @@
+pub mod anilist;
 pub mod commands;
 pub mod state;
 
@@ -27,7 +28,11 @@ pub fn run() {
             commands::get_initial_state,
             commands::get_library_overview,
             commands::toggle_library_favorite,
+            commands::toggle_chapter_read,
             commands::search_catalog,
+            commands::get_series_detail,
+            commands::get_anilist_community,
+            commands::get_for_you_recommendations,
             commands::save_onboarding_preferences,
             commands::set_ui_language,
             commands::set_theme_mode,

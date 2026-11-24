@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { Bookmark, Compass, HardDrive, Heart, RefreshCw, Search } from "lucide-react";
+import { BookOpen, Bookmark, Compass, HardDrive, Heart, RefreshCw, Search } from "lucide-react";
 import { getTranslations } from "../lib/i18n";
 import {
   type LibraryEntry,
   type LibraryOverview,
+  type SeriesSelection,
   type ToggleFavoritePayload,
   type UiLanguage,
   libraryKey,
@@ -19,6 +20,7 @@ interface LibraryShelfProps {
   favoriteKeys: Set<string>;
   onRefresh: (search?: string) => Promise<void>;
   onToggleFavorite: (payload: ToggleFavoritePayload) => Promise<void>;
+  onOpenSeries: (series: SeriesSelection) => void;
   onExplore: () => void;
 }
 
@@ -30,6 +32,7 @@ export function LibraryShelf({
   favoriteKeys,
   onRefresh,
   onToggleFavorite,
+  onOpenSeries,
   onExplore,
 }: LibraryShelfProps) {
   const t = getTranslations(language).library;
@@ -159,7 +162,18 @@ export function LibraryShelf({
                 key={libraryKey(entry.id, entry.provider)}
                 className="editorial-card flex flex-col justify-between overflow-hidden"
               >
-                <div className="flex gap-3.5 p-3.5">
+                <button
+                  type="button"
+                  onClick={() =>
+                    onOpenSeries({
+                      mangaId: entry.id,
+                      provider: entry.provider,
+                      title: entry.title,
+                      coverUrl: entry.coverUrl ?? null,
+                    })
+                  }
+                  className="group flex w-full flex-1 cursor-pointer touch-manipulation gap-3.5 p-3.5 text-left transition-colors hover:bg-[var(--surface)]/50"
+                >
                   <div className="relative h-28 w-20 shrink-0 overflow-hidden border-2 border-[var(--ink)] bg-[var(--surface)]">
                     {hasCover ? (
                       <img
@@ -193,7 +207,7 @@ export function LibraryShelf({
                           </span>
                         )}
                       </div>
-                      <h3 className="font-display line-clamp-2 text-base leading-tight">
+                      <h3 className="font-display line-clamp-2 text-base leading-tight group-hover:text-[var(--red-text)]">
                         {entry.title}
                       </h3>
                     </div>
@@ -218,36 +232,53 @@ export function LibraryShelf({
                       )}
                     </div>
                   </div>
-                </div>
+                </button>
 
-                <div className="flex items-center justify-between gap-2 border-t-2 border-[var(--ink)] bg-[var(--surface)] px-3.5 py-2">
-                  <span className="truncate font-mono-editorial text-[11px] text-[var(--muted)]">
+                <div className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-[var(--ink)] bg-[var(--surface)] px-3.5 py-2">
+                  <span className="min-w-0 flex-1 truncate font-mono-editorial text-[11px] text-[var(--muted)]">
                     {entry.shelfName ?? entry.provider}
                   </span>
-                  <button
-                    type="button"
-                    disabled={isMutating}
-                    aria-pressed={isFav}
-                    onClick={() =>
-                      void onToggleFavorite({
-                        mangaId: entry.id,
-                        provider: entry.provider,
-                        title: entry.title,
-                        coverUrl: entry.coverUrl,
-                      })
-                    }
-                    className={`inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-1.5 border-2 border-[var(--ink)] px-3 py-1.5 text-xs font-bold transition-colors ${
-                      isFav
-                        ? "bg-[var(--red)] text-white"
-                        : "bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--ink)] hover:text-[var(--paper)]"
-                    }`}
-                  >
-                    <Heart
-                      className={`h-3.5 w-3.5 ${isFav ? "fill-current" : ""}`}
-                      aria-hidden="true"
-                    />
-                    <span>{isFav ? t.removeFavorite : t.addFavorite}</span>
-                  </button>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() =>
+                        onOpenSeries({
+                          mangaId: entry.id,
+                          provider: entry.provider,
+                          title: entry.title,
+                          coverUrl: entry.coverUrl ?? null,
+                        })
+                      }
+                      className="editorial-btn-secondary inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-1.5 px-3 py-1.5 text-xs font-bold"
+                    >
+                      <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>{t.openSeriesBtn}</span>
+                    </button>
+                    <button
+                      type="button"
+                      disabled={isMutating}
+                      aria-pressed={isFav}
+                      onClick={() =>
+                        void onToggleFavorite({
+                          mangaId: entry.id,
+                          provider: entry.provider,
+                          title: entry.title,
+                          coverUrl: entry.coverUrl,
+                        })
+                      }
+                      className={`inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-1.5 border-2 border-[var(--ink)] px-3 py-1.5 text-xs font-bold transition-colors ${
+                        isFav
+                          ? "bg-[var(--red)] text-white"
+                          : "bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--ink)] hover:text-[var(--paper)]"
+                      }`}
+                    >
+                      <Heart
+                        className={`h-3.5 w-3.5 ${isFav ? "fill-current" : ""}`}
+                        aria-hidden="true"
+                      />
+                      <span>{isFav ? t.removeFavorite : t.addFavorite}</span>
+                    </button>
+                  </div>
                 </div>
               </li>
             );

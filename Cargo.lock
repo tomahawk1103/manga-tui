@@ -3856,9 +3856,11 @@ name = "mangora"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "httpmock",
  "log",
  "manga-core",
  "pretty_assertions",
+ "reqwest 0.12.24",
  "rusqlite",
  "serde",
  "serde_json",

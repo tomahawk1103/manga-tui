@@ -1,11 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  AniListCommunityInfo,
+  ForYouResponse,
   InitialAppState,
   LibraryEntry,
   LibraryOverview,
   OnboardingPreferencesPayload,
   ProviderOption,
+  SeriesDetailResponse,
+  SeriesSelection,
   ThemeMode,
+  ToggleChapterReadPayload,
+  ToggleChapterReadResult,
   ToggleFavoritePayload,
   ToggleFavoriteResult,
   UiLanguage,
@@ -345,5 +351,112 @@ export async function toggleLibraryFavorite(
     isFavorite,
     appState,
     library: buildBrowserOverview(nextFavorites),
+  };
+}
+
+export async function toggleChapterRead(
+  payload: ToggleChapterReadPayload,
+): Promise<ToggleChapterReadResult> {
+  if (isTauriRuntime()) {
+    return invoke<ToggleChapterReadResult>("toggle_chapter_read", { payload });
+  }
+  const appState = readBrowserState();
+  return {
+    isRead: true,
+    appState,
+    library: buildBrowserOverview(readBrowserFavorites()),
+  };
+}
+
+export async function getSeriesDetail(
+  selection: SeriesSelection,
+  options?: {
+    language?: string;
+    order?: "asc" | "desc";
+    page?: number;
+  },
+): Promise<SeriesDetailResponse> {
+  if (isTauriRuntime()) {
+    return invoke<SeriesDetailResponse>("get_series_detail", {
+      request: {
+        mangaId: selection.mangaId,
+        provider: selection.provider,
+        fallbackTitle: selection.title,
+        fallbackCoverUrl: selection.coverUrl ?? null,
+        fallbackDescription: selection.description ?? null,
+        language: options?.language ?? null,
+        order: options?.order ?? "desc",
+        page: options?.page ?? 1,
+      },
+    });
+  }
+  const providerMeta = FALLBACK_PROVIDERS.find((p) => p.id === selection.provider);
+  const favs = readBrowserFavorites();
+  const isFavorite = favs.some(
+    (entry) => entry.id === selection.mangaId && entry.provider === selection.provider,
+  );
+  return {
+    id: selection.mangaId,
+    provider: selection.provider,
+    providerLabel: providerMeta?.badge ?? selection.provider,
+    title: selection.title,
+    coverUrl: selection.coverUrl ?? null,
+    description: selection.description ?? null,
+    author: null,
+    artist: null,
+    status: "unknown",
+    genres: [],
+    availableLanguages: [],
+    activeLanguage: options?.language ?? "es",
+    order: options?.order ?? "desc",
+    page: options?.page ?? 1,
+    totalChapters: 0,
+    hasNextPage: false,
+    isFavorite,
+    isOfflineFallback: false,
+    offlineChapterCount: 0,
+    readChapterCount: 0,
+    nextUnreadChapter: null,
+    chapters: [],
+    onlineWarning: "Browser preview",
+  };
+}
+
+export async function getAniListCommunity(title: string): Promise<AniListCommunityInfo> {
+  if (isTauriRuntime()) {
+    return invoke<AniListCommunityInfo>("get_anilist_community", { title });
+  }
+  return {
+    found: false,
+    anilistId: null,
+    siteUrl: null,
+    title: null,
+    averageScore: null,
+    meanScore: null,
+    popularity: null,
+    favourites: null,
+    status: null,
+    genres: [],
+    tags: [],
+    reviews: [],
+    note: "preview",
+  };
+}
+
+export async function getForYouRecommendations(provider?: string): Promise<ForYouResponse> {
+  if (isTauriRuntime()) {
+    return invoke<ForYouResponse>("get_for_you_recommendations", {
+      provider: provider ?? null,
+    });
+  }
+  const state = readBrowserState();
+  const providerId = provider ?? state.activeProvider;
+  const providerMeta = FALLBACK_PROVIDERS.find((p) => p.id === providerId);
+  return {
+    provider: providerId,
+    providerLabel: providerMeta?.badge ?? providerId,
+    matchedGenres: state.favoriteGenres,
+    items: [],
+    fallbackPopular: true,
   };
 }
