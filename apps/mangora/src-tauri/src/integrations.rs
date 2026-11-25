@@ -28,6 +28,7 @@ use crate::state::{AppState, InitialAppState};
 
 pub const DEFAULT_DISCORD_URL: &str = "https://discord.gg/SeqsWUCpVx";
 pub const DEFAULT_GITHUB_URL: &str = "https://github.com/tomahawk1103/manga-tui";
+pub const DEFAULT_WEBSITE_URL: &str = "https://tomahawk1103.github.io/manga-tui/";
 pub const DEFAULT_SPONSORS_URL: &str = "https://github.com/sponsors/tomahawk1103";
 pub const DEFAULT_RELEASES_API_URL: &str = "https://api.github.com/repos/tomahawk1103/manga-tui";
 pub const OAUTH_COMPLETED_EVENT: &str = "mangora://oauth-completed";
@@ -240,6 +241,7 @@ pub struct SupportConfigDto {
     pub discord_url: String,
     pub github_url: String,
     pub github_issues_url: String,
+    pub website_url: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -326,6 +328,7 @@ pub fn resolve_support_config() -> SupportConfigDto {
         discord_url: DEFAULT_DISCORD_URL.to_string(),
         github_url: DEFAULT_GITHUB_URL.to_string(),
         github_issues_url: DEFAULT_GITHUB_ISSUES_URL.to_string(),
+        website_url: DEFAULT_WEBSITE_URL.to_string(),
     }
 }
 
@@ -1791,5 +1794,12 @@ mod tests {
         assert_eq!(imported.app_state.library.library_mangas, 1);
         assert_eq!(imported.app_state.library.favorites, 1);
         assert_eq!(imported.library.favorites.len(), 1);
+    }
+
+    #[test]
+    fn resolve_support_config_includes_https_website_url() {
+        let cfg = resolve_support_config();
+        assert_eq!(cfg.website_url, DEFAULT_WEBSITE_URL);
+        assert!(cfg.website_url.starts_with("https://"));
     }
 }

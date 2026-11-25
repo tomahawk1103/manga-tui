@@ -31,8 +31,9 @@ impl AnimePage {
         let color = if self.status_is_error { theme().status_warning } else { theme().text_secondary };
         let hint = match self.focus {
             Focus::Query => tr("Enter Buscar", "Enter Search"),
-            Focus::Results => tr("Enter Abrir ficha", "Enter Open details"),
-            Focus::Episodes => tr("Enter Elegir servidor", "Enter Choose server"),
+            Focus::RecentEpisodes => tr("Enter Abrir ficha · w Ver ep. en Web", "Enter Open details · w Watch in Web"),
+            Focus::Recommendations | Focus::Results => tr("Enter Abrir ficha", "Enter Open details"),
+            Focus::Episodes => tr("Enter Elegir servidor · w Ver en Web", "Enter Choose server · w Watch in Web"),
         };
         let message = if self.status.is_empty() { hint } else { self.status.as_str() };
         frame.render_widget(Paragraph::new(message).style(Style::default().fg(color).bg(theme().bar_bg)), status);
@@ -74,17 +75,21 @@ impl AnimePage {
     }
 
     fn render_toolbar(&mut self, area: Rect, frame: &mut Frame<'_>) {
-        let compact = area.width < 52;
-        let [recent, favorites, provider] = Layout::horizontal([
+        let compact = area.width < 68;
+        let [discover, recent, favorites, refresh, provider] = Layout::horizontal([
             Constraint::Length(if compact { 9 } else { 14 }),
+            Constraint::Length(if compact { 8 } else { 14 }),
             Constraint::Length(if compact { 8 } else { 15 }),
+            Constraint::Length(if compact { 8 } else { 14 }),
             Constraint::Fill(1),
         ])
         .spacing(1)
         .areas(area);
         for (space, label, active) in [
+            (discover, if compact { " d Expl. " } else { tr(" d Explorar ", " d Explore ") }, self.mode == View::Discover),
             (recent, if compact { " h Hist. " } else { tr(" h Historial ", " h History ") }, self.mode == View::Recent),
             (favorites, if compact { " b Fav. " } else { tr(" b Favoritos ", " b Favorites ") }, self.mode == View::Favorites),
+            (refresh, if compact { " r Act. " } else { tr(" r Actualizar ", " r Refresh ") }, false),
             (provider, &format!(" [p] {} ", self.provider), false),
         ] {
             let style = if active {
@@ -94,13 +99,20 @@ impl AnimePage {
             };
             frame.render_widget(Paragraph::new(label).style(style), space);
         }
+        self.hitboxes.discover = discover;
         self.hitboxes.recent = recent;
         self.hitboxes.favorites = favorites;
+        self.hitboxes.refresh = refresh;
         self.hitboxes.provider = provider;
     }
 
     fn render_results(&mut self, area: Rect, frame: &mut Frame<'_>) {
+        if self.mode == View::Discover {
+            self.render_discover(area, frame);
+            return;
+        }
         let title = match self.mode {
+            View::Discover => tr("Explorar", "Explore"),
             View::Search => tr("Resultados", "Results"),
             View::Recent => tr("Historial reciente", "Recent history"),
             View::Favorites => tr("Favoritos", "Favorites"),
@@ -125,15 +137,71 @@ impl AnimePage {
         }
     }
 
+    fn render_discover(&mut self, area: Rect, frame: &mut Frame<'_>) {
+        let [recent_area, rec_area] = Layout::vertical([Constraint::Percentage(54), Constraint::Percentage(46)]).areas(area);
+
+        let ep_items: Vec<ListItem<'_>> = self
+            .recent_episodes
+            .iter()
+            .map(|ep| {
+                let fav = if self.favorite_slugs.contains(&ep.slug) { "★ " } else { "" };
+                let mut spans = vec![
+                    Span::styled(
+                        format!("{fav}Ep. {} ", single_line(&ep.episode_number)),
+                        Style::default().fg(theme().accent_highlight).bold(),
+                    ),
+                    Span::raw(single_line(&ep.anime_title)),
+                ];
+                if let Some(aired) = ep.aired_label.as_deref() {
+                    spans.push(Span::styled(format!(" · {}", single_line(aired)), Style::default().fg(theme().text_muted)));
+                }
+                ListItem::new(Line::from(spans))
+            })
+            .collect();
+        let ep_title = if self.recent_episodes.is_empty() {
+            tr("🔥 En emisión · Capítulos recientes", "🔥 Airing · Recent episodes").to_owned()
+        } else {
+            format!("{} · {}", tr("🔥 En emisión · Capítulos", "🔥 Airing · Episodes"), self.recent_episodes.len())
+        };
+        self.hitboxes.recent_episodes =
+            draw_list(frame, recent_area, &ep_title, self.focus == Focus::RecentEpisodes, ep_items, &mut self.recent_episodes_list);
+
+        let rec_items: Vec<ListItem<'_>> = self
+            .recommendations
+            .iter()
+            .map(|anime| {
+                let (icon, color) = if self.favorite_slugs.contains(&anime.slug) {
+                    ("★", theme().accent_highlight)
+                } else if anime.status == anime_core::AnimeStatus::Ongoing {
+                    ("●", theme().status_success)
+                } else {
+                    ("◆", theme().accent_secondary)
+                };
+                let mut spans =
+                    vec![Span::styled(format!("{icon} "), Style::default().fg(color)), Span::raw(single_line(&anime.title))];
+                let tag = match anime.status {
+                    anime_core::AnimeStatus::Ongoing => Some(tr("En emisión", "Airing")),
+                    anime_core::AnimeStatus::Upcoming => Some(tr("Estreno", "Upcoming")),
+                    _ => None,
+                };
+                if let Some(tag) = tag {
+                    spans.push(Span::styled(format!(" · {tag}"), Style::default().fg(theme().text_muted)));
+                }
+                ListItem::new(Line::from(spans))
+            })
+            .collect();
+        let rec_title = if self.recommendations.is_empty() {
+            tr("✨ Recomendaciones", "✨ Recommendations").to_owned()
+        } else {
+            format!("{} · {}", tr("✨ Recomendaciones", "✨ Recommendations"), self.recommendations.len())
+        };
+        self.hitboxes.recommendations =
+            draw_list(frame, rec_area, &rec_title, self.focus == Focus::Recommendations, rec_items, &mut self.recommendations_list);
+    }
+
     fn render_details(&mut self, area: Rect, frame: &mut Frame<'_>, overlay: bool) {
         let Some(details) = self.details.as_ref() else {
-            frame.render_widget(
-                Paragraph::new(tr("Selecciona un resultado para ver sus episodios.", "Select a result to see its episodes."))
-                    .style(Style::default().fg(theme().text_muted))
-                    .wrap(Wrap { trim: true })
-                    .block(section(tr("Ficha", "Details"), false)),
-                area,
-            );
+            self.render_empty_details(area, frame);
             return;
         };
 
@@ -221,6 +289,91 @@ impl AnimePage {
         let title = format!("{} ({})", tr("Episodios", "Episodes"), details.episodes.len());
         self.hitboxes.episodes =
             draw_list(frame, episodes, &title, self.focus == Focus::Episodes, entries, &mut self.episodes_list);
+    }
+
+    fn render_empty_details(&self, area: Rect, frame: &mut Frame<'_>) {
+        if self.mode == View::Discover {
+            let preview_lines = if self.focus == Focus::Recommendations
+                && let Some(anime) = self.recommendations_list.selected().and_then(|i| self.recommendations.get(i))
+            {
+                let status = match anime.status {
+                    anime_core::AnimeStatus::Ongoing => tr("En emisión", "Airing"),
+                    anime_core::AnimeStatus::Completed => tr("Finalizado", "Completed"),
+                    anime_core::AnimeStatus::Upcoming => tr("Próximamente", "Upcoming"),
+                    anime_core::AnimeStatus::Unknown => tr("Recomendado", "Recommended"),
+                };
+                let synopsis = anime
+                    .synopsis
+                    .as_deref()
+                    .filter(|s| !s.trim().is_empty())
+                    .map(single_line)
+                    .unwrap_or_else(|| {
+                        tr("Pulsa Enter para cargar la ficha y todos sus episodios.", "Press Enter to load details and episodes.")
+                            .to_owned()
+                    });
+                vec![
+                    Line::styled(anime.title.clone(), Style::default().fg(theme().accent_primary).bold()),
+                    Line::styled(format!("✨ {status} · {}", anime.provider), Style::default().fg(theme().accent_secondary)),
+                    Line::raw(""),
+                    Line::styled(synopsis, Style::default().fg(theme().text_primary)),
+                    Line::raw(""),
+                    Line::styled(
+                        tr(
+                            "Enter Abrir ficha y episodios · Tab Cambiar sección · / Buscar",
+                            "Enter Open details · Tab Switch section · / Search",
+                        ),
+                        Style::default().fg(theme().text_muted),
+                    ),
+                ]
+            } else if let Some(ep) = self.recent_episodes_list.selected().and_then(|i| self.recent_episodes.get(i)) {
+                let mut meta = vec![format!("Ep. {}", ep.episode_number), ep.provider.to_string()];
+                if let Some(aired) = ep.aired_label.as_deref() {
+                    meta.push(aired.to_owned());
+                }
+                vec![
+                    Line::styled(ep.anime_title.clone(), Style::default().fg(theme().accent_primary).bold()),
+                    Line::styled(
+                        format!("🔥 {} · {}", tr("En emisión", "Airing"), meta.join(" · ")),
+                        Style::default().fg(theme().accent_highlight),
+                    ),
+                    Line::raw(""),
+                    Line::styled(
+                        tr(
+                            "Nuevo capítulo disponible. Puedes abrir la ficha con ese episodio preseleccionado o lanzarlo directo en el reproductor web.",
+                            "New episode available. Open its details pre-selected or launch it straight in the web player.",
+                        ),
+                        Style::default().fg(theme().text_primary),
+                    ),
+                    Line::raw(""),
+                    Line::styled(
+                        tr(
+                            "Enter Abrir ficha · w Ver directo en Web · Tab Recomendaciones",
+                            "Enter Open details · w Watch in Web · Tab Recommendations",
+                        ),
+                        Style::default().fg(theme().text_muted),
+                    ),
+                ]
+            } else {
+                vec![Line::styled(
+                    tr("Cargando episodios en emisión y recomendaciones…", "Loading airing episodes & recommendations…"),
+                    Style::default().fg(theme().text_muted),
+                )]
+            };
+            frame.render_widget(
+                Paragraph::new(preview_lines)
+                    .wrap(Wrap { trim: true })
+                    .block(section(tr("Vista previa", "Preview"), false).padding(Padding::horizontal(1))),
+                area,
+            );
+            return;
+        }
+        frame.render_widget(
+            Paragraph::new(tr("Selecciona un resultado para ver sus episodios.", "Select a result to see its episodes."))
+                .style(Style::default().fg(theme().text_muted))
+                .wrap(Wrap { trim: true })
+                .block(section(tr("Ficha", "Details"), false)),
+            area,
+        );
     }
 
     fn render_mirrors(&mut self, area: Rect, frame: &mut Frame<'_>) {

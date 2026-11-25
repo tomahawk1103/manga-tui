@@ -688,6 +688,7 @@ export function defaultBrowserIntegrationsOverview(): IntegrationsOverviewDto {
       discordUrl: "https://discord.gg/SeqsWUCpVx",
       githubUrl: "https://github.com/tomahawk1103/manga-tui",
       githubIssuesUrl: "https://github.com/tomahawk1103/manga-tui/issues/new",
+      websiteUrl: "https://tomahawk1103.github.io/manga-tui/",
     },
     feedbackConfig: {
       proxyConfigured: false,

@@ -1,8 +1,10 @@
+use std::collections::HashSet;
+
 use serde_json::Value;
 
 use crate::model::{
-    AnimeDetails, AnimeEpisode, AnimeEpisodesPage, AnimeProviders, AnimeSearchResult, AnimeStatus, AnimeSummary, AnimeType,
-    AnimeVariant, VideoMirror,
+    AnimeDetails, AnimeEpisode, AnimeEpisodesPage, AnimeHomeFeed, AnimeProviders, AnimeSearchResult, AnimeStatus, AnimeSummary,
+    AnimeType, AnimeVariant, RecentAnimeEpisode, VideoMirror,
 };
 use crate::provider::AnimeProvider;
 use crate::{AnimeError, DEFAULT_USER_AGENT};
@@ -218,9 +220,106 @@ fn mirror_priority(server_name: &str) -> u8 {
     }
 }
 
+fn format_aired_timestamp(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.len() >= 16 && trimmed.as_bytes()[4] == b'-' && trimmed.as_bytes()[7] == b'-' {
+        let month = &trimmed[5..7];
+        let day = &trimmed[8..10];
+        let time = &trimmed[11..16];
+        Some(format!("{day}/{month} {time}"))
+    } else if trimmed.is_empty() {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+fn parse_summary_entry(provider: &AnimeAv1Provider, entry: &Value) -> Option<AnimeSummary> {
+    let slug = entry.get("slug").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty())?;
+    let id = entry.get("id").and_then(value_to_id_string).unwrap_or_else(|| slug.to_string());
+    let title = entry.get("title").and_then(Value::as_str).map(str::trim).unwrap_or(slug).to_string();
+    let synopsis = entry
+        .get("synopsis")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(ToString::to_string);
+    let category_name = entry.get("category").and_then(|c| c.get("name")).and_then(Value::as_str);
+
+    Some(AnimeSummary {
+        cover_url: provider.cover_url_for_id(&id),
+        id,
+        slug: slug.to_string(),
+        title,
+        synopsis,
+        anime_type: parse_type(category_name),
+        status: parse_status(entry.get("status")),
+        provider: AnimeProviders::AnimeAv1,
+    })
+}
+
 impl AnimeProvider for AnimeAv1Provider {
     fn kind(&self) -> AnimeProviders {
         AnimeProviders::AnimeAv1
+    }
+
+    async fn get_home_feed(&self) -> Result<AnimeHomeFeed, AnimeError> {
+        let url = format!("{}/__data.json", self.base_url);
+        let data = self.fetch_hydrated_json(&url).await?;
+
+        let mut recent_episodes = Vec::new();
+        let mut seen_episodes = HashSet::new();
+        if let Some(latest_episodes) = data.get("latestEpisodes").and_then(Value::as_array) {
+            for ep in latest_episodes {
+                let Some(episode_number) = ep.get("number").and_then(value_to_episode_number) else {
+                    continue;
+                };
+                let Some(media) = ep.get("media") else {
+                    continue;
+                };
+                let Some(slug) = media.get("slug").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) else {
+                    continue;
+                };
+                if !seen_episodes.insert((slug.to_string(), episode_number.clone())) {
+                    continue;
+                }
+                let anime_id = media.get("id").and_then(value_to_id_string).unwrap_or_else(|| slug.to_string());
+                let anime_title = media.get("title").and_then(Value::as_str).map(str::trim).unwrap_or(slug).to_string();
+                let aired_label = ep
+                    .get("publishedAt")
+                    .or_else(|| ep.get("createdAt"))
+                    .and_then(Value::as_str)
+                    .and_then(format_aired_timestamp);
+                recent_episodes.push(RecentAnimeEpisode {
+                    cover_url: self.cover_url_for_id(&anime_id),
+                    anime_id,
+                    slug: slug.to_string(),
+                    anime_title,
+                    episode_number,
+                    aired_label,
+                    provider: AnimeProviders::AnimeAv1,
+                });
+            }
+        }
+
+        let mut recommendations = Vec::new();
+        let mut seen_slugs = HashSet::new();
+        for key in ["featured", "latestMedia"] {
+            if let Some(entries) = data.get(key).and_then(Value::as_array) {
+                for entry in entries {
+                    if let Some(summary) = parse_summary_entry(self, entry)
+                        && seen_slugs.insert(summary.slug.clone())
+                    {
+                        recommendations.push(summary);
+                    }
+                }
+            }
+        }
+
+        Ok(AnimeHomeFeed {
+            recent_episodes,
+            recommendations,
+        })
     }
 
     async fn search(&self, query: &str, page: u32) -> Result<AnimeSearchResult, AnimeError> {
@@ -245,29 +344,9 @@ impl AnimeProvider for AnimeAv1Provider {
 
         let mut items = Vec::with_capacity(results.len());
         for entry in results {
-            let Some(slug) = entry.get("slug").and_then(Value::as_str).map(str::trim).filter(|s| !s.is_empty()) else {
-                continue;
-            };
-            let id = entry.get("id").and_then(value_to_id_string).unwrap_or_else(|| slug.to_string());
-            let title = entry.get("title").and_then(Value::as_str).map(str::trim).unwrap_or(slug).to_string();
-            let synopsis = entry
-                .get("synopsis")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(ToString::to_string);
-            let category_name = entry.get("category").and_then(|c| c.get("name")).and_then(Value::as_str);
-
-            items.push(AnimeSummary {
-                cover_url: self.cover_url_for_id(&id),
-                id,
-                slug: slug.to_string(),
-                title,
-                synopsis,
-                anime_type: parse_type(category_name),
-                status: parse_status(entry.get("status")),
-                provider: AnimeProviders::AnimeAv1,
-            });
+            if let Some(summary) = parse_summary_entry(self, entry) {
+                items.push(summary);
+            }
         }
 
         let pagination = data.get("pagination");
@@ -610,5 +689,59 @@ mod tests {
         assert_eq!(mirrors[1].server_name, "MP4Upload");
         assert_eq!(mirrors[2].server_name, "Voe");
         assert_eq!(mirrors[2].variant, AnimeVariant::Dub);
+    }
+
+    #[tokio::test]
+    async fn home_feed_parses_latest_episodes_and_deduped_recommendations() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/__data.json");
+            then.status(200).json_body(json!({
+                "type": "data",
+                "nodes": [
+                    null,
+                    {"type": "data", "data": [
+                        {"featured": 1, "latestEpisodes": 9, "latestMedia": 15},
+                        [2],
+                        {"id": 3, "slug": 4, "title": 5, "synopsis": 6, "status": 7, "category": 17},
+                        "197",
+                        "one-piece",
+                        "One Piece",
+                        "Piratas.",
+                        8,
+                        1,
+                        [10],
+                        {"id": 11, "number": 12, "publishedAt": 13, "media": 14},
+                        60840,
+                        "36",
+                        "2026-11-25 15:36:34.632+00",
+                        {"id": 19, "slug": 20, "title": 21},
+                        [2, 16],
+                        {"id": 22, "slug": 23, "title": 24, "synopsis": 25, "status": 26, "category": 17},
+                        {"name": 18},
+                        "TV Anime",
+                        "4483",
+                        "magic-knight-rayearth-2026",
+                        "Magic Knight Rayearth (2026)",
+                        "4500",
+                        "demons-crest",
+                        "Demons Crest",
+                        "Supervivencia.",
+                        0
+                    ]}
+                ]
+            }));
+        });
+
+        let client = build_default_http_client().unwrap();
+        let provider = AnimeAv1Provider::with_base_url(client, server.base_url());
+        let feed = provider.get_home_feed().await.unwrap();
+        assert_eq!(feed.recent_episodes.len(), 1);
+        assert_eq!(feed.recent_episodes[0].slug, "magic-knight-rayearth-2026");
+        assert_eq!(feed.recent_episodes[0].episode_number, "36");
+        assert_eq!(feed.recent_episodes[0].aired_label.as_deref(), Some("25/11 15:36"));
+        assert_eq!(feed.recommendations.len(), 2);
+        assert_eq!(feed.recommendations[0].slug, "one-piece");
+        assert_eq!(feed.recommendations[1].slug, "demons-crest");
     }
 }

@@ -1,0 +1,18 @@
+{
+  "backend": "LocalCloudFolder",
+  "client_id": null,
+  "account_email": null,
+  "account_display_name": null,
+  "local_folder_path": "C:\\Users\\drodr\\AppData\\Local\\Temp\\mangora_hito4_local_cloud_sync_1795622065295918800\\SyncedCloud\\MangaTUI",
+  "local_folder_provider_label": "OneDrive",
+  "last_sync_at": "2026-11-25 15:54:25 UTC",
+  "last_sync_report": {
+    "synced_at": "2026-11-25 15:54:25 UTC",
+    "total_mangas": 0,
+    "total_read_chapters": 0,
+    "total_favorites": 0,
+    "chapters_uploaded": 0,
+    "chapters_downloaded": 0,
+    "bytes_transferred": 160002
+  }
+}

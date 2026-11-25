@@ -18,7 +18,7 @@ use hyper::service::service_fn;
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde::{Deserialize, Serialize};
 use tokio::net::TcpListener;
-use tokio::sync::{Mutex, RwLock};
+use tokio::sync::{Mutex, OnceCell, RwLock};
 use tokio::task::{JoinHandle, JoinSet};
 
 use crate::{AnimeEpisode, AnimeError, AnimeProvider, AnimeVariant, ExtractorRegistry, StreamKind, VideoMirror};
@@ -59,6 +59,13 @@ struct Session {
     token: String,
     title: String,
     cover_url: Option<String>,
+    synopsis: String,
+    genres: Vec<String>,
+    status: crate::AnimeStatus,
+    anime_type: crate::AnimeType,
+    score: Option<f32>,
+    provider_name: String,
+    cover_cache: OnceCell<Option<(String, Bytes)>>,
     episodes: Vec<AnimeEpisode>,
     preferred_variant: AnimeVariant,
     load_mirrors: Box<LoadMirrors>,
@@ -146,6 +153,13 @@ impl AnimePlaybackServer {
             token: format!("{:032x}", rand::random::<u128>()),
             title: details.title.clone(),
             cover_url: details.cover_url.clone(),
+            synopsis: details.synopsis.clone(),
+            genres: details.genres.clone(),
+            status: details.status,
+            anime_type: details.anime_type,
+            score: details.score,
+            provider_name: details.provider.to_string(),
+            cover_cache: OnceCell::new(),
             episodes,
             preferred_variant,
             load_mirrors,
@@ -280,9 +294,19 @@ impl Session {
             .iter()
             .map(|mirror| serde_json::json!({ "name": mirror.server_name, "variant": mirror.variant.to_string() }))
             .collect();
+        let all_progress: HashMap<String, &PlaybackProgress> =
+            active.progress.iter().map(|(idx, p)| (idx.to_string(), p)).collect();
+        let cover = self.cover_url.as_ref().map(|_| format!("/assets/{}/cover", self.token));
         json_reply(&serde_json::json!({
             "title": self.title,
             "cover_url": self.cover_url,
+            "cover": cover,
+            "synopsis": self.synopsis,
+            "genres": self.genres,
+            "status": self.status,
+            "anime_type": self.anime_type,
+            "score": self.score,
+            "provider": self.provider_name,
             "episodes": self.episodes,
             "episode": active.episode,
             "mirrors": mirrors,
@@ -291,7 +315,46 @@ impl Session {
             "kind": active.stream.kind,
             "stream": self.stream_path(&active),
             "progress": active.progress.get(&active.episode).cloned().unwrap_or_default(),
+            "all_progress": all_progress,
         }))
+    }
+
+    async fn cover(&self) -> Reply {
+        let cached = self
+            .cover_cache
+            .get_or_init(|| async {
+                let raw_url = self.cover_url.as_deref()?.trim();
+                let url = reqwest::Url::parse(raw_url).ok().filter(proxy::valid_url)?;
+                let response = self.client.get(url).timeout(Duration::from_secs(10)).send().await.ok()?;
+                if !response.status().is_success() {
+                    return None;
+                }
+                const MAX_COVER_BYTES: usize = 4 * 1024 * 1024;
+                if response.content_length().is_some_and(|len| len > MAX_COVER_BYTES as u64) {
+                    return None;
+                }
+                let content_type = response
+                    .headers()
+                    .get(header::CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .map(|s| s.split(';').next().unwrap_or(s).trim().to_ascii_lowercase())
+                    .filter(|s| s.starts_with("image/"))
+                    .unwrap_or_else(|| "image/jpeg".to_string());
+                let bytes = response.bytes().await.ok()?;
+                if bytes.is_empty() || bytes.len() > MAX_COVER_BYTES {
+                    return None;
+                }
+                Some((content_type, bytes))
+            })
+            .await;
+
+        match cached {
+            Some((content_type, bytes)) => Response::builder()
+                .header(header::CONTENT_TYPE, content_type.as_str())
+                .body(body(bytes.clone()))
+                .unwrap(),
+            None => empty(StatusCode::NOT_FOUND),
+        }
     }
 
     async fn respond(&self, request: Request<Incoming>) -> Reply {
@@ -307,7 +370,7 @@ impl Session {
         headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
         headers.insert(
             header::CONTENT_SECURITY_POLICY,
-            "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'".parse().unwrap(),
+            "default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:; frame-ancestors 'none'; base-uri 'none'".parse().unwrap(),
         );
         response
     }
@@ -328,6 +391,7 @@ impl Session {
             (&Method::GET, "watch", None) => content("text/html; charset=utf-8", WEB_PLAYER.replace("__TOKEN__", &self.token)),
             (&Method::GET, "assets", Some("hls.min.js")) => content("text/javascript", HLS_SCRIPT),
             (&Method::GET, "assets", Some("player.js")) => content("text/javascript", WEB_SCRIPT),
+            (&Method::GET, "assets", Some("cover")) => self.cover().await,
             (&Method::GET, "api", Some("state")) => self.snapshot().await,
             (&Method::POST, "api", Some(action)) => self.update(action.to_owned(), request).await,
             (&Method::GET | &Method::HEAD, "stream" | "proxy", Some(file)) => {
@@ -586,6 +650,13 @@ mod tests {
                 token: "test-token".into(),
                 title: "Test".into(),
                 cover_url: None,
+                synopsis: String::new(),
+                genres: Vec::new(),
+                status: crate::AnimeStatus::Ongoing,
+                anime_type: crate::AnimeType::Tv,
+                score: None,
+                provider_name: "Test".into(),
+                cover_cache: OnceCell::new(),
                 episodes: ["1.5", "2"]
                     .into_iter()
                     .map(|number| AnimeEpisode {

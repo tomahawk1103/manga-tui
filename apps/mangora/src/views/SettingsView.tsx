@@ -5,6 +5,7 @@ import {
   Download,
   ExternalLink,
   FolderOpen,
+  Globe,
   Link2,
   MessageSquarePlus,
   Moon,
@@ -33,6 +34,7 @@ import {
   connectGoogleDrive,
   connectLocalCloudFolder,
   connectMyAnimeList,
+  defaultBrowserIntegrationsOverview,
   disconnectAnilist,
   disconnectCloud,
   disconnectMyAnimeList,
@@ -1044,6 +1046,20 @@ export function SettingsView({
             <button type="button" onClick={onOpenFeedback} className="editorial-btn-primary text-xs">
               <MessageSquarePlus className="h-4 w-4" aria-hidden="true" />
               <span>{t.settings.mailboxOpenBtn}</span>
+            </button>
+            <button
+              type="button"
+              onClick={() =>
+                void onOpenExternal(
+                  overview?.supportConfig.websiteUrl ??
+                    defaultBrowserIntegrationsOverview().supportConfig.websiteUrl,
+                )
+              }
+              className="editorial-btn-secondary text-xs"
+            >
+              <Globe className="h-4 w-4" aria-hidden="true" />
+              <span>{t.support.websiteBtn}</span>
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
             </button>
             {overview?.mangaTuiDetected && !appState.isMobile && (
               <button

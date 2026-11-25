@@ -10,8 +10,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use crate::model::{
-    AnimeDetails, AnimeEpisode, AnimeEpisodesPage, AnimeProviders, AnimeSearchResult, AnimeStatus, AnimeSummary, AnimeType,
-    AnimeVariant, VideoMirror,
+    AnimeDetails, AnimeEpisode, AnimeEpisodesPage, AnimeHomeFeed, AnimeProviders, AnimeSearchResult, AnimeStatus, AnimeSummary,
+    AnimeType, AnimeVariant, RecentAnimeEpisode, VideoMirror,
 };
 use crate::provider::AnimeProvider;
 use crate::{AnimeError, DEFAULT_USER_AGENT};
@@ -494,9 +494,220 @@ fn parse_episode_mirrors_html(provider: &JkAnimeProvider, html: &str, referer: &
     Ok(mirrors)
 }
 
+fn slug_and_episode_from_url(url: &str) -> Option<(String, String)> {
+    let path = url.split(['?', '#']).next().unwrap_or(url);
+    let mut segs = path.split('/').filter(|seg| !seg.trim().is_empty()).collect::<Vec<_>>();
+    let last = segs.pop()?.trim().to_string();
+    if !last.chars().next().is_some_and(|ch| ch.is_ascii_digit()) {
+        return None;
+    }
+    let slug = segs.pop()?.trim().to_string();
+    (!slug.is_empty()).then_some((slug, last))
+}
+
+fn parse_home_html(html: &str) -> AnimeHomeFeed {
+    let doc = Html::parse_document(html);
+    let ep_card_sel = Selector::parse("#animes .dir1 .card, #ovas .dir1 .card").unwrap();
+    let link_sel = Selector::parse("a[href]").unwrap();
+    let img_sel = Selector::parse("img").unwrap();
+    let title_sel = Selector::parse(".card-title").unwrap();
+    let ep_badge_sel = Selector::parse(".badges .badge-primary").unwrap();
+    let time_badge_sel = Selector::parse(".badges .badge-secondary").unwrap();
+    let hero_sel = Selector::parse(".hero__items").unwrap();
+    let hero_title_sel = Selector::parse(".hero__text h2").unwrap();
+    let hero_info_sel = Selector::parse(".hero__text .ainfo span").unwrap();
+    let hero_link_sel = Selector::parse("a.slider-show[href]").unwrap();
+    let top_card_sel = Selector::parse(".toplist .card").unwrap();
+    let top_synopsis_sel = Selector::parse(".card-synopsis").unwrap();
+
+    let mut recent_episodes = Vec::new();
+    let mut seen_episodes = HashSet::new();
+    for card in doc.select(&ep_card_sel) {
+        let Some(anchor) = card.select(&link_sel).next() else {
+            continue;
+        };
+        if anchor.value().attr("class").is_some_and(|c| c.contains("mayor-edad")) {
+            continue;
+        }
+        let Some(href) = anchor.value().attr("href") else {
+            continue;
+        };
+        if href.contains("hentaijk") {
+            continue;
+        }
+
+        let (slug, episode_number) = if let Some(pair) = slug_and_episode_from_url(href) {
+            pair
+        } else {
+            let Some(slug) = slug_from_url(href) else {
+                continue;
+            };
+            let ep_num = card
+                .select(&ep_badge_sel)
+                .next()
+                .map(|el| el.text().collect::<Vec<_>>().join(" "))
+                .map(|text| text.trim().trim_start_matches("Ep.").trim_start_matches("Ep").trim().to_string())
+                .filter(|s| s.chars().next().is_some_and(|ch| ch.is_ascii_digit()));
+            let Some(ep_num) = ep_num else {
+                continue;
+            };
+            (slug, ep_num)
+        };
+
+        if !seen_episodes.insert((slug.clone(), episode_number.clone())) {
+            continue;
+        }
+
+        let raw_title = card
+            .select(&title_sel)
+            .next()
+            .map(|el| el.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| slug.clone());
+        let suffix = format!(" - {episode_number}");
+        let anime_title = raw_title.strip_suffix(&suffix).unwrap_or(&raw_title).trim().to_string();
+
+        let aired_label = card
+            .select(&time_badge_sel)
+            .next()
+            .map(|el| el.text().collect::<Vec<_>>().join(" ").split_whitespace().collect::<Vec<_>>().join(" "))
+            .filter(|s| !s.is_empty());
+
+        let cover_url = card
+            .select(&img_sel)
+            .next()
+            .and_then(|el| el.value().attr("data-animepic").or_else(|| el.value().attr("src")))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+
+        recent_episodes.push(RecentAnimeEpisode {
+            anime_id: slug.clone(),
+            slug,
+            anime_title,
+            episode_number,
+            aired_label,
+            cover_url,
+            provider: AnimeProviders::JkAnime,
+        });
+    }
+
+    let mut recommendations = Vec::new();
+    let mut seen_slugs = HashSet::new();
+
+    for hero in doc.select(&hero_sel) {
+        let Some(href) = hero.select(&hero_link_sel).next().and_then(|el| el.value().attr("href")) else {
+            continue;
+        };
+        if href.contains("hentaijk") {
+            continue;
+        }
+        let Some(slug) = slug_from_url(href) else {
+            continue;
+        };
+        if !seen_slugs.insert(slug.clone()) {
+            continue;
+        }
+        let title = hero
+            .select(&hero_title_sel)
+            .next()
+            .map(|el| el.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| slug.clone());
+        let cover_url = hero
+            .value()
+            .attr("data-setbg")
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        let mut status = AnimeStatus::Unknown;
+        let mut anime_type = AnimeType::Unknown;
+        for badge in hero.select(&hero_info_sel) {
+            let text = badge.text().collect::<Vec<_>>().join(" ");
+            let st = parse_jkanime_status(&text);
+            if st != AnimeStatus::Unknown {
+                status = st;
+            }
+            let ty = parse_jkanime_type(&text);
+            if ty != AnimeType::Unknown {
+                anime_type = ty;
+            }
+        }
+        recommendations.push(AnimeSummary {
+            id: slug.clone(),
+            slug,
+            title,
+            synopsis: None,
+            cover_url,
+            anime_type,
+            status,
+            provider: AnimeProviders::JkAnime,
+        });
+    }
+
+    for card in doc.select(&top_card_sel) {
+        let Some(anchor) = card.select(&link_sel).next() else {
+            continue;
+        };
+        if anchor.value().attr("class").is_some_and(|c| c.contains("mayor-edad")) {
+            continue;
+        }
+        let Some(href) = anchor.value().attr("href") else {
+            continue;
+        };
+        if href.contains("hentaijk") {
+            continue;
+        }
+        let Some(slug) = slug_from_url(href) else {
+            continue;
+        };
+        if !seen_slugs.insert(slug.clone()) {
+            continue;
+        }
+        let title = card
+            .select(&title_sel)
+            .next()
+            .map(|el| el.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| slug.clone());
+        let synopsis = card
+            .select(&top_synopsis_sel)
+            .next()
+            .map(|el| el.text().collect::<Vec<_>>().join(" ").trim().to_string())
+            .filter(|s| !s.is_empty());
+        let cover_url = card
+            .select(&img_sel)
+            .next()
+            .and_then(|el| el.value().attr("src"))
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(ToString::to_string);
+        recommendations.push(AnimeSummary {
+            id: slug.clone(),
+            slug,
+            title,
+            synopsis,
+            cover_url,
+            anime_type: AnimeType::Unknown,
+            status: AnimeStatus::Unknown,
+            provider: AnimeProviders::JkAnime,
+        });
+    }
+
+    AnimeHomeFeed {
+        recent_episodes,
+        recommendations,
+    }
+}
+
 impl AnimeProvider for JkAnimeProvider {
     fn kind(&self) -> AnimeProviders {
         AnimeProviders::JkAnime
+    }
+
+    async fn get_home_feed(&self) -> Result<AnimeHomeFeed, AnimeError> {
+        let html = self.get_html(&format!("{}/", self.base_url)).await?;
+        Ok(parse_home_html(&html))
     }
 
     async fn search(&self, query: &str, page: u32) -> Result<AnimeSearchResult, AnimeError> {
@@ -800,5 +1011,64 @@ mod tests {
         assert_eq!(mirrors[2].server_name, "Mp4upload");
         assert_eq!(mirrors[2].embed_url, "https://www.mp4upload.com/embed-te2zczstfq98.html");
         assert_eq!(mirrors[3].server_name, "VOE");
+    }
+
+    #[tokio::test]
+    async fn home_feed_parses_airing_episodes_excludes_hentai_and_parses_recommendations() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(GET).path("/");
+            then.status(200).body(
+                r#"
+                <div class="hero__items set-bg" data-setbg="https://cdn.jkdesa.com/hero.jpg">
+                  <div class="hero__text">
+                    <div class="ainfo"><span>Serie</span><span>En emision</span></div>
+                    <h2>Dragon Ball Super: Beerus</h2>
+                  </div>
+                  <a class="slider-show" href="https://jkanime.net/dragon-ball-super-beerus/">Ver</a>
+                </div>
+                <div id="animes">
+                  <div class="dir1"><div class="card">
+                    <a href="https://jkanime.net/dark-machine-the-animation/7/">
+                      <div class="d-thumb">
+                        <img src="thumb.jpg" data-animepic="https://cdn.jkdesa.com/dark.jpg">
+                        <div class="badges"><span class="badge-primary">Ep 7</span><span class="badge-secondary"> Ayer</span></div>
+                      </div>
+                      <h5 class="card-title">Dark Machine: The Animation</h5>
+                    </a>
+                  </div></div>
+                </div>
+                <div id="hentai">
+                  <div class="dir1"><div class="card">
+                    <a href="https://hentaijk.com/adult/1/" class="mayor-edad">
+                      <h5 class="card-title">Adult - 1</h5>
+                    </a>
+                  </div></div>
+                </div>
+                <div class="toplist"><div class="card">
+                  <a href="https://jkanime.net/one-piece/">
+                    <div class="card-img"><img class="card-img-top" src="https://cdn.jkdesa.com/op.jpg"></div>
+                    <h5 class="card-title">One Piece</h5>
+                    <div class="card-synopsis">Historia pirata.</div>
+                  </a>
+                </div></div>
+                "#,
+            );
+        });
+
+        let client = build_default_http_client().unwrap();
+        let provider = JkAnimeProvider::with_base_url(client, server.base_url());
+        let feed = provider.get_home_feed().await.unwrap();
+        assert_eq!(feed.recent_episodes.len(), 1);
+        assert_eq!(feed.recent_episodes[0].slug, "dark-machine-the-animation");
+        assert_eq!(feed.recent_episodes[0].episode_number, "7");
+        assert_eq!(feed.recent_episodes[0].aired_label.as_deref(), Some("Ayer"));
+        assert_eq!(feed.recent_episodes[0].cover_url.as_deref(), Some("https://cdn.jkdesa.com/dark.jpg"));
+
+        assert_eq!(feed.recommendations.len(), 2);
+        assert_eq!(feed.recommendations[0].slug, "dragon-ball-super-beerus");
+        assert_eq!(feed.recommendations[0].status, AnimeStatus::Ongoing);
+        assert_eq!(feed.recommendations[1].slug, "one-piece");
+        assert_eq!(feed.recommendations[1].synopsis.as_deref(), Some("Historia pirata."));
     }
 }

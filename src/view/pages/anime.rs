@@ -1,13 +1,14 @@
 mod catalog;
 mod render;
 
+use std::collections::HashSet;
 use std::path::Path;
 use std::process::Child;
 use std::time::{Duration, Instant};
 
 use anime_core::{
-    AnimeDetails, AnimeError, AnimePlaybackServer, AnimeProviders, AnimeSearchResult, AnimeStatus, AnimeSummary, AnimeType,
-    ExternalPlayer, ExternalPlayerLauncher, VideoMirror,
+    AnimeDetails, AnimeError, AnimeHomeFeed, AnimePlaybackServer, AnimeProviders, AnimeSearchResult, AnimeStatus, AnimeSummary,
+    AnimeType, ExternalPlayer, ExternalPlayerLauncher, RecentAnimeEpisode, VideoMirror,
 };
 use crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use futures::FutureExt;
@@ -28,15 +29,18 @@ use crate::i18n::tr;
 use crate::runtime_settings::active_anime_config;
 use crate::view::widgets::Component;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Focus {
     Query,
     Results,
+    RecentEpisodes,
+    Recommendations,
     Episodes,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum View {
+    Discover,
     Search,
     Recent,
     Favorites,
@@ -46,10 +50,14 @@ enum View {
 struct Hitboxes {
     query: Rect,
     search: Rect,
+    discover: Rect,
     recent: Rect,
     favorites: Rect,
+    refresh: Rect,
     provider: Rect,
     results: Rect,
+    recent_episodes: Rect,
+    recommendations: Rect,
     episodes: Rect,
     previous: Rect,
     next: Rect,
@@ -69,6 +77,7 @@ struct Playback {
 }
 
 pub enum AnimeAction {
+    HomeFeed(AnimeProviders, AnimeHomeFeed, HashSet<String>),
     Search(AnimeSearchResult),
     Library(Vec<AnimeHistoryEntry>),
     Details(Box<catalog::Details>),
@@ -89,6 +98,13 @@ pub struct AnimePage {
     total_pages: u32,
     results: Vec<AnimeSummary>,
     results_list: ListState,
+    recent_episodes: Vec<RecentAnimeEpisode>,
+    recent_episodes_list: ListState,
+    recommendations: Vec<AnimeSummary>,
+    recommendations_list: ListState,
+    favorite_slugs: HashSet<String>,
+    home_loaded_for: Option<AnimeProviders>,
+    pending_episode_target: Option<(String, Option<AnimePlayer>)>,
     details: Option<catalog::Details>,
     episodes_list: ListState,
     mirrors: Option<MirrorMenu>,
@@ -111,7 +127,7 @@ impl AnimePage {
         Self {
             provider,
             configured_provider: provider,
-            mode: View::Search,
+            mode: View::Discover,
             focus: Focus::Query,
             input: Input::default(),
             searched_query: String::new(),
@@ -119,6 +135,13 @@ impl AnimePage {
             total_pages: 1,
             results: Vec::new(),
             results_list: ListState::default(),
+            recent_episodes: Vec::new(),
+            recent_episodes_list: ListState::default(),
+            recommendations: Vec::new(),
+            recommendations_list: ListState::default(),
+            favorite_slugs: HashSet::new(),
+            home_loaded_for: None,
+            pending_episode_target: None,
             details: None,
             episodes_list: ListState::default(),
             mirrors: None,
@@ -140,10 +163,16 @@ impl AnimePage {
         if self.apply_settings() {
             return;
         }
-        if self.mode != View::Search {
-            self.load_library(self.mode);
-        } else {
-            self.refresh_history();
+        match self.mode {
+            View::Discover => {
+                if self.home_loaded_for != Some(self.provider) && self.task.is_none() {
+                    self.load_home_feed();
+                } else {
+                    self.refresh_history();
+                }
+            },
+            View::Search => self.refresh_history(),
+            View::Recent | View::Favorites => self.load_library(self.mode),
         }
     }
 
@@ -169,14 +198,21 @@ impl AnimePage {
         match self.focus {
             Focus::Query => vec![
                 ("Enter", tr("Buscar", "Search")),
-                ("Tab", tr("Resultados", "Results")),
+                ("Tab", tr("Explorar", "Explore")),
                 ("Esc", tr("Salir del texto", "Exit input")),
             ],
-            Focus::Results => vec![
+            Focus::RecentEpisodes => vec![
+                ("Enter", tr("Ficha", "Details")),
+                ("w", tr("Ver ep. en Web", "Watch in Web")),
+                ("Tab", tr("Recomendados", "Recommended")),
+                ("r", tr("Actualizar", "Refresh")),
+                ("/", tr("Buscar", "Search")),
+            ],
+            Focus::Recommendations | Focus::Results => vec![
                 ("Enter", tr("Ficha", "Details")),
                 ("Tab", tr("Cambiar foco", "Switch focus")),
+                ("d", tr("Explorar", "Explore")),
                 ("PgUp/PgDn", tr("Pág.", "Page")),
-                ("f", tr("Favorito", "Favorite")),
                 ("/", tr("Buscar", "Search")),
             ],
             Focus::Episodes => vec![
@@ -244,14 +280,26 @@ impl AnimePage {
             return;
         }
         self.provider = provider;
-        if self.mode != View::Search {
-            self.load_library(self.mode);
-        } else if self.searched_query.is_empty() {
-            self.abort_task();
-            self.clear_results();
-            self.set_status("", false);
-        } else {
-            self.search(self.searched_query.clone(), 1);
+        match self.mode {
+            View::Discover => {
+                self.abort_task();
+                self.clear_details();
+                self.recent_episodes.clear();
+                self.recent_episodes_list.select(None);
+                self.recommendations.clear();
+                self.recommendations_list.select(None);
+                self.load_home_feed();
+            },
+            View::Search => {
+                if self.searched_query.is_empty() {
+                    self.abort_task();
+                    self.clear_results();
+                    self.set_status("", false);
+                } else {
+                    self.search(self.searched_query.clone(), 1);
+                }
+            },
+            View::Recent | View::Favorites => self.load_library(self.mode),
         }
     }
 
@@ -265,10 +313,39 @@ impl AnimePage {
     fn submit_search(&mut self) {
         let query = self.input.value().trim().to_owned();
         if query.is_empty() {
-            self.set_status(tr("Escribe un título para buscar.", "Enter a title to search."), false);
+            self.open_discover(false);
             return;
         }
         self.search(query, 1);
+    }
+
+    fn open_discover(&mut self, force_refresh: bool) {
+        self.mode = View::Discover;
+        self.focus = if !self.recent_episodes.is_empty() {
+            Focus::RecentEpisodes
+        } else if !self.recommendations.is_empty() {
+            Focus::Recommendations
+        } else {
+            Focus::Query
+        };
+        if force_refresh || (self.home_loaded_for != Some(self.provider) && self.task.is_none()) {
+            self.load_home_feed();
+        }
+    }
+
+    fn load_home_feed(&mut self) {
+        self.abort_task();
+        let provider = self.provider;
+        self.set_status(tr("Cargando capítulos recientes y recomendaciones…", "Loading recent episodes & recommendations…"), false);
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        self.task = Some(handle.spawn(async move {
+            match catalog::home_feed(provider).await {
+                Ok((feed, favorites)) => AnimeAction::HomeFeed(provider, feed, favorites),
+                Err(error) => failed(tr("No se pudo cargar la portada de anime.", "Unable to load anime feed."), error),
+            }
+        }));
     }
 
     fn search(&mut self, query: String, page: u32) {
@@ -313,12 +390,34 @@ impl AnimePage {
 
     fn open_details(&mut self) {
         let Some(summary) = self.results_list.selected().and_then(|index| self.results.get(index)) else { return };
-        let provider = summary.provider;
-        let slug = summary.slug.clone();
+        self.pending_episode_target = None;
+        self.open_details_for(summary.provider, summary.slug.clone());
+    }
+
+    fn open_recent_episode(&mut self, auto_player: Option<AnimePlayer>) {
+        let Some(ep) = self.recent_episodes_list.selected().and_then(|index| self.recent_episodes.get(index)) else {
+            return;
+        };
+        self.pending_episode_target = Some((ep.episode_number.clone(), auto_player));
+        self.open_details_for(ep.provider, ep.slug.clone());
+    }
+
+    fn open_recommendation(&mut self) {
+        let Some(summary) = self.recommendations_list.selected().and_then(|index| self.recommendations.get(index)) else {
+            return;
+        };
+        self.pending_episode_target = None;
+        self.open_details_for(summary.provider, summary.slug.clone());
+    }
+
+    fn open_details_for(&mut self, provider: AnimeProviders, slug: String) {
         self.abort_task();
         self.clear_details();
         self.set_status(tr("Cargando ficha y episodios…", "Loading details and episodes…"), false);
-        self.task = Some(tokio::spawn(async move {
+        let Ok(handle) = tokio::runtime::Handle::try_current() else {
+            return;
+        };
+        self.task = Some(handle.spawn(async move {
             match catalog::details(provider, slug).await {
                 Ok(details) => AnimeAction::Details(Box::new(details)),
                 Err(error) => failed(tr("No se pudo cargar la ficha.", "Unable to load anime details."), error),
@@ -503,11 +602,21 @@ impl AnimePage {
     }
 
     fn cycle_focus(&mut self, forward: bool) {
-        let focus = match (self.focus, forward) {
-            (Focus::Query, true) | (Focus::Episodes, false) => Focus::Results,
-            (Focus::Results, true) | (Focus::Query, false) if self.details.is_some() => Focus::Episodes,
-            (Focus::Query, false) => Focus::Results,
-            _ => Focus::Query,
+        let has_details = self.details.is_some();
+        let focus = if self.mode == View::Discover {
+            let mut order = vec![Focus::Query, Focus::RecentEpisodes, Focus::Recommendations];
+            if has_details {
+                order.push(Focus::Episodes);
+            }
+            let idx = order.iter().position(|f| *f == self.focus).unwrap_or(0);
+            if forward { order[(idx + 1) % order.len()] } else { order[(idx + order.len() - 1) % order.len()] }
+        } else {
+            match (self.focus, forward) {
+                (Focus::Query, true) | (Focus::Episodes, false) => Focus::Results,
+                (Focus::Results, true) | (Focus::Query, false) if has_details => Focus::Episodes,
+                (Focus::Query, false) => Focus::Results,
+                _ => Focus::Query,
+            }
         };
         self.focus = focus;
     }
@@ -522,7 +631,9 @@ impl AnimePage {
             KeyCode::BackTab => self.cycle_focus(false),
             KeyCode::Char('/') if self.focus != Focus::Query => self.focus = Focus::Query,
             KeyCode::Enter if self.focus == Focus::Query => self.submit_search(),
-            KeyCode::Esc if self.focus == Focus::Query => self.focus = Focus::Results,
+            KeyCode::Esc if self.focus == Focus::Query => {
+                self.focus = if self.mode == View::Discover { Focus::RecentEpisodes } else { Focus::Results };
+            },
             _ if self.focus == Focus::Query => {
                 self.input.handle_event(&Event::Key(key));
             },
@@ -531,7 +642,10 @@ impl AnimePage {
             KeyCode::PageUp => self.change_page(false),
             KeyCode::PageDown => self.change_page(true),
             KeyCode::Enter if self.focus == Focus::Results => self.open_details(),
+            KeyCode::Enter if self.focus == Focus::RecentEpisodes => self.open_recent_episode(None),
+            KeyCode::Enter if self.focus == Focus::Recommendations => self.open_recommendation(),
             KeyCode::Enter => self.play(None, None),
+            KeyCode::Char('w') if self.focus == Focus::RecentEpisodes => self.open_recent_episode(Some(AnimePlayer::Web)),
             KeyCode::Char('w') if self.focus == Focus::Episodes => self.play(Some(AnimePlayer::Web), None),
             KeyCode::Char('v') if self.focus == Focus::Episodes => {
                 let config = active_anime_config();
@@ -550,6 +664,8 @@ impl AnimePage {
             KeyCode::Char('s') if self.focus == Focus::Episodes => self.open_mirrors(),
             KeyCode::Char('m') if self.focus == Focus::Episodes => self.change_history(true),
             KeyCode::Char('f') => self.change_history(false),
+            KeyCode::Char('d') => self.open_discover(false),
+            KeyCode::Char('r') | KeyCode::Char('R') if self.mode == View::Discover => self.open_discover(true),
             KeyCode::Char('h') => self.load_library(View::Recent),
             KeyCode::Char('b') => self.load_library(View::Favorites),
             KeyCode::Char('p') => self.toggle_provider(),
@@ -560,6 +676,8 @@ impl AnimePage {
     fn move_list(&mut self, next: bool) {
         match self.focus {
             Focus::Results => move_selection(&mut self.results_list, self.results.len(), next),
+            Focus::RecentEpisodes => move_selection(&mut self.recent_episodes_list, self.recent_episodes.len(), next),
+            Focus::Recommendations => move_selection(&mut self.recommendations_list, self.recommendations.len(), next),
             Focus::Episodes => {
                 if let Some(details) = self.details.as_ref() {
                     move_selection(&mut self.episodes_list, details.episodes.len(), next);
@@ -586,6 +704,9 @@ impl AnimePage {
             return;
         }
         let result = clicked_row(self.hitboxes.results, &self.results_list, pos, self.results.len());
+        let recent_ep = clicked_row(self.hitboxes.recent_episodes, &self.recent_episodes_list, pos, self.recent_episodes.len());
+        let recommendation =
+            clicked_row(self.hitboxes.recommendations, &self.recommendations_list, pos, self.recommendations.len());
         let episode =
             clicked_row(self.hitboxes.episodes, &self.episodes_list, pos, self.details.as_ref().map_or(0, |d| d.episodes.len()));
         match event.kind {
@@ -594,10 +715,14 @@ impl AnimePage {
                     self.focus = Focus::Query;
                 } else if self.hitboxes.search.contains(pos) {
                     self.submit_search();
+                } else if self.hitboxes.discover.contains(pos) {
+                    self.open_discover(false);
                 } else if self.hitboxes.recent.contains(pos) {
                     self.load_library(View::Recent);
                 } else if self.hitboxes.favorites.contains(pos) {
                     self.load_library(View::Favorites);
+                } else if self.hitboxes.refresh.contains(pos) {
+                    self.open_discover(true);
                 } else if self.hitboxes.provider.contains(pos) {
                     self.toggle_provider();
                 } else if self.hitboxes.previous.contains(pos) {
@@ -611,6 +736,20 @@ impl AnimePage {
                     if activate {
                         self.open_details();
                     }
+                } else if let Some(index) = recent_ep {
+                    let activate = self.focus == Focus::RecentEpisodes && self.recent_episodes_list.selected() == Some(index);
+                    self.focus = Focus::RecentEpisodes;
+                    self.recent_episodes_list.select(Some(index));
+                    if activate {
+                        self.open_recent_episode(None);
+                    }
+                } else if let Some(index) = recommendation {
+                    let activate = self.focus == Focus::Recommendations && self.recommendations_list.selected() == Some(index);
+                    self.focus = Focus::Recommendations;
+                    self.recommendations_list.select(Some(index));
+                    if activate {
+                        self.open_recommendation();
+                    }
                 } else if let Some(index) = episode {
                     let activate = self.focus == Focus::Episodes && self.episodes_list.selected() == Some(index);
                     self.focus = Focus::Episodes;
@@ -620,8 +759,18 @@ impl AnimePage {
                     }
                 }
             },
-            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp if result.is_some() || episode.is_some() => {
-                self.focus = if result.is_some() { Focus::Results } else { Focus::Episodes };
+            MouseEventKind::ScrollDown | MouseEventKind::ScrollUp
+                if result.is_some() || recent_ep.is_some() || recommendation.is_some() || episode.is_some() =>
+            {
+                self.focus = if recent_ep.is_some() {
+                    Focus::RecentEpisodes
+                } else if recommendation.is_some() {
+                    Focus::Recommendations
+                } else if result.is_some() {
+                    Focus::Results
+                } else {
+                    Focus::Episodes
+                };
                 self.move_list(event.kind == MouseEventKind::ScrollDown);
             },
             _ => {},
@@ -647,6 +796,22 @@ impl Component for AnimePage {
 
     fn update(&mut self, action: AnimeAction) {
         match action {
+            AnimeAction::HomeFeed(provider, feed, favorites) => {
+                if provider != self.provider {
+                    return;
+                }
+                self.home_loaded_for = Some(provider);
+                self.favorite_slugs = favorites;
+                self.recent_episodes_list = ListState::default().with_selected((!feed.recent_episodes.is_empty()).then_some(0));
+                self.recommendations_list = ListState::default().with_selected((!feed.recommendations.is_empty()).then_some(0));
+                let empty = feed.recent_episodes.is_empty() && feed.recommendations.is_empty();
+                self.recent_episodes = feed.recent_episodes;
+                self.recommendations = feed.recommendations;
+                if self.mode == View::Discover && self.focus == Focus::Query && !self.recent_episodes.is_empty() {
+                    self.focus = Focus::RecentEpisodes;
+                }
+                self.set_status(if empty { tr("Sin novedades disponibles.", "No recent updates.") } else { "" }, false);
+            },
             AnimeAction::Search(result) => {
                 self.page = result.current_page;
                 self.total_pages = result.total_pages.max(1);
@@ -672,27 +837,44 @@ impl Component for AnimePage {
             },
             AnimeAction::Details(details) => {
                 let has_episodes = !details.episodes.is_empty();
-                self.episodes_list.select((!details.episodes.is_empty()).then(|| {
-                    details
-                        .episodes
-                        .iter()
-                        .position(|episode| {
-                            details.history.iter().any(|entry| {
-                                entry.episode_number == episode.number && !entry.is_watched && entry.progress_seconds > 0
-                            })
+                let target = self.pending_episode_target.take();
+                let selected_idx = target
+                    .as_ref()
+                    .and_then(|(num, _)| details.episodes.iter().position(|ep| ep.number == *num))
+                    .or_else(|| {
+                        (!details.episodes.is_empty()).then(|| {
+                            details
+                                .episodes
+                                .iter()
+                                .position(|episode| {
+                                    details.history.iter().any(|entry| {
+                                        entry.episode_number == episode.number && !entry.is_watched && entry.progress_seconds > 0
+                                    })
+                                })
+                                .unwrap_or(0)
                         })
-                        .unwrap_or(0)
-                }));
+                    });
+                self.episodes_list.select(selected_idx);
                 self.focus = if has_episodes { Focus::Episodes } else { Focus::Results };
                 self.details = Some(*details);
                 self.prepare_cover();
                 let status = if has_episodes { "" } else { tr("Sin episodios disponibles.", "No episodes are available.") };
                 self.set_status(status, false);
+                if let Some((_, Some(player))) = target
+                    && has_episodes
+                {
+                    self.play(Some(player), None);
+                }
             },
             AnimeAction::History(history, favorite) => {
                 if let Some(details) = self.details.as_mut() {
                     details.history = history;
                     details.favorite = favorite;
+                    if favorite {
+                        self.favorite_slugs.insert(details.anime.slug.clone());
+                    } else {
+                        self.favorite_slugs.remove(&details.anime.slug);
+                    }
                     if !favorite && self.mode == View::Favorites {
                         self.results.retain(|anime| anime.slug != details.anime.slug);
                         let selected = self.results_list.selected().unwrap_or(0).min(self.results.len().saturating_sub(1));
@@ -750,6 +932,12 @@ impl Component for AnimePage {
 
 impl AnimePage {
     fn set_results(&mut self, entries: Vec<AnimeSummary>) {
+        if self.mode == View::Discover {
+            self.mode = View::Search;
+        }
+        if matches!(self.focus, Focus::RecentEpisodes | Focus::Recommendations) {
+            self.focus = Focus::Results;
+        }
         self.results_list = ListState::default().with_selected((!entries.is_empty()).then_some(0));
         self.set_status(if entries.is_empty() { tr("Sin resultados.", "No results.") } else { "" }, false);
         self.results = entries;
@@ -914,5 +1102,100 @@ mod tests {
         assert!(page.mirror_menu_open());
         page.key(KeyCode::Esc.into());
         assert!(!page.mirror_menu_open());
+    }
+
+    #[test]
+    fn discover_renders_airing_episodes_recommendations_and_preselects_episode() {
+        let mut page = AnimePage::new(None);
+        let feed = AnimeHomeFeed {
+            recent_episodes: vec![
+                RecentAnimeEpisode {
+                    anime_id: "1".into(),
+                    slug: "frieren-2".into(),
+                    anime_title: "Frieren 2nd Season".into(),
+                    episode_number: "12".into(),
+                    aired_label: Some("Ayer".into()),
+                    cover_url: None,
+                    provider: page.provider,
+                },
+                RecentAnimeEpisode {
+                    anime_id: "2".into(),
+                    slug: "one-piece".into(),
+                    anime_title: "One Piece".into(),
+                    episode_number: "1180".into(),
+                    aired_label: None,
+                    cover_url: None,
+                    provider: page.provider,
+                },
+            ],
+            recommendations: vec![AnimeSummary {
+                id: "10".into(),
+                slug: "solo-leveling".into(),
+                title: "Solo Leveling".into(),
+                synopsis: Some("Cazadores de mazmorras.".into()),
+                cover_url: None,
+                anime_type: AnimeType::Tv,
+                status: AnimeStatus::Ongoing,
+                provider: page.provider,
+            }],
+        };
+        let mut favs = HashSet::new();
+        favs.insert("frieren-2".into());
+        page.update(AnimeAction::HomeFeed(page.provider, feed, favs));
+        assert_eq!(page.focus, Focus::RecentEpisodes);
+
+        let mut terminal = Terminal::new(TestBackend::new(100, 26)).unwrap();
+        terminal.draw(|frame| page.render(frame.area(), frame)).unwrap();
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .chunks(100)
+            .map(|row| row.iter().map(|c| c.symbol()).collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(screen.contains("Ep. 12"));
+        assert!(screen.contains("Frieren 2nd Season"));
+        assert!(screen.contains("Solo Leveling"));
+
+        // Tab cycles from RecentEpisodes -> Recommendations -> Query
+        page.key(KeyCode::Tab.into());
+        assert_eq!(page.focus, Focus::Recommendations);
+
+        // Selecting a recent episode and receiving Details pre-selects that exact episode
+        page.pending_episode_target = Some(("12".into(), None));
+        let anime = AnimeDetails {
+            id: "1".into(),
+            slug: "frieren-2".into(),
+            title: "Frieren 2nd Season".into(),
+            synopsis: "Viaje al norte.".into(),
+            cover_url: None,
+            genres: vec![],
+            status: AnimeStatus::Ongoing,
+            anime_type: AnimeType::Tv,
+            score: Some(9.2),
+            mal_id: None,
+            episodes_count: Some(2),
+            provider: page.provider,
+            episodes: vec![],
+            csrf_token: None,
+        };
+        let episodes = ["11", "12"]
+            .into_iter()
+            .map(|number| AnimeEpisode {
+                id: None,
+                number: number.into(),
+                title: None,
+                thumbnail_url: None,
+                aired_at: None,
+            })
+            .collect();
+        page.update(AnimeAction::Details(Box::new(catalog::Details {
+            anime,
+            episodes,
+            history: vec![],
+            favorite: true,
+        })));
+        assert_eq!(page.episodes_list.selected(), Some(1));
     }
 }

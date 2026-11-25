@@ -2,6 +2,8 @@ import {
   BookOpen,
   Compass,
   Download,
+  ExternalLink,
+  Globe,
   HeartHandshake,
   MessageSquarePlus,
   Moon,
@@ -17,6 +19,7 @@ interface SidebarProps {
   themeMode: ThemeMode;
   onToggleTheme: () => void;
   onOpenFeedback: () => void;
+  onOpenWebsite: () => void;
   uiLanguage: UiLanguage;
   appVersion: string;
   activeDownloadCount?: number;
@@ -28,6 +31,7 @@ export function Sidebar({
   themeMode,
   onToggleTheme,
   onOpenFeedback,
+  onOpenWebsite,
   uiLanguage,
   appVersion,
   activeDownloadCount = 0,
@@ -91,6 +95,16 @@ export function Sidebar({
       </div>
 
       <div className="flex flex-col gap-2.5 border-t-2 border-[var(--ink)] bg-[var(--paper)] p-4">
+        <button
+          type="button"
+          onClick={onOpenWebsite}
+          className="flex w-full cursor-pointer items-center gap-2.5 border-2 border-[var(--ink)] bg-[var(--surface)] px-3.5 py-2 text-left text-xs font-bold text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)]"
+        >
+          <Globe className="h-4 w-4 shrink-0 text-[var(--red-text)]" aria-hidden="true" />
+          <span className="min-w-0 flex-1 truncate">{t.support.sidebarWebsiteBtn}</span>
+          <ExternalLink className="h-3.5 w-3.5 shrink-0 opacity-75" aria-hidden="true" />
+        </button>
+
         <button
           type="button"
           onClick={onOpenFeedback}

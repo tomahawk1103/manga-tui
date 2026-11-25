@@ -475,6 +475,7 @@ export interface SupportConfigDto {
   discordUrl: string;
   githubUrl: string;
   githubIssuesUrl: string;
+  websiteUrl: string;
 }
 
 export interface IntegrationsOverviewDto {

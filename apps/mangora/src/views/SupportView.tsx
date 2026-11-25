@@ -1,4 +1,4 @@
-import { ExternalLink, HeartHandshake, MessageSquarePlus, ShieldCheck, Zap } from "lucide-react";
+import { ExternalLink, Globe, HeartHandshake, MessageSquarePlus, ShieldCheck, Zap } from "lucide-react";
 import type { InitialAppState, SupportConfigDto } from "../types/mangora";
 import { getTranslations } from "../lib/i18n";
 
@@ -80,7 +80,26 @@ export function SupportView({
       </section>
 
       {/* Community & Mailbox grid */}
-      <div className="grid gap-6 md:grid-cols-3">
+      <div className="grid gap-6 md:grid-cols-2">
+        <article className="editorial-card-muted flex flex-col justify-between p-6">
+          <div>
+            <div className="font-mono-editorial mb-2 text-xs font-bold uppercase text-[var(--red-text)]">
+              {t.support.websiteTag}
+            </div>
+            <h2 className="font-display mb-2 text-2xl">{t.support.websiteTitle}</h2>
+            <p className="mb-5 text-sm text-[var(--muted)]">{t.support.websiteDesc}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void onOpenExternal(supportConfig.websiteUrl)}
+            className="editorial-btn-primary text-xs"
+          >
+            <Globe className="h-3.5 w-3.5" aria-hidden="true" />
+            <span>{t.support.websiteBtn}</span>
+            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+          </button>
+        </article>
+
         <article className="editorial-card-muted flex flex-col justify-between p-6">
           <div>
             <div className="font-mono-editorial mb-2 text-xs font-bold uppercase text-[var(--red-text)]">

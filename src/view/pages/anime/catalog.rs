@@ -1,9 +1,10 @@
+use std::collections::HashSet;
 use std::sync::Arc;
 
 use anime_core::provider::animeav1::AnimeAv1Provider;
 use anime_core::provider::jkanime::JkAnimeProvider;
 use anime_core::{
-    AnimeDetails, AnimeEpisode, AnimeEpisodesPage, AnimeError, AnimePlaybackServer, AnimeProvider, AnimeProviders,
+    AnimeDetails, AnimeEpisode, AnimeEpisodesPage, AnimeError, AnimeHomeFeed, AnimePlaybackServer, AnimeProvider, AnimeProviders,
     AnimeSearchResult, AnimeSummary, ExtractorRegistry, VideoMirror, build_default_http_client,
 };
 use manga_core::backend::anime_history::{AnimeEpisodeHistory, start_anime_playback, start_anime_playback_with_owner};
@@ -43,6 +44,10 @@ impl AnimeProvider for Provider {
         }
     }
 
+    async fn get_home_feed(&self) -> Result<AnimeHomeFeed, AnimeError> {
+        dispatch!(self, get_home_feed())
+    }
+
     async fn search(&self, query: &str, page: u32) -> Result<AnimeSearchResult, AnimeError> {
         dispatch!(self, search(query, page))
     }
@@ -65,6 +70,17 @@ pub(crate) struct Details {
     pub episodes: Vec<AnimeEpisode>,
     pub history: Vec<AnimeEpisodeHistory>,
     pub favorite: bool,
+}
+
+pub(super) async fn home_feed(provider: AnimeProviders) -> Result<(AnimeHomeFeed, HashSet<String>), AnimeError> {
+    let feed = Provider::new(provider)?.get_home_feed().await?;
+    let favorites = db(move |db| db.anime_history(provider, true))
+        .await
+        .unwrap_or_default()
+        .into_iter()
+        .map(|entry| entry.slug)
+        .collect();
+    Ok((feed, favorites))
 }
 
 pub(super) async fn search(provider: AnimeProviders, query: String, page: u32) -> Result<AnimeSearchResult, AnimeError> {

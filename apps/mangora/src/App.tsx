@@ -523,6 +523,7 @@ export function App() {
         themeMode={effectiveThemeMode}
         onToggleTheme={() => void handleSwitchThemeMode(nextTheme)}
         onOpenFeedback={openFeedback}
+        onOpenWebsite={() => void openExternalSafe(resolvedSupportConfig.websiteUrl)}
         uiLanguage={appState.uiLanguage}
         appVersion={appState.appVersion}
         activeDownloadCount={activeDownloadCount}

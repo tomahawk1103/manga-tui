@@ -480,6 +480,11 @@ export interface Translations {
     githubTitle: string;
     githubDesc: string;
     githubBtn: string;
+    websiteTag: string;
+    websiteTitle: string;
+    websiteDesc: string;
+    websiteBtn: string;
+    sidebarWebsiteBtn: string;
     mailboxTitle: string;
     mailboxDesc: string;
     mailboxBtn: string;
@@ -998,6 +1003,12 @@ const ES: Translations = {
     githubDesc:
       "Revisa cada línea de Rust y TypeScript, consulta lanzamientos oficiales o abre una incidencia técnica.",
     githubBtn: "Ver repositorio ↗",
+    websiteTag: "[WEB OFICIAL]",
+    websiteTitle: "Web oficial del proyecto",
+    websiteDesc:
+      "Consulta guías, descargas oficiales, novedades y la portada web de manga-tui y Mangora.",
+    websiteBtn: "Abrir web oficial ↗",
+    sidebarWebsiteBtn: "Web oficial",
     mailboxTitle: "Buzón de opiniones y reportes",
     mailboxDesc:
       "¿Un capítulo no carga o tienes una idea? Envía un aviso rápido con diagnóstico opcional sin salir de Mangora.",
@@ -1526,6 +1537,12 @@ const EN: Translations = {
     githubDesc:
       "Inspect every line of Rust and TypeScript, track official releases, or open a bug report.",
     githubBtn: "View repository ↗",
+    websiteTag: "[OFFICIAL WEB]",
+    websiteTitle: "Official project website",
+    websiteDesc:
+      "Browse guides, official downloads, release highlights, and the web hub for manga-tui and Mangora.",
+    websiteBtn: "Open official website ↗",
+    sidebarWebsiteBtn: "Official website",
     mailboxTitle: "Feedback & Bug Mailbox",
     mailboxDesc:
       "Found a bug or broken source? Send a quick structured report with optional diagnostics straight from Mangora.",

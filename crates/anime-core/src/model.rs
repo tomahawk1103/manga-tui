@@ -76,6 +76,23 @@ pub struct AnimeSearchResult {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RecentAnimeEpisode {
+    pub anime_id: String,
+    pub slug: String,
+    pub anime_title: String,
+    pub episode_number: String,
+    pub aired_label: Option<String>,
+    pub cover_url: Option<String>,
+    pub provider: AnimeProviders,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AnimeHomeFeed {
+    pub recent_episodes: Vec<RecentAnimeEpisode>,
+    pub recommendations: Vec<AnimeSummary>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AnimeEpisode {
     pub id: Option<String>,
     pub number: String,

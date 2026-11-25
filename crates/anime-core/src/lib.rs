@@ -9,8 +9,8 @@ use std::time::Duration;
 
 pub use extractor::{BuiltinExtractor, ExtractorRegistry, VideoExtractor};
 pub use model::{
-    AnimeDetails, AnimeEpisode, AnimeEpisodesPage, AnimeProviders, AnimeSearchResult, AnimeStatus, AnimeSummary, AnimeType,
-    AnimeVariant, ResolvedStream, StreamKind, VideoMirror,
+    AnimeDetails, AnimeEpisode, AnimeEpisodesPage, AnimeHomeFeed, AnimeProviders, AnimeSearchResult, AnimeStatus, AnimeSummary,
+    AnimeType, AnimeVariant, RecentAnimeEpisode, ResolvedStream, StreamKind, VideoMirror,
 };
 pub use playback_server::{AnimePlaybackServer, PlaybackHistory, PlaybackProgress};
 pub use player::{ExternalPlayer, ExternalPlayerLauncher};
