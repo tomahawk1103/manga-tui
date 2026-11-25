@@ -7,17 +7,13 @@
 <style>
 :root {
   color-scheme: dark;
-  font: 15px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  font: 16px system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   background: #0d0e16;
   color: #f4f2fb;
-  --panel: rgba(24, 26, 39, 0.92);
-  --panel-alt: #131522;
-  --border: #30344a;
-  --border-soft: rgba(196, 181, 253, 0.16);
-  --muted: #a6a9c2;
+  --panel: rgba(24, 26, 39, 0.94);
+  --border: #33364b;
+  --muted: #b5b7cc;
   --accent: #c4b5fd;
-  --accent-strong: #a78bfa;
-  --success: #4ade80;
 }
 * { box-sizing: border-box }
 html, body { height: 100% }
@@ -30,42 +26,24 @@ body {
     #0d0e16;
 }
 main {
-  width: min(97vw, 2260px);
+  width: 86vw;
+  max-width: none;
   min-height: 100dvh;
   margin: 0 auto;
-  padding: clamp(12px, 1.5vw, 26px);
+  padding: clamp(14px, 4dvh, 44px) 0;
   display: flex;
   flex-direction: column;
   justify-content: center;
-}
-.workspace {
-  display: grid;
-  grid-template-columns: clamp(260px, 17.5vw, 330px) minmax(0, 1fr) clamp(260px, 17.5vw, 330px);
-  gap: clamp(14px, 1.4vw, 24px);
-  align-items: stretch;
-}
-body.theater .workspace {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
-}
-body.theater .stage {
-  grid-column: 1 / -1;
-}
-body.theater video {
-  max-height: 84dvh;
-}
-.stage {
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
 }
 .stage-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
+  flex-wrap: wrap;
+  gap: 10px 16px;
   border-inline-start: 3px solid var(--accent);
   padding-inline-start: 14px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 .title-wrap {
   display: flex;
@@ -76,8 +54,8 @@ body.theater video {
 }
 h1 {
   margin: 0;
-  font-size: clamp(1.25rem, 2.2vw, 1.95rem);
-  letter-spacing: -.025em;
+  font-size: clamp(1.3rem, 2.5vw, 2.2rem);
+  letter-spacing: -.03em;
   overflow-wrap: anywhere;
 }
 .ep-badge {
@@ -85,117 +63,12 @@ h1 {
   align-items: center;
   padding: 3px 10px;
   border-radius: 999px;
-  font-size: .8rem;
+  font-size: .82rem;
   font-weight: 600;
   color: var(--accent);
   background: rgba(196, 181, 253, 0.14);
   border: 1px solid rgba(196, 181, 253, 0.28);
   white-space: nowrap;
-}
-.player {
-  border: 1px solid var(--border);
-  background: var(--panel);
-  border-radius: 16px;
-  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.55);
-  overflow: hidden;
-}
-video {
-  display: block;
-  width: 100%;
-  max-height: 78dvh;
-  aspect-ratio: 16/9;
-  background: #000;
-}
-.controls {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: end;
-  gap: 12px 18px;
-  padding: clamp(12px, 1.4vw, 18px);
-  border-top: 1px solid var(--border);
-}
-.episode-nav { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; flex: 2 1 320px }
-.playback-options { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); flex-basis: 240px; flex-grow: 1 }
-.episode-nav, .playback-options { align-items: end; gap: 8px; min-width: 0 }
-label { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: .78rem }
-button, select, input[type="search"] {
-  font: inherit;
-  font-size: .875rem;
-  min-width: 0;
-  min-height: 40px;
-  padding: 0 11px;
-  color: inherit;
-  background: #222437;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-}
-select { width: 100%; text-overflow: ellipsis }
-button { cursor: pointer; transition: border-color .15s, background .15s }
-button:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--accent); background: #2d2b45 }
-:is(button, select):disabled { opacity: .5; cursor: default }
-#next { color: var(--accent); border-color: #615684 }
-.ghost-btn {
-  min-height: 36px;
-  padding: 0 12px;
-  font-size: .8rem;
-  white-space: nowrap;
-  background: rgba(34, 36, 55, 0.8);
-}
-body.theater #theater {
-  border-color: var(--accent);
-  color: var(--accent);
-  background: rgba(196, 181, 253, 0.14);
-}
-:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
-#status { margin: 10px 2px 0; min-height: 1.2em; color: var(--accent); font-size: .85rem }
-
-/* Symmetrical side panels */
-.side-panel {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-  min-width: 0;
-  background: var(--panel);
-  border: 1px solid var(--border);
-  border-radius: 16px;
-  padding: 14px;
-  box-shadow: 0 16px 42px rgba(0, 0, 0, 0.35);
-}
-.panel-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  font-size: .78rem;
-  font-weight: 700;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--accent);
-}
-.cover-box {
-  position: relative;
-  width: 100%;
-  aspect-ratio: 16 / 10;
-  border-radius: 10px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  background: linear-gradient(135deg, #1b1e32, #121422);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-#cover {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.cover-fallback {
-  font-size: 2.2rem;
-  font-weight: 800;
-  color: rgba(196, 181, 253, 0.45);
-  letter-spacing: .04em;
-  user-select: none;
 }
 .chips {
   display: flex;
@@ -203,9 +76,9 @@ body.theater #theater {
   gap: 6px;
 }
 .chip {
-  padding: 3px 8px;
+  padding: 3px 9px;
   border-radius: 6px;
-  font-size: .74rem;
+  font-size: .78rem;
   line-height: 1.3;
   color: #dcdaf0;
   background: #23263a;
@@ -213,138 +86,59 @@ body.theater #theater {
 }
 .chip.accent {
   color: var(--accent);
-  border-color: var(--border-soft);
-  background: rgba(196, 181, 253, 0.1);
+  border-color: rgba(196, 181, 253, 0.24);
+  background: rgba(196, 181, 253, 0.12);
 }
-.synopsis-box {
-  flex: 1 1 0;
-  min-height: 90px;
-  max-height: 220px;
-  overflow-y: auto;
-  padding-right: 4px;
-  color: var(--muted);
-  font-size: .82rem;
-  line-height: 1.48;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-}
-.sub-card {
-  background: var(--panel-alt);
-  border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 10px 12px;
-}
-.sub-title {
-  font-size: .74rem;
-  font-weight: 700;
-  letter-spacing: .05em;
-  text-transform: uppercase;
-  color: var(--muted);
-  margin-bottom: 8px;
-}
-.shortcut-grid {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 5px 10px;
-  font-size: .76rem;
-  align-items: center;
-}
-.shortcut-grid kbd {
-  padding: 2px 6px;
-  border-radius: 5px;
-  font: 600 .72rem ui-monospace, SFMono-Regular, Consolas, monospace;
-  background: #23263a;
-  border: 1px solid var(--border);
-  color: var(--accent);
-  text-align: center;
-}
-.shortcut-grid span { color: var(--muted) }
-
-/* Episode sidebar */
-#ep-filter {
+.player {
   width: 100%;
-  min-height: 36px;
-  font-size: .82rem;
-  background: var(--panel-alt);
-}
-.ep-list {
-  flex: 1 1 0;
-  min-height: 160px;
-  max-height: 56dvh;
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  padding-right: 4px;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border) transparent;
-}
-.ep-item {
-  position: relative;
-  width: 100%;
-  min-height: 40px;
-  padding: 8px 10px;
-  border-radius: 9px;
-  background: var(--panel-alt);
   border: 1px solid var(--border);
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 8px;
-  text-align: left;
+  background: var(--panel);
+  border-radius: 16px;
+  box-shadow: 0 24px 68px rgba(0, 0, 0, 0.58);
   overflow: hidden;
 }
-.ep-item.active {
-  border-color: var(--accent);
-  background: rgba(196, 181, 253, 0.14);
+video {
+  display: block;
+  width: 100%;
+  height: calc(84dvh - 120px);
+  min-height: 340px;
+  background: #000;
+  object-fit: contain;
 }
-.ep-item .ep-label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: .82rem;
-}
-.ep-item .ep-state {
-  flex-shrink: 0;
-  font-size: .74rem;
-  font-weight: 700;
-  color: var(--muted);
-}
-.ep-item.active .ep-state { color: var(--accent) }
-.ep-item.watched .ep-state { color: var(--success) }
-.ep-progress {
-  position: absolute;
-  left: 0;
-  bottom: 0;
-  height: 2.5px;
-  background: var(--accent-strong);
-}
-.stream-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 6px 10px;
-  font-size: .78rem;
-}
-.stream-grid div {
+.controls {
   display: flex;
-  flex-direction: column;
-  gap: 2px;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 16px 24px;
+  padding: clamp(12px, 1.5vw, 20px);
+  border-top: 1px solid var(--border);
 }
-.stream-grid small { color: var(--muted); font-size: .7rem }
-.stream-grid strong { color: #f4f2fb; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap }
+.episode-nav { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; flex: 2 1 340px }
+.playback-options { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.5fr); flex-basis: 260px; flex-grow: 1 }
+.episode-nav, .playback-options { align-items: end; gap: 8px; min-width: 0 }
+label { display: grid; gap: 6px; min-width: 0; color: var(--muted); font-size: .8rem }
+button, select {
+  font: inherit;
+  font-size: .875rem;
+  min-width: 0;
+  min-height: 44px;
+  padding: 0 12px;
+  color: inherit;
+  background: #222437;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+select { width: 100%; text-overflow: ellipsis }
+button { cursor: pointer; transition: border-color .15s, background .15s }
+button:hover:not(:disabled), select:hover:not(:disabled) { border-color: var(--accent); background: #302d47 }
+:is(button, select):disabled { opacity: .55; cursor: default }
+#next { color: var(--accent); border-color: #615684 }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px }
+#status { margin: 12px 2px 0; min-height: 1.2em; color: var(--accent); font-size: .875rem }
 
-@media (max-width: 1279px) {
-  .workspace { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) }
-  .stage { grid-column: 1 / -1 }
-  .info-panel { order: 2 }
-  .episodes-panel { order: 3 }
-  .ep-list { max-height: 300px }
-}
-@media (max-width: 759px) {
-  .workspace { grid-template-columns: minmax(0, 1fr) }
-  .stage { grid-column: auto }
-  .info-panel { order: 3 }
-  .episodes-panel { order: 2 }
+@media (max-width: 900px) {
+  main { width: 95vw }
+  video { height: calc(74dvh - 110px); min-height: 220px }
 }
 </style>
 <script defer src="/assets/__TOKEN__/hls.min.js"></script>
@@ -352,71 +146,29 @@ body.theater #theater {
 </head>
 <body>
 <main>
-  <div class="workspace">
-    <aside class="side-panel info-panel" aria-label="Información del anime">
-      <div class="panel-head">
-        <span>Ficha</span>
-        <span id="provider-pill" class="chip accent">Anime</span>
+  <header class="stage-header">
+    <div class="title-wrap">
+      <h1 id="title">Anime</h1>
+      <span id="ep-badge" class="ep-badge">Ep. 1</span>
+    </div>
+    <div id="meta-badges" class="chips"></div>
+  </header>
+  <div class="player">
+    <video id="video" controls playsinline aria-label="Reproductor de anime"></video>
+    <div class="controls">
+      <div class="episode-nav">
+        <button id="previous" disabled>‹ Anterior</button>
+        <label>Episodio<select id="episode" disabled></select></label>
+        <button id="next" disabled>Siguiente ›</button>
       </div>
-      <div class="cover-box">
-        <img id="cover" alt="Portada del anime" hidden>
-        <div id="cover-fallback" class="cover-fallback">M!</div>
+      <div class="playback-options">
+        <label>Variante<select id="variant" disabled></select></label>
+        <label>Servidor<select id="mirror" disabled></select></label>
       </div>
-      <div id="meta-badges" class="chips"></div>
-      <div id="genres" class="chips"></div>
-      <div id="synopsis" class="synopsis-box"></div>
-      <div class="sub-card">
-        <div class="sub-title">Atajos rápidos</div>
-        <div class="shortcut-grid">
-          <kbd>Espacio / K</kbd><span>Reproducir o pausar</span>
-          <kbd>F</kbd><span>Pantalla completa</span>
-          <kbd>← / →</kbd><span>Retroceder / avanzar 5 s</span>
-          <kbd>S</kbd><span>Saltar intro (+85 s)</span>
-          <kbd>N / P</kbd><span>Episodio siguiente / anterior</span>
-          <kbd>T</kbd><span>Alternar modo cine</span>
-        </div>
-      </div>
-    </aside>
-
-    <section class="stage">
-      <header class="stage-header">
-        <div class="title-wrap">
-          <h1 id="title">Anime</h1>
-          <span id="ep-badge" class="ep-badge">Ep. 1</span>
-        </div>
-        <button id="theater" class="ghost-btn" type="button" title="Atajo: T">Modo cine (T)</button>
-      </header>
-      <div class="player">
-        <video id="video" controls playsinline aria-label="Reproductor de anime"></video>
-        <div class="controls">
-          <div class="episode-nav">
-            <button id="previous" disabled>‹ Anterior</button>
-            <label>Episodio<select id="episode" disabled></select></label>
-            <button id="next" disabled>Siguiente ›</button>
-          </div>
-          <div class="playback-options">
-            <label>Variante<select id="variant" disabled></select></label>
-            <label>Servidor<select id="mirror" disabled></select></label>
-          </div>
-          <button id="intro" disabled>Saltar intro (+85 s)</button>
-        </div>
-      </div>
-      <p id="status" role="status"></p>
-    </section>
-
-    <aside class="side-panel episodes-panel" aria-label="Lista de episodios">
-      <div class="panel-head">
-        <span>Episodios</span>
-        <span id="ep-count" class="chip accent">0</span>
-      </div>
-      <input id="ep-filter" type="search" placeholder="Filtrar episodio o título…" aria-label="Filtrar episodio">
-      <div id="ep-list" class="ep-list" role="listbox" aria-label="Episodios disponibles"></div>
-      <div class="sub-card">
-        <div class="sub-title">Reproducción activa</div>
-        <div id="stream-info" class="stream-grid"></div>
-      </div>
-    </aside>
+      <button id="intro" disabled>Saltar intro (+85 s)</button>
+    </div>
   </div>
+  <p id="status" role="status"></p>
 </main>
 </body>
 </html>

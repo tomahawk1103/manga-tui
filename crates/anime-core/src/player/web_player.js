@@ -8,19 +8,9 @@ const mirror = byId("mirror");
 const previous = byId("previous");
 const next = byId("next");
 const intro = byId("intro");
-const theater = byId("theater");
 const status = byId("status");
-const cover = byId("cover");
-const coverFallback = byId("cover-fallback");
-const metaBadges = byId("meta-badges");
-const genresBox = byId("genres");
-const synopsisBox = byId("synopsis");
 const epBadge = byId("ep-badge");
-const epCount = byId("ep-count");
-const epFilter = byId("ep-filter");
-const epList = byId("ep-list");
-const streamInfo = byId("stream-info");
-const providerPill = byId("provider-pill");
+const metaBadges = byId("meta-badges");
 const token = location.pathname.split("/").pop();
 const api = "/api/" + token + "/";
 let state;
@@ -58,108 +48,12 @@ function makeChip(text, accent = false) {
 }
 
 function renderMetadata() {
-    if (providerPill && state.provider) providerPill.textContent = state.provider;
-    if (coverFallback) {
-        const initials = (state.title || "AN").trim().slice(0, 2).toUpperCase();
-        coverFallback.textContent = initials || "AN";
-    }
-    if (cover) {
-        if (state.cover && cover.dataset.loaded !== state.cover) {
-            cover.dataset.loaded = state.cover;
-            cover.onload = () => {
-                cover.hidden = false;
-                if (coverFallback) coverFallback.hidden = true;
-            };
-            cover.onerror = () => {
-                cover.hidden = true;
-                if (coverFallback) coverFallback.hidden = false;
-            };
-            cover.src = state.cover;
-        } else if (!state.cover) {
-            cover.hidden = true;
-            if (coverFallback) coverFallback.hidden = false;
-        }
-    }
-    if (metaBadges) {
-        const badges = [];
-        if (state.anime_type && state.anime_type !== "Unknown") badges.push(makeChip(state.anime_type));
-        if (STATUS_LABELS[state.status]) badges.push(makeChip(STATUS_LABELS[state.status], true));
-        if (typeof state.score === "number") badges.push(makeChip("★ " + state.score.toFixed(1), true));
-        metaBadges.replaceChildren(...badges);
-    }
-    if (genresBox) {
-        const genres = Array.isArray(state.genres) ? state.genres.slice(0, 8) : [];
-        genresBox.replaceChildren(...genres.map((g) => makeChip(g)));
-    }
-    if (synopsisBox) {
-        const text = (state.synopsis || "").trim();
-        synopsisBox.textContent = text || "Sin sinopsis disponible para esta serie.";
-    }
-}
-
-function renderEpisodeSidebar() {
-    if (!epList || !state) return;
-    if (epCount) epCount.textContent = state.episodes.length + " eps";
-    const query = (epFilter?.value || "").trim().toLowerCase();
-    const progressMap = state.all_progress || {};
-    const buttons = [];
-
-    state.episodes.forEach((item, index) => {
-        const label = "Ep. " + item.number + (item.title ? " · " + item.title : "");
-        if (query && !label.toLowerCase().includes(query) && String(item.number).toLowerCase() !== query) return;
-
-        const btn = document.createElement("button");
-        btn.type = "button";
-        const p = progressMap[String(index)];
-        const ratio = p && p.duration_seconds > 0 ? Math.min(1, p.position_seconds / p.duration_seconds) : 0;
-        const watched = ratio >= 0.85;
-        const isActive = index === state.episode;
-        btn.className = "ep-item" + (isActive ? " active" : "") + (watched ? " watched" : "");
-        btn.disabled = busy;
-        btn.dataset.index = String(index);
-
-        const textSpan = document.createElement("span");
-        textSpan.className = "ep-label";
-        textSpan.textContent = label;
-
-        const stateSpan = document.createElement("span");
-        stateSpan.className = "ep-state";
-        stateSpan.textContent = isActive ? "▶ Viendo" : watched ? "✓ Visto" : ratio > 0.02 ? Math.round(ratio * 100) + "%" : "";
-
-        btn.append(textSpan, stateSpan);
-        if (ratio > 0.02 && !isActive) {
-            const bar = document.createElement("span");
-            bar.className = "ep-progress";
-            bar.style.width = Math.round(ratio * 100) + "%";
-            btn.append(bar);
-        }
-        btn.addEventListener("click", () => chooseEpisode(index));
-        buttons.push(btn);
-    });
-
-    epList.replaceChildren(...buttons);
-    const activeBtn = epList.querySelector(".ep-item.active");
-    if (activeBtn) activeBtn.scrollIntoView({ block: "nearest" });
-}
-
-function renderStreamInfo() {
-    if (!streamInfo || !state) return;
-    const currentMirror = state.mirrors[state.mirror] || { name: "-", variant: "-" };
-    const entries = [
-        ["Servidor", currentMirror.name],
-        ["Audio / Sub", currentMirror.variant],
-        ["Formato", state.kind ? String(state.kind).toUpperCase() : "-"],
-        ["Alternativas", state.mirrors.length + " disponibles"]
-    ];
-    streamInfo.replaceChildren(...entries.map(([k, v]) => {
-        const cell = document.createElement("div");
-        const small = document.createElement("small");
-        small.textContent = k;
-        const strong = document.createElement("strong");
-        strong.textContent = v;
-        cell.append(small, strong);
-        return cell;
-    }));
+    if (!metaBadges) return;
+    const badges = [];
+    if (state.provider) badges.push(makeChip(state.provider, true));
+    if (STATUS_LABELS[state.status]) badges.push(makeChip(STATUS_LABELS[state.status]));
+    if (typeof state.score === "number") badges.push(makeChip("★ " + state.score.toFixed(1), true));
+    metaBadges.replaceChildren(...badges);
 }
 
 function render() {
@@ -178,8 +72,6 @@ function render() {
     options(mirror, state.mirrors.flatMap((item, index) =>
         item.variant === activeVariant ? [[index, item.name]] : []), state.mirror);
     renderMetadata();
-    renderEpisodeSidebar();
-    renderStreamInfo();
     controls();
 }
 
@@ -195,10 +87,6 @@ async function request(action, data) {
 
 function saveProgress(keepalive = false) {
     if (!state || !ready || !Number.isFinite(video.duration) || video.duration <= 0) return Promise.resolve();
-    const position_seconds = Math.min(video.currentTime, video.duration);
-    const duration_seconds = video.duration;
-    state.all_progress = state.all_progress || {};
-    state.all_progress[String(state.episode)] = { position_seconds, duration_seconds };
     return fetch(api + "progress", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -206,8 +94,8 @@ function saveProgress(keepalive = false) {
         body: JSON.stringify({
             generation: state.generation,
             episode_number: state.episodes[state.episode].number,
-            position_seconds,
-            duration_seconds
+            position_seconds: Math.min(video.currentTime, video.duration),
+            duration_seconds: video.duration
         })
     }).catch(() => {});
 }
@@ -253,7 +141,6 @@ async function change(action, data) {
     if (!state || busy) return;
     busy = true;
     controls();
-    renderEpisodeSidebar();
     try {
         await saveProgress();
         state = await request(action, data);
@@ -266,7 +153,6 @@ async function change(action, data) {
     } finally {
         busy = false;
         controls();
-        renderEpisodeSidebar();
         if (failed) handleFailure();
     }
 }
@@ -320,10 +206,6 @@ function seek(seconds) {
     }
 }
 
-function toggleTheater() {
-    document.body.classList.toggle("theater");
-}
-
 video.addEventListener("error", () => {
     if (video.error) handleFailure();
 });
@@ -337,8 +219,6 @@ variant.addEventListener("change", () => chooseMirror(state.mirrors.findIndex((i
 previous.addEventListener("click", () => chooseEpisode(state.episode - 1));
 next.addEventListener("click", () => chooseEpisode(state.episode + 1));
 intro.addEventListener("click", () => seek(85));
-theater?.addEventListener("click", toggleTheater);
-epFilter?.addEventListener("input", renderEpisodeSidebar);
 document.addEventListener("keydown", (event) => {
     if (event.repeat || event.ctrlKey || event.metaKey || event.altKey || event.target.closest("input, button, select, video")) return;
     const actions = {
@@ -346,8 +226,6 @@ document.addEventListener("keydown", (event) => {
         k: () => video.paused ? play() : video.pause(),
         f: () => (document.fullscreenElement ? document.exitFullscreen() : video.requestFullscreen()).catch(() => {}),
         m: () => { video.muted = !video.muted; },
-        t: toggleTheater,
-        T: toggleTheater,
         ArrowLeft: () => seek(-5),
         ArrowRight: () => seek(5),
         n: () => chooseEpisode(state.episode + 1),
