@@ -355,9 +355,15 @@ export interface Translations {
     finishedToast: (title: string, ch: string) => string;
   };
   settings: {
-    eyebrow: string;
-    title: string;
-    subtitle: string;
+    sectionPicker: string;
+    sections: {
+      appearance: string;
+      catalog: string;
+      cloud: string;
+      trackers: string;
+      storage: string;
+      app: string;
+    };
     appearanceTitle: string;
     languageLabel: string;
     themeLabel: string;
@@ -860,10 +866,15 @@ const ES: Translations = {
     finishedToast: (title, ch) => `Descarga lista: ${title} · Cap. ${ch}`,
   },
   settings: {
-    eyebrow: "Ajustes · Preferencias",
-    title: "Configuración clara.",
-    subtitle:
-      "Sin editar archivos de texto a mano: idioma y servidor se sincronizan con `config.toml`; el tema visual y tus gustos se guardan aparte para Mangora.",
+    sectionPicker: "Sección de ajustes",
+    sections: {
+      appearance: "Apariencia e idioma",
+      catalog: "Catálogo y géneros",
+      cloud: "Sincronización",
+      trackers: "AniList y MAL",
+      storage: "Almacenamiento",
+      app: "Aplicación",
+    },
     appearanceTitle: "Apariencia e idioma",
     languageLabel: "Idioma de la aplicación",
     themeLabel: "Modo visual (Papel / Tinta)",
@@ -1394,10 +1405,15 @@ const EN: Translations = {
     finishedToast: (title, ch) => `Download ready: ${title} · Ch. ${ch}`,
   },
   settings: {
-    eyebrow: "Settings · Preferences",
-    title: "Simple controls.",
-    subtitle:
-      "No hand-editing TOML files: language and default source sync with `config.toml`, while visual theme and tastes stay stored for Mangora.",
+    sectionPicker: "Settings section",
+    sections: {
+      appearance: "Appearance & language",
+      catalog: "Catalog & genres",
+      cloud: "Sync",
+      trackers: "AniList & MAL",
+      storage: "Storage",
+      app: "Application",
+    },
     appearanceTitle: "Appearance & language",
     languageLabel: "Application language",
     themeLabel: "Visual mode (Paper / Ink)",
