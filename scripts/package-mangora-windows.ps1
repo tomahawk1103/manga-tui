@@ -1,16 +1,22 @@
 param(
-    [string]$Bundles = "nsis,msi",
+    [string[]]$Bundles = @("nsis", "msi"),
     [string]$OutputDir = "dist-mangora"
 )
 
 $ErrorActionPreference = "Stop"
+
+$BundleList = @($Bundles | ForEach-Object { $_ -split '[,\s]+' } | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+if ($BundleList.Count -eq 0) {
+    $BundleList = @("nsis", "msi")
+}
+$NormalizedBundles = ($BundleList -join ",")
 
 $RepoRoot = Split-Path -Parent $PSScriptRoot
 $MangoraDir = Join-Path $RepoRoot "apps\mangora"
 $TargetBundleDir = Join-Path $RepoRoot "target\release\bundle"
 $ResolvedOutputDir = Join-Path $RepoRoot $OutputDir
 
-Write-Host "==> Building Mangora frontend & Windows bundles ($Bundles)..." -ForegroundColor Cyan
+Write-Host "==> Building Mangora frontend & Windows bundles ($NormalizedBundles)..." -ForegroundColor Cyan
 Push-Location $MangoraDir
 try {
     npm.cmd run build
@@ -18,7 +24,7 @@ try {
         throw "Frontend build failed with exit code $LASTEXITCODE"
     }
 
-    npm.cmd run tauri build -- --bundles $Bundles
+    npm.cmd run tauri build -- --bundles $NormalizedBundles
     if ($LASTEXITCODE -ne 0) {
         throw "Tauri build failed with exit code $LASTEXITCODE"
     }
@@ -30,7 +36,7 @@ finally {
 New-Item -ItemType Directory -Force -Path $ResolvedOutputDir | Out-Null
 
 $Artifacts = @()
-foreach ($Folder in @("nsis", "msi")) {
+foreach ($Folder in $BundleList) {
     $Src = Join-Path $TargetBundleDir $Folder
     if (Test-Path $Src) {
         Get-ChildItem -Path $Src -File | Where-Object { $_.Extension -in @(".exe", ".msi") } | ForEach-Object {
