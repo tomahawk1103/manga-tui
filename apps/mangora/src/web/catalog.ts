@@ -23,11 +23,33 @@ interface ChapterManifest {
   pages: string[];
 }
 
-const defaultCatalog = import.meta.env.MODE === "mangaoni" ? "./api/mangaoni/catalog.json" : "./api/catalog.json";
+const defaultCatalog = "./api/catalog.json";
+const apiBase = import.meta.env.VITE_MANGAONI_API_URL ||
+  (import.meta.env.MODE === "mangaoni" ? "./api/mangaoni/" : "https://mangora-lector-publico.chirpybroth8.chatgpt.site/");
+export const liveMangaOni = Boolean(apiBase);
+
+function apiUrl(endpoint: string) {
+  return new URL(endpoint, new URL(apiBase.replace(/\/?$/, "/"), document.baseURI));
+}
+
+export async function searchMangaOni(title: string, signal: AbortSignal) {
+  const url = apiUrl("search");
+  url.searchParams.set("q", title);
+  return fetchJson<Series[]>(url, signal);
+}
+
+export async function openMangaOniSeries(id: string, signal: AbortSignal) {
+  const url = apiUrl("series");
+  url.searchParams.set("id", id);
+  const series = await fetchJson<Series>(url, signal);
+  return { ...series, chapters: series.chapters.map(chapter => ({
+    ...chapter, manifest: new URL(chapter.manifest, url).href,
+  })) };
+}
 const catalogUrl = new URL(import.meta.env.VITE_MANGORA_CATALOG_URL || defaultCatalog, document.baseURI);
 
-async function fetchJson<T>(url: URL): Promise<T> {
-  const response = await fetch(url, { cache: "no-cache" });
+async function fetchJson<T>(url: URL, signal?: AbortSignal): Promise<T> {
+  const response = await fetch(url, { cache: "no-cache", signal });
   if (!response.ok) throw new Error(`El servidor respondió con el código ${response.status}.`);
   return response.json() as Promise<T>;
 }
