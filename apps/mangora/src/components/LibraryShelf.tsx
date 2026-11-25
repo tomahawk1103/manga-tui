@@ -195,7 +195,7 @@ export function LibraryShelf({
             return (
               <li
                 key={libraryKey(entry.id, entry.provider)}
-                className="editorial-card flex flex-col justify-between overflow-hidden"
+                className="editorial-card flex min-w-0 flex-col justify-between overflow-hidden"
               >
                 <button
                   type="button"
@@ -207,7 +207,7 @@ export function LibraryShelf({
                       coverUrl: entry.coverUrl ?? null,
                     })
                   }
-                  className="group flex w-full flex-1 cursor-pointer touch-manipulation gap-3.5 p-3.5 text-left transition-colors hover:bg-[var(--surface)]/50"
+                  className="group flex w-full min-w-0 flex-1 cursor-pointer touch-manipulation gap-3.5 p-3.5 text-left transition-colors hover:bg-[var(--surface)]/50"
                 >
                   <div className="relative h-28 w-20 shrink-0 overflow-hidden border-2 border-[var(--ink)] bg-[var(--surface)]">
                     {hasCover ? (
@@ -269,51 +269,47 @@ export function LibraryShelf({
                   </div>
                 </button>
 
-                <div className="flex flex-wrap items-center justify-between gap-2 border-t-2 border-[var(--ink)] bg-[var(--surface)] px-3.5 py-2">
-                  <span className="min-w-0 flex-1 truncate font-mono-editorial text-[11px] text-[var(--muted)]">
-                    {entry.shelfName ?? entry.provider}
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() =>
-                        onOpenSeries({
-                          mangaId: entry.id,
-                          provider: entry.provider,
-                          title: entry.title,
-                          coverUrl: entry.coverUrl ?? null,
-                        })
-                      }
-                      className="editorial-btn-secondary inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-1.5 px-3 py-1.5 text-xs font-bold"
-                    >
-                      <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
-                      <span>{t.openSeriesBtn}</span>
-                    </button>
-                    <button
-                      type="button"
-                      disabled={isMutating}
-                      aria-pressed={isFav}
-                      onClick={() =>
-                        void onToggleFavorite({
-                          mangaId: entry.id,
-                          provider: entry.provider,
-                          title: entry.title,
-                          coverUrl: entry.coverUrl,
-                        })
-                      }
-                      className={`inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-1.5 border-2 border-[var(--ink)] px-3 py-1.5 text-xs font-bold transition-colors ${
-                        isFav
-                          ? "bg-[var(--red)] text-white"
-                          : "bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--ink)] hover:text-[var(--paper)]"
-                      }`}
-                    >
-                      <Heart
-                        className={`h-3.5 w-3.5 ${isFav ? "fill-current" : ""}`}
-                        aria-hidden="true"
-                      />
-                      <span>{isFav ? t.removeFavorite : t.addFavorite}</span>
-                    </button>
-                  </div>
+                <div className="flex items-center justify-between gap-2 border-t-2 border-[var(--ink)] bg-[var(--surface)] px-3 py-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      onOpenSeries({
+                        mangaId: entry.id,
+                        provider: entry.provider,
+                        title: entry.title,
+                        coverUrl: entry.coverUrl ?? null,
+                      })
+                    }
+                    className="editorial-btn-secondary inline-flex min-h-[44px] min-w-0 flex-1 cursor-pointer touch-manipulation items-center justify-center gap-1.5 px-3 py-1.5 text-xs font-bold"
+                  >
+                    <BookOpen className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <span className="truncate">{t.openSeriesBtn}</span>
+                  </button>
+                  <button
+                    type="button"
+                    disabled={isMutating}
+                    aria-pressed={isFav}
+                    aria-label={isFav ? t.removeFavorite : t.addFavorite}
+                    title={isFav ? t.removeFavorite : t.addFavorite}
+                    onClick={() =>
+                      void onToggleFavorite({
+                        mangaId: entry.id,
+                        provider: entry.provider,
+                        title: entry.title,
+                        coverUrl: entry.coverUrl,
+                      })
+                    }
+                    className={`inline-flex min-h-[44px] min-w-[44px] shrink-0 cursor-pointer touch-manipulation items-center justify-center border-2 border-[var(--ink)] transition-colors ${
+                      isFav
+                        ? "bg-[var(--red)] text-white"
+                        : "bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--ink)] hover:text-[var(--paper)]"
+                    }`}
+                  >
+                    <Heart
+                      className={`h-4 w-4 ${isFav ? "fill-current" : ""}`}
+                      aria-hidden="true"
+                    />
+                  </button>
                 </div>
               </li>
             );

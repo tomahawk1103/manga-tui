@@ -89,20 +89,20 @@
 
 :root,
 [data-mangora-library-density="comfortable"] {
-  --mangora-library-min-card: 180px;
+  --mangora-library-min-card: 300px;
   --mangora-library-gap: 1.15rem;
-  --mangora-library-pad: 0.8rem;
+  --mangora-library-pad: 0.85rem;
 }
 
 [data-mangora-library-density="compact"] {
-  --mangora-library-min-card: 142px;
+  --mangora-library-min-card: 260px;
   --mangora-library-gap: 0.75rem;
-  --mangora-library-pad: 0.55rem;
+  --mangora-library-pad: 0.6rem;
 }
 
 [data-mangora-library-density="spacious"] {
-  --mangora-library-min-card: 224px;
-  --mangora-library-gap: 1.5rem;
+  --mangora-library-min-card: 360px;
+  --mangora-library-gap: 1.4rem;
   --mangora-library-pad: 1.05rem;
 }
 

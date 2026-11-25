@@ -16,6 +16,7 @@ interface HomeViewProps {
   libraryLoading: boolean;
   isSaving: boolean;
   favoriteKeys: Set<string>;
+  metricsRefreshKey?: number;
   onRefreshLibrary: (search?: string) => Promise<void>;
   onToggleFavorite: (payload: ToggleFavoritePayload) => Promise<void>;
   onOpenSeries: (series: SeriesSelection) => void;
@@ -31,6 +32,7 @@ export function HomeView({
   libraryLoading,
   isSaving,
   favoriteKeys,
+  metricsRefreshKey = 0,
   onRefreshLibrary,
   onToggleFavorite,
   onOpenSeries,
@@ -199,7 +201,7 @@ export function HomeView({
           onExplore={onSearch}
         />
       ) : (
-        <ReaderMetricsDashboard language={appState.uiLanguage} />
+        <ReaderMetricsDashboard language={appState.uiLanguage} refreshTrigger={metricsRefreshKey} />
       )}
 
       {/* Subtle permanently-dismissible reading-milestone support banner */}

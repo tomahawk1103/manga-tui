@@ -513,12 +513,12 @@ export function SettingsView({
       {/* Cloud Sync & Trackers (Hito 4) */}
       <div className="grid gap-6 lg:grid-cols-2">
         {/* Cloud Sync */}
-        <section className="editorial-card space-y-4 p-6">
-          <div className="flex items-start justify-between gap-2">
-            <div>
+        <section className="editorial-card min-w-0 space-y-4 overflow-hidden p-6">
+          <div className="flex flex-wrap items-start justify-between gap-2">
+            <div className="min-w-0 flex-1">
               <h2 className="font-display flex items-center gap-2 text-2xl">
-                <Cloud className="h-5 w-5 text-[var(--red-text)]" aria-hidden="true" />
-                <span>{t.settings.cloudTitle}</span>
+                <Cloud className="h-5 w-5 shrink-0 text-[var(--red-text)]" aria-hidden="true" />
+                <span className="min-w-0">{t.settings.cloudTitle}</span>
               </h2>
               <p className="mt-1 text-sm text-[var(--muted)]">{t.settings.cloudDesc}</p>
             </div>
@@ -605,14 +605,14 @@ export function SettingsView({
                     value={googleClientId}
                     onChange={(e) => setGoogleClientId(e.target.value)}
                     placeholder={cloud?.savedClientId ?? t.settings.cloudClientIdPlaceholder}
-                    className="w-full border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
+                    className="min-w-0 w-full border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
                   />
                   <input
                     type="password"
                     value={googleClientSecret}
                     onChange={(e) => setGoogleClientSecret(e.target.value)}
                     placeholder={t.settings.cloudClientSecretPlaceholder}
-                    className="w-full border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
+                    className="min-w-0 w-full border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
                   />
                 </div>
               )}
@@ -663,14 +663,14 @@ export function SettingsView({
         </section>
 
         {/* Trackers: AniList & MyAnimeList */}
-        <section className="editorial-card space-y-5 p-6">
+        <section className="editorial-card min-w-0 space-y-5 overflow-hidden p-6">
           <div>
             <h2 className="font-display text-2xl">{t.settings.trackersTitle}</h2>
             <p className="mt-1 text-sm text-[var(--muted)]">{t.settings.trackersDesc}</p>
           </div>
 
           {/* AniList block */}
-          <div className="editorial-box-thin space-y-3 p-4">
+          <div className="editorial-box-thin min-w-0 space-y-3 p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="font-display text-lg">{t.settings.anilistLabel}</span>
               <button
@@ -702,21 +702,23 @@ export function SettingsView({
                 </button>
               </div>
             ) : (
-              <form onSubmit={(e) => void handleSaveAnilist(e)} className="grid gap-2 sm:grid-cols-[0.7fr_1.3fr_auto]">
-                <input
-                  type="text"
-                  value={anilistClientId}
-                  onChange={(e) => setAnilistClientId(e.target.value)}
-                  placeholder={t.settings.anilistClientIdLabel}
-                  className="border-2 border-[var(--ink)] bg-[var(--paper)] px-2.5 py-2 font-mono-editorial text-xs text-[var(--ink)]"
-                />
-                <input
-                  type="password"
-                  value={anilistToken}
-                  onChange={(e) => setAnilistToken(e.target.value)}
-                  placeholder={t.settings.anilistTokenLabel}
-                  className="border-2 border-[var(--ink)] bg-[var(--paper)] px-2.5 py-2 font-mono-editorial text-xs text-[var(--ink)]"
-                />
+              <form onSubmit={(e) => void handleSaveAnilist(e)} className="space-y-2.5">
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input
+                    type="text"
+                    value={anilistClientId}
+                    onChange={(e) => setAnilistClientId(e.target.value)}
+                    placeholder={t.settings.anilistClientIdLabel}
+                    className="min-w-0 w-full border-2 border-[var(--ink)] bg-[var(--paper)] px-2.5 py-2 font-mono-editorial text-xs text-[var(--ink)]"
+                  />
+                  <input
+                    type="password"
+                    value={anilistToken}
+                    onChange={(e) => setAnilistToken(e.target.value)}
+                    placeholder={t.settings.anilistTokenLabel}
+                    className="min-w-0 w-full border-2 border-[var(--ink)] bg-[var(--paper)] px-2.5 py-2 font-mono-editorial text-xs text-[var(--ink)]"
+                  />
+                </div>
                 <button
                   type="submit"
                   disabled={anilistBusy || !anilistClientId.trim() || !anilistToken.trim()}
@@ -786,14 +788,14 @@ export function SettingsView({
                       value={malClientId}
                       onChange={(e) => setMalClientId(e.target.value)}
                       placeholder={mal?.savedClientId ?? "MAL Client ID..."}
-                      className="border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
+                      className="min-w-0 w-full border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
                     />
                     <input
                       type="password"
                       value={malClientSecret}
                       onChange={(e) => setMalClientSecret(e.target.value)}
                       placeholder="MAL Client Secret (opcional)"
-                      className="border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
+                      className="min-w-0 w-full border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
                     />
                   </div>
                 )}

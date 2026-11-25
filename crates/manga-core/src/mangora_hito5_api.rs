@@ -22,8 +22,11 @@ fn default_true() -> bool {
 }
 
 fn parse_provider(raw: &str) -> Result<MangaProviders, String> {
-    raw.trim()
-        .to_ascii_lowercase()
+    let trimmed = raw.trim().to_ascii_lowercase();
+    if trimmed.is_empty() || trimmed == "offline" {
+        return Ok(MangaProviders::default());
+    }
+    trimmed
         .parse::<MangaProviders>()
         .map_err(|e| format!("Invalid manga provider '{}': {e}", raw.trim()))
 }
@@ -262,9 +265,22 @@ mod tests {
         let session_id = record_reader_session_in_db(&db, &session_req).unwrap();
         assert!(session_id > 0);
 
+        let offline_session_id = record_reader_session_in_db(&db, &RecordReadingSessionRequest {
+            manga_id: "offline::local".to_string(),
+            provider: "offline".to_string(),
+            chapter_id: "offline::local::ch1".to_string(),
+            duration_seconds: 30,
+            pages_read: 12,
+            completed_chapter: true,
+            started_at: None,
+        })
+        .unwrap();
+        assert!(offline_session_id > session_id);
+
         let metrics = get_extended_reader_metrics_in_db(&db).unwrap();
-        assert_eq!(metrics.total_chapters_read, 1);
-        assert_eq!(metrics.estimated_total_reading_minutes, 7);
+        assert_eq!(metrics.total_chapters_read, 2);
+        assert_eq!(metrics.total_pages_read, 40);
+        assert_eq!(metrics.estimated_total_reading_minutes, 8);
         assert_eq!(metrics.top_genres.len(), 3);
         assert!(metrics.privacy_local_only);
 

@@ -8,6 +8,7 @@ import { useReaderMetrics } from "../useReaderMetrics";
 export interface ReaderMetricsDashboardProps {
   language?: UiLanguage;
   bridge?: Hito5Bridge;
+  refreshTrigger?: number;
 }
 
 function formatDurationMinutes(minutes: number): string {
@@ -21,7 +22,11 @@ function formatDurationMinutes(minutes: number): string {
  * 100 % device-local reader analytics dashboard styled with `docs/index.html`
  * paper-and-ink primitives, plus live editorial summary card preview & PNG/SVG export.
  */
-export function ReaderMetricsDashboard({ language = "es", bridge }: ReaderMetricsDashboardProps) {
+export function ReaderMetricsDashboard({
+  language = "es",
+  bridge,
+  refreshTrigger = 0,
+}: ReaderMetricsDashboardProps) {
   const { config } = useMangoraAppearance();
   const [readerAlias, setReaderAlias] = useState("");
   const labels = getHito5Labels(language);
@@ -41,6 +46,7 @@ export function ReaderMetricsDashboard({ language = "es", bridge }: ReaderMetric
     language,
     includeScreentone: config.show_screentone_accents,
     readerAlias,
+    refreshTrigger,
   });
 
   const svgDataUri = useMemo(() => {

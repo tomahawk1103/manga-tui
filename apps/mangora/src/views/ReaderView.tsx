@@ -127,7 +127,7 @@ export function ReaderView({
     latestPageRef.current = currentPage;
   }, [currentPage]);
 
-  useReadingSessionTracker({
+  const { flushSession } = useReadingSessionTracker({
     mangaId: session?.mangaId ?? "",
     provider: session?.provider ?? "",
     chapterId: session?.chapterId ?? "",
@@ -268,7 +268,10 @@ export function ReaderView({
   const handleOpenNeighbor = useCallback(
     async (neighbor: ReaderChapterNeighbor | null) => {
       if (!neighbor) return;
-      await flushProgress(latestSessionRef.current, latestPageRef.current);
+      await Promise.all([
+        flushProgress(latestSessionRef.current, latestPageRef.current),
+        flushSession(),
+      ]);
       setActiveRequest((prev) => ({
         ...prev,
         chapterId: neighbor.id,
@@ -278,16 +281,19 @@ export function ReaderView({
         language: neighbor.language,
       }));
     },
-    [flushProgress],
+    [flushProgress, flushSession],
   );
 
   const handleClose = useCallback(async () => {
-    await flushProgress(latestSessionRef.current, latestPageRef.current);
+    await Promise.all([
+      flushProgress(latestSessionRef.current, latestPageRef.current),
+      flushSession(),
+    ]);
     if (isFullscreen) {
       await toggleNativeFullscreen().catch(() => false);
     }
     await onClose();
-  }, [flushProgress, isFullscreen, onClose]);
+  }, [flushProgress, flushSession, isFullscreen, onClose]);
 
   const jumpToPage = useCallback(
     (targetPage: number) => {

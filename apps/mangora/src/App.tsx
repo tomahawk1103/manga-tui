@@ -104,21 +104,20 @@ export function App() {
     }
   }, []);
 
+  const initialHomeLoadedRef = useRef(false);
+
   const loadInitial = useCallback(async () => {
     setErrorMessage(null);
     try {
-      const [next, overview, integrations] = await Promise.all([
+      const [next, overview] = await Promise.all([
         getInitialState(),
         getLibraryOverview().catch(() => null),
-        getIntegrationsOverview().catch(() => null),
       ]);
       setAppState(next);
       uiLangRef.current = next.uiLanguage;
       if (overview) {
         setLibraryOverview(overview);
-      }
-      if (integrations) {
-        setIntegrationsOverview(integrations);
+        initialHomeLoadedRef.current = true;
       }
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : String(err));
@@ -131,7 +130,11 @@ export function App() {
 
   useEffect(() => {
     if (appState?.onboardingCompleted && activeSection === "home") {
-      void loadLibrary();
+      if (initialHomeLoadedRef.current) {
+        initialHomeLoadedRef.current = false;
+      } else {
+        void loadLibrary();
+      }
     }
     if (appState?.onboardingCompleted && activeSection === "downloads") {
       void getDownloadQueueSnapshot().then(setDownloadQueue).catch(() => {});
@@ -478,6 +481,7 @@ export function App() {
                     libraryLoading={libraryLoading}
                     isSaving={isSaving}
                     favoriteKeys={favoriteKeys}
+                    metricsRefreshKey={downloadCompletedTick}
                     onRefreshLibrary={loadLibrary}
                     onToggleFavorite={handleToggleFavorite}
                     onOpenSeries={openSeries}

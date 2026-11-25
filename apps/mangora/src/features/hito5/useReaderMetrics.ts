@@ -65,6 +65,7 @@ export interface UseReaderMetricsOptions {
   language: UiLanguage;
   includeScreentone: boolean;
   readerAlias?: string;
+  refreshTrigger?: number;
 }
 
 export function useReaderMetrics({
@@ -73,6 +74,7 @@ export function useReaderMetrics({
   language,
   includeScreentone,
   readerAlias,
+  refreshTrigger = 0,
 }: UseReaderMetricsOptions) {
   const [metrics, setMetrics] = useState<ExtendedReaderMetrics | null>(null);
   const [cardPreview, setCardPreview] = useState<EditorialStatsCardSvgResponse | null>(null);
@@ -105,7 +107,7 @@ export function useReaderMetrics({
 
   useEffect(() => {
     void refresh();
-  }, [refresh]);
+  }, [refresh, refreshTrigger]);
 
   const exportSvg = useCallback(async () => {
     setIsExporting(true);
@@ -174,6 +176,10 @@ export interface UseReadingSessionTrackerOptions {
   bridge?: Hito5Bridge;
 }
 
+export interface UseReadingSessionTrackerResult {
+  flushSession: () => Promise<void>;
+}
+
 /**
  * Tracks active local reading time while the reader is visible and persists the
  * session to local SQLite upon chapter completion, chapter change, or unmount.
@@ -186,11 +192,34 @@ export function useReadingSessionTracker({
   totalPages,
   enabled = true,
   bridge = defaultHito5Bridge,
-}: UseReadingSessionTrackerOptions): void {
+}: UseReadingSessionTrackerOptions): UseReadingSessionTrackerResult {
   const activeSecondsRef = useRef(0);
   const visitedPagesRef = useRef<Set<number>>(new Set());
   const completedRef = useRef(false);
   const flushedRef = useRef(false);
+
+  const flushSession = useCallback(async () => {
+    if (!enabled || !mangaId || !chapterId || flushedRef.current) return;
+    const elapsed = activeSecondsRef.current;
+    const visitedCount = visitedPagesRef.current.size;
+    const pagesCount = visitedCount > 0 ? visitedCount : elapsed >= 1 ? 1 : 0;
+    const completed = completedRef.current;
+    if (elapsed >= 1 || completed || pagesCount > 0) {
+      flushedRef.current = true;
+      try {
+        await bridge.recordReadingSession({
+          manga_id: mangaId,
+          provider,
+          chapter_id: chapterId,
+          duration_seconds: elapsed,
+          pages_read: pagesCount,
+          completed_chapter: completed,
+        });
+      } catch {
+        // Non-blocking best-effort local persistence
+      }
+    }
+  }, [enabled, mangaId, provider, chapterId, bridge]);
 
   // Increment active seconds only while document is visible (declared before page tracker so reset runs first)
   useEffect(() => {
@@ -208,27 +237,9 @@ export function useReadingSessionTracker({
 
     return () => {
       clearInterval(timer);
-      if (flushedRef.current) return;
-      const elapsed = activeSecondsRef.current;
-      const pagesCount = visitedPagesRef.current.size;
-      const completed = completedRef.current;
-      if (elapsed >= 3 || completed || pagesCount > 0) {
-        flushedRef.current = true;
-        void bridge
-          .recordReadingSession({
-            manga_id: mangaId,
-            provider,
-            chapter_id: chapterId,
-            duration_seconds: elapsed,
-            pages_read: pagesCount,
-            completed_chapter: completed,
-          })
-          .catch(() => {
-            // Non-blocking best-effort local persistence
-          });
-      }
+      void flushSession();
     };
-  }, [enabled, mangaId, provider, chapterId, bridge]);
+  }, [enabled, mangaId, provider, chapterId, flushSession]);
 
   // Track visited pages and chapter completion
   useEffect(() => {
@@ -240,4 +251,6 @@ export function useReadingSessionTracker({
       completedRef.current = true;
     }
   }, [enabled, chapterId, currentPage, totalPages]);
+
+  return { flushSession };
 }
