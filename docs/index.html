@@ -4,8 +4,10 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f8f7f1">
-  <title>Manga TUI · Lector de manga en terminal</title>
-  <meta name="description" content="Busca, descarga y lee manga en tu terminal o en el Visor Web HD. Para Windows, Linux y macOS, con lectura sin conexión y sincronización opcional.">
+  <title>Mangora · Lector de manga multiplataforma</title>
+  <link rel="icon" type="image/png" href="./images/mangora-icon.png">
+  <link rel="apple-touch-icon" href="./images/mangora-icon.png">
+  <meta name="description" content="Busca, descarga y lee manga con Mangora en Windows, Android e iOS. Lector HD en cascada o doble página, descargas offline y sincronización opcional.">
   <style>
     :root {
       --paper: #f8f7f1;
@@ -28,7 +30,7 @@
     .bar, nav, .brand, .actions, .reader-bar, .reader-foot, .pager, .platforms, .foot { display: flex; align-items: center }
     .bar, .foot { justify-content: space-between; gap: 1rem; padding-block: 1.1rem }
     .brand { gap: .65rem; font: 900 1.35rem/1 var(--display); letter-spacing: -.06em; text-decoration: none }
-    .mark { display: grid; place-items: center; width: 2.15rem; height: 2.15rem; background: var(--red); color: white; font: bold 1.15rem var(--mono); letter-spacing: -.14em; padding-right: .15em }
+    .mark { display: grid; place-items: center; width: 2.15rem; height: 2.15rem; background: var(--red); color: white; font: bold 1.15rem var(--mono); letter-spacing: -.06em; padding-right: 0 }
     nav { gap: clamp(.9rem, 3vw, 2.6rem); font-weight: 600 }
     nav a { text-decoration: none }
     .repo { border: 1px solid var(--ink); padding: .4em .95em }
@@ -163,7 +165,7 @@
   <a class="skip" href="#contenido">Saltar al contenido</a>
   <header>
     <div class="wrap bar">
-      <a class="brand" href="./index.html"><span class="mark" aria-hidden="true">&gt;_</span>Manga TUI</a>
+      <a class="brand" href="./index.html"><span class="mark" aria-hidden="true">M!</span>Mangora</a>
       <nav aria-label="Navegación principal">
         <a href="#descargas">Descargas</a>
         <a href="#funciones">Funciones</a>
@@ -175,13 +177,13 @@
   <main id="contenido">
     <section class="hero wrap" aria-labelledby="portada">
       <div>
-        <p class="eyebrow" id="eyebrow-version">Lector de manga · v0.3.1</p>
-        <h1 id="portada">Tu manga,<em>en terminal.</em></h1>
-        <p class="intro">Encuentra tu próxima serie, guarda sus capítulos y sigue leyendo sin conexión. En tu terminal o a toda página en el navegador.</p>
+        <p class="eyebrow" id="eyebrow-version">Mangora · Lector multiplataforma · v0.1.1</p>
+        <h1 id="portada">Tu manga,<em>en papel y tinta.</em></h1>
+        <p class="intro">Encuentra tu próxima serie en español o inglés, lee en cascada o doble página HD, descarga capítulos sin conexión y sincroniza tu progreso entre Windows, Android e iOS.</p>
         <div class="actions">
-          <a class="button" id="download-btn" href="#descargas">
+          <a class="button" id="download-btn" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora_0.1.1_x64-setup.exe">
             <span aria-hidden="true">↓</span>
-            <span id="download-btn-label">Instalar en Windows</span>
+            <span id="download-btn-label">Descargar Mangora para Windows</span>
           </a>
           <button class="secondary" id="open-sample" type="button">Ver muestra</button>
         </div>
@@ -191,19 +193,18 @@
             <code class="cmd-code">irm https://tomahawk1103.github.io/manga-tui/install.ps1 | iex</code>
             <button class="copy-btn" type="button" data-copy="irm https://tomahawk1103.github.io/manga-tui/install.ps1 | iex">Copiar</button>
           </div>
-          <p class="cmd-caption">Recomendado en Windows · Sin bloqueo de Edge · Verifica SHA-256 · <a href="./install.ps1">Ver script ↗</a></p>
+          <p class="cmd-caption">Instalación rápida de Mangora en Windows · Verifica SHA-256 · <a href="./install.ps1">Ver script ↗</a></p>
         </div>
         <p class="platforms">
-          <span><a href="#descargas">Windows (PowerShell / .exe / .zip)</a></span>
-          <span><a href="#descargas">Android (.apk)</a></span>
+          <span><a href="#descargas">Windows (.exe / .msi / PowerShell)</a></span>
+          <span><a href="#descargas">Android (.apk ARM64)</a></span>
           <span><a href="#descargas">iOS (SideStore / .ipa)</a></span>
-          <span><a href="#descargas">Linux</a></span>
-          <span><a href="#descargas">macOS</a></span>
+          <span><a href="https://github.com/tomahawk1103/manga-tui">Código abierto (MIT)</a></span>
         </p>
       </div>
       <div class="stage" id="muestra">
         <figure aria-label="Lector de muestra">
-          <div class="reader-bar"><span>&gt;_ manga-tui / lector</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
+          <div class="reader-bar"><span>M! mangora / lector</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
           <a class="panel" id="full-page" href="images/pagina-2.jpg" aria-label="Abrir página completa">
             <img id="art" src="images/pagina-2.jpg" alt="Una joven sonríe con las manos levantadas en una viñeta en blanco y negro.">
           </a>
@@ -223,15 +224,15 @@
     <section id="funciones" class="wrap features">
       <h2>Del catálogo a la viñeta.</h2>
       <div class="grid">
-        <article><span class="glyph" aria-hidden="true">[?]</span><h3>Encuentra tu serie</h3><p>Busca entre proveedores en español e inglés y sigue los capítulos nuevos de tus series.</p></article>
-        <article><span class="glyph" aria-hidden="true">&gt;_</span><h3>Elige cómo leer</h3><p>Lee en terminal con Sixel, Kitty o iTerm2. Abre el Visor Web HD local para acercarte a los detalles con zoom.</p></article>
-        <article><span class="glyph" aria-hidden="true">[↓]</span><h3>Llévatelo sin conexión</h3><p>Descarga los capítulos antes de salir. Los encontrarás en la pestaña Descargas incluso cuando estés sin internet.</p></article>
-        <article><span class="glyph" aria-hidden="true">[▶]</span><h3>Anime desde la terminal</h3><p>Abre Anime con F9 para buscar en AnimeAV1 y JKAnime. Reproduce los episodios en el navegador, VLC o mpv y recupera el progreso del reproductor web.</p></article>
+        <article><span class="glyph" aria-hidden="true">[M!]</span><h3>Catálogo en español e inglés</h3><p>Explora InManga, MangaDex, MangaOni, LeerCapítulo, WeebCentral, MangaPill y Comizy desde una sola biblioteca unificada.</p></article>
+        <article><span class="glyph" aria-hidden="true">[HD]</span><h3>Lector editorial a medida</h3><p>Lee en cascada vertical, página simple o doble página RTL/LTR con zoom fluido y modos Papel y Tinta.</p></article>
+        <article><span class="glyph" aria-hidden="true">[↓]</span><h3>Descargas 100 % sin conexión</h3><p>Guarda capítulos en CBZ, EPUB, PDF o imágenes RAW con cola en segundo plano para leer cuando estés sin internet.</p></article>
+        <article><span class="glyph" aria-hidden="true">[☁]</span><h3>Sincronización y trackers</h3><p>Conecta AniList, MyAnimeList, Google Drive o carpetas locales y lleva tu progreso entre PC y móvil con <code>library_sync.json</code>.</p></article>
       </div>
     </section>
     <section id="descargas" class="wrap downloads" aria-labelledby="descargas-titulo">
-      <h2 id="descargas-titulo">Descarga directa.</h2>
-      <p class="release-meta" id="release-meta">Versión v0.3.1 · Descarga directa del instalador oficial.</p>
+      <h2 id="descargas-titulo">Descarga Mangora.</h2>
+      <p class="release-meta" id="release-meta">Versión mangora-v0.1.1 · Instaladores oficiales para Windows, Android e iOS.</p>
       <div class="install-banner">
         <div class="install-banner-head">
           <strong>Recomendado en Windows · PowerShell</strong>
@@ -242,42 +243,25 @@
           <code class="cmd-code">irm https://tomahawk1103.github.io/manga-tui/install.ps1 | iex</code>
           <button class="copy-btn" type="button" data-copy="irm https://tomahawk1103.github.io/manga-tui/install.ps1 | iex">Copiar</button>
         </div>
-        <p>Abre PowerShell o Windows Terminal, pega el comando y pulsa Enter. Descarga el instalador oficial desde GitHub, comprueba su hash SHA-256 y abre el asistente sin avisos de Edge.</p>
+        <p>Abre PowerShell o Windows Terminal, pega el comando y pulsa Enter. Descarga el instalador oficial de Mangora desde GitHub, comprueba su hash en <code>SHA256SUMS.txt</code> y abre el asistente sin avisos de Edge.</p>
       </div>
       <div class="grid">
         <article>
           <span class="glyph" aria-hidden="true">[WIN]</span>
-          <h3>Windows</h3>
-          <p>Instalador clásico con acceso directo y desinstalador que conserva tu biblioteca y configuración.</p>
+          <h3>Windows (64 bits)</h3>
+          <p>Aplicación nativa de escritorio para Windows 10/11 con lector HD, biblioteca local y sincronización automática.</p>
           <div class="dl-actions">
-            <a class="button" id="dl-win-installer" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-x86_64-pc-windows-msvc-setup.exe">↓ Instalador (.exe)</a>
-            <a class="dl-link" id="dl-win-portable" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-x86_64-pc-windows-msvc-portable.zip">Versión portable (.zip)</a>
+            <a class="button" id="dl-win-installer" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora_0.1.1_x64-setup.exe">↓ Instalador Mangora (.exe)</a>
+            <a class="dl-link" id="dl-win-msi" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora_0.1.1_x64_en-US.msi">Paquete MSI (.msi)</a>
           </div>
           <p class="dl-hint">Si Edge marca el <code>.exe</code> como no seguro, usa el comando de PowerShell de arriba o abre la nota inferior.</p>
-        </article>
-        <article>
-          <span class="glyph" aria-hidden="true">[LNX]</span>
-          <h3>Linux</h3>
-          <p>Binario estático para terminales compatibles con Sixel o Kitty. También disponible vía Cargo o Nix.</p>
-          <div class="dl-actions">
-            <a class="dl-link" id="dl-linux" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-x86_64-unknown-linux-gnu.tar.gz">↓ Linux x86_64 (.tar.gz)</a>
-          </div>
-        </article>
-        <article>
-          <span class="glyph" aria-hidden="true">[MAC]</span>
-          <h3>macOS</h3>
-          <p>Compilado nativo para Apple Silicon e Intel. Recomendado en iTerm2 o Kitty con soporte de imágenes.</p>
-          <div class="dl-actions">
-            <a class="dl-link" id="dl-mac-arm" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-aarch64-apple-darwin.tar.gz">↓ Apple Silicon (.tar.gz)</a>
-            <a class="dl-link" id="dl-mac-intel" href="https://github.com/tomahawk1103/manga-tui/releases/download/v0.3.1/manga-tui-0.3.1-x86_64-apple-darwin.tar.gz">Intel x86_64 (.tar.gz)</a>
-          </div>
         </article>
         <article>
           <span class="glyph" aria-hidden="true">[APK]</span>
           <h3>Android</h3>
           <p>App táctil Mangora con el mismo motor Rust, lector en cascada, descargas CBZ offline y sincronización con PC.</p>
           <div class="dl-actions">
-            <a class="button" id="dl-android-apk" href="https://github.com/tomahawk1103/manga-tui/releases">↓ Descargar APK (ARM64)</a>
+            <a class="button" id="dl-android-apk" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora-0.1.1-android-arm64-v8a.apk">↓ Descargar Mangora APK (ARM64)</a>
           </div>
           <p class="dl-hint">Instalación directa firmada (Android 7.0+ · ARM64). Compatible con Obtainium.</p>
         </article>
@@ -287,7 +271,7 @@
           <p>App táctil Mangora para iPhone e iPad (iOS 15+) con lector HD, descargas offline y sincronización con PC.</p>
           <div class="dl-actions">
             <a class="button" id="dl-ios-sidestore" href="sidestore://source?url=https%3A%2F%2Ftomahawk1103.github.io%2Fmanga-tui%2Fsidestore.json">+ Añadir a SideStore</a>
-            <a class="dl-link" id="dl-ios-ipa" href="https://github.com/tomahawk1103/manga-tui/releases">↓ Descargar .ipa (sin firmar)</a>
+            <a class="dl-link" id="dl-ios-ipa" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora-0.1.1-ios-unsigned.ipa">↓ Descargar .ipa (sin firmar)</a>
             <a class="dl-link" href="./sidestore.json">Fuente SideStore (.json) ↗</a>
             <button class="copy-btn" type="button" data-copy="https://tomahawk1103.github.io/manga-tui/sidestore.json">Copiar URL de fuente</button>
           </div>
@@ -306,34 +290,34 @@
         </div>
       </details>
       <details class="smartscreen-note">
-        <summary>¿Edge muestra «no se descarga habitualmente» o «no seguro» al bajar el .exe?</summary>
+        <summary>¿Edge muestra «no se descarga habitualmente» o «no seguro» al bajar el .exe de Mangora?</summary>
         <div class="note-body">
-          <p>Manga TUI es código abierto bajo licencia MIT y se compila de forma pública en <a href="https://github.com/tomahawk1103/manga-tui/actions">GitHub Actions</a>. Como todavía no incluye un certificado comercial Authenticode, Microsoft Defender SmartScreen suele advertir en descargas directas de archivos <code>.exe</code> nuevos.</p>
+          <p>Mangora es código abierto bajo licencia MIT y se compila de forma pública en <a href="https://github.com/tomahawk1103/manga-tui/actions">GitHub Actions</a>. Como todavía no incluye un certificado comercial Authenticode, Microsoft Defender SmartScreen suele advertir en descargas directas de archivos <code>.exe</code> nuevos.</p>
           <ol>
-            <li><strong>Opción más rápida:</strong> usa el instalador de PowerShell de arriba (verifica automáticamente el checksum <code>SHA-256</code>).</li>
+            <li><strong>Opción más rápida:</strong> usa el instalador de PowerShell de arriba (verifica automáticamente el checksum en <code>SHA256SUMS.txt</code>).</li>
             <li><strong>Si prefieres descargarlo en Edge (<code>Ctrl + J</code>):</strong> pulsa <code>⋯</code> junto al archivo → <strong>Conservar</strong> → <strong>Mostrar más</strong> → <strong>Mantener de todos modos</strong>.</li>
             <li><strong>Si aparece «Windows protegió su PC» al abrirlo:</strong> pulsa <strong>Más información</strong> → <strong>Ejecutar de todas formas</strong>.</li>
           </ol>
-          <p>También puedes comprobar la integridad del archivo comparando su hash con <code>checksum.txt</code> en <a href="https://github.com/tomahawk1103/manga-tui/releases">GitHub Releases ↗</a>.</p>
+          <p>También puedes comprobar la integridad del archivo comparando su hash con <code>SHA256SUMS.txt</code> en <a href="https://github.com/tomahawk1103/manga-tui/releases">GitHub Releases ↗</a>.</p>
         </div>
       </details>
-      <p class="release-foot"><a id="all-releases-link" href="https://github.com/tomahawk1103/manga-tui/releases">Ver todas las versiones, notas de cambio y checksums SHA-256 en GitHub ↗</a></p>
+      <p class="release-foot"><a id="all-releases-link" href="https://github.com/tomahawk1103/manga-tui/releases">Ver todas las versiones de Mangora, notas de cambio y checksums SHA-256 en GitHub ↗</a></p>
       <span id="copy-status" class="sr-only" aria-live="polite"></span>
     </section>
     <section class="wrap privacy" aria-labelledby="privacidad">
       <h2 id="privacidad">Tu progreso,<br>en tus manos.</h2>
-      <div><p>Tu biblioteca se guarda en tu equipo. Si quieres continuar en otro dispositivo, puedes sincronizar el progreso con una carpeta local de nube o con Google Drive. La integración usa el permiso <code>drive.file</code> para gestionar su propia carpeta <code>MangaTUI</code>.</p>
+      <div><p>Tu biblioteca en Mangora se guarda en tu equipo. Si quieres continuar en otro dispositivo, puedes sincronizar el progreso con una carpeta local de nube o con Google Drive. La integración usa el permiso <code>drive.file</code> para gestionar su propia carpeta <code>MangaTUI</code>.</p>
         <a href="./privacy.html">Política de privacidad / Privacy Policy</a>
       </div>
     </section>
   </main>
   <footer><div class="wrap foot">
-    <p><strong>Manga TUI</strong> · Licencia MIT · tomahawk1103 &amp; drodri22</p>
+    <p><strong>Mangora</strong> · Licencia MIT · tomahawk1103 &amp; drodri22</p>
     <div class="foot-links"><a href="https://github.com/tomahawk1103/manga-tui/issues">Soporte técnico</a><a href="mailto:raum973@gmail.com">Contacto</a></div>
   </div></footer>
   <dialog id="sample-modal" class="lightbox" aria-labelledby="modal-title">
     <div class="reader-bar">
-      <span id="modal-title">&gt;_ manga-tui / visor de muestra</span>
+      <span id="modal-title">M! mangora / visor de muestra</span>
       <button type="button" class="modal-close" id="modal-close" aria-label="Cerrar muestra">Cerrar ✕</button>
     </div>
     <div class="lightbox-body">
@@ -456,6 +440,9 @@
     }
 
     document.querySelectorAll('.copy-btn').forEach((btn) => {
+      if (!btn.dataset.origLabel) {
+        btn.dataset.origLabel = btn.textContent || 'Copiar';
+      }
       btn.addEventListener('click', async () => {
         const text = btn.getAttribute('data-copy');
         if (!text) return;
@@ -466,10 +453,10 @@
         btn.textContent = 'Copiado ✓';
         btn.classList.add('copied');
         if (copyStatus) {
-          copyStatus.textContent = 'Comando copiado al portapapeles.';
+          copyStatus.textContent = 'Copiado al portapapeles.';
         }
         const timer = setTimeout(() => {
-          btn.textContent = 'Copiar';
+          btn.textContent = btn.dataset.origLabel || 'Copiar';
           btn.classList.remove('copied');
         }, 2000);
         copyTimers.set(btn, timer);
@@ -492,125 +479,84 @@
     } else if (isAndroid) {
       if (heroCmd) heroCmd.hidden = true;
       heroBtn.href = '#descargas';
-      heroLabel.textContent = 'Descargar APK para Android';
+      heroLabel.textContent = 'Descargar Mangora APK (Android)';
     } else if (isLinux || isMac) {
       if (heroCmd) heroCmd.hidden = true;
       heroBtn.href = '#descargas';
-      heroLabel.textContent = isMac ? 'Descargar para macOS' : 'Descargar para Linux';
+      heroLabel.textContent = 'Ver descargas de Mangora';
     }
 
     (async function hydrateReleases() {
       try {
-        const res = await fetch('https://api.github.com/repos/tomahawk1103/manga-tui/releases?per_page=10', {
+        const res = await fetch('https://api.github.com/repos/tomahawk1103/manga-tui/releases?per_page=20', {
           headers: { Accept: 'application/vnd.github+json' }
         });
         if (!res.ok) return;
         const releases = await res.json();
         if (!Array.isArray(releases)) return;
 
-        const stable = releases.find((r) => !r.draft && !r.prerelease && Array.isArray(r.assets) && r.assets.length > 0);
-        const nightly = releases.find((r) => !r.draft && r.tag_name && r.tag_name.toLowerCase() === 'nightly' && Array.isArray(r.assets) && r.assets.length > 0);
-        const active = stable || nightly;
+        const isMangoraRelease = (r) =>
+          !r.draft && r.tag_name && r.tag_name.toLowerCase().startsWith('mangora-v') && Array.isArray(r.assets) && r.assets.length > 0;
+        const mangoraStable = releases.find((r) => isMangoraRelease(r) && !r.prerelease);
+        const mangoraAny = releases.find(isMangoraRelease);
+        const active = mangoraStable || mangoraAny;
         if (!active) return;
 
-        const findAsset = (suffix) => active.assets.find((a) => a.name && a.name.endsWith(suffix));
-        const fmtSize = (asset) => asset && asset.size ? ' · ' + (asset.size / (1024 * 1024)).toFixed(1) + ' MB' : '';
+        const findAsset = (rel, test) => (rel && Array.isArray(rel.assets) ? rel.assets.find((a) => a.name && test(a.name.toLowerCase())) : null);
+        const fmtSize = (asset) => (asset && asset.size ? ' · ' + (asset.size / (1024 * 1024)).toFixed(1) + ' MB' : '');
+        const cleanVer = (tag) => String(tag || '').replace(/^mangora-/i, '');
 
-        const winExe = findAsset('-x86_64-pc-windows-msvc-setup.exe');
-        const winZip = findAsset('-x86_64-pc-windows-msvc-portable.zip');
-        const linuxTar = findAsset('-x86_64-unknown-linux-gnu.tar.gz');
-        const macArm = findAsset('-aarch64-apple-darwin.tar.gz');
-        const macIntel = findAsset('-x86_64-apple-darwin.tar.gz');
+        const winExe = findAsset(active, (n) => n.startsWith('mangora') && n.endsWith('-setup.exe'));
+        const winMsi = findAsset(active, (n) => n.startsWith('mangora') && n.endsWith('.msi'));
 
         const dlWinExe = document.querySelector('#dl-win-installer');
-        const dlWinZip = document.querySelector('#dl-win-portable');
-        const dlLinux = document.querySelector('#dl-linux');
-        const dlMacArm = document.querySelector('#dl-mac-arm');
-        const dlMacIntel = document.querySelector('#dl-mac-intel');
+        const dlWinMsi = document.querySelector('#dl-win-msi');
         const dlAndroidApk = document.querySelector('#dl-android-apk');
         const dlIosIpa = document.querySelector('#dl-ios-ipa');
         const eyebrow = document.querySelector('#eyebrow-version');
         const meta = document.querySelector('#release-meta');
         const allLink = document.querySelector('#all-releases-link');
 
-        const mangoraApkRelease = releases.find(
-          (r) =>
-            !r.draft &&
-            Array.isArray(r.assets) &&
-            r.assets.some((a) => a.name && a.name.toLowerCase().endsWith('.apk'))
-        );
-        const androidApk = mangoraApkRelease
-          ? mangoraApkRelease.assets.find((a) => a.name && a.name.toLowerCase().endsWith('-android-arm64-v8a.apk')) ||
-            mangoraApkRelease.assets.find((a) => a.name && a.name.toLowerCase().endsWith('.apk'))
-          : null;
+        const apkRelease = releases.find((r) => isMangoraRelease(r) && findAsset(r, (n) => n.endsWith('.apk')));
+        const androidApk = findAsset(apkRelease, (n) => n.endsWith('-android-arm64-v8a.apk')) || findAsset(apkRelease, (n) => n.endsWith('.apk'));
 
         if (dlAndroidApk && androidApk) {
           dlAndroidApk.href = androidApk.browser_download_url;
-          dlAndroidApk.textContent = '↓ Mangora APK (' + (mangoraApkRelease.tag_name || 'ARM64') + fmtSize(androidApk) + ')';
+          dlAndroidApk.textContent = '↓ Mangora APK (' + cleanVer(apkRelease.tag_name) + fmtSize(androidApk) + ')';
         }
         if (isAndroid && androidApk) {
           heroBtn.href = androidApk.browser_download_url;
-          heroLabel.textContent = 'Descargar APK para Android' + fmtSize(androidApk);
+          heroLabel.textContent = 'Descargar Mangora APK' + fmtSize(androidApk);
         }
 
-        const mangoraIpaRelease = releases.find(
-          (r) =>
-            !r.draft &&
-            Array.isArray(r.assets) &&
-            r.assets.some((a) => a.name && a.name.toLowerCase().endsWith('.ipa'))
-        );
-        const iosIpa = mangoraIpaRelease
-          ? mangoraIpaRelease.assets.find((a) => a.name && a.name.toLowerCase().endsWith('-ios-unsigned.ipa')) ||
-            mangoraIpaRelease.assets.find((a) => a.name && a.name.toLowerCase().endsWith('.ipa'))
-          : null;
+        const ipaRelease = releases.find((r) => isMangoraRelease(r) && findAsset(r, (n) => n.endsWith('.ipa')));
+        const iosIpa = findAsset(ipaRelease, (n) => n.endsWith('-ios-unsigned.ipa')) || findAsset(ipaRelease, (n) => n.endsWith('.ipa'));
 
         if (dlIosIpa && iosIpa) {
           dlIosIpa.href = iosIpa.browser_download_url;
-          dlIosIpa.textContent = '↓ Mangora IPA (' + (mangoraIpaRelease.tag_name || 'iOS') + fmtSize(iosIpa) + ')';
+          dlIosIpa.textContent = '↓ Mangora IPA (' + cleanVer(ipaRelease.tag_name) + fmtSize(iosIpa) + ')';
         }
 
-        if (winExe) {
+        if (dlWinExe && winExe) {
           dlWinExe.href = winExe.browser_download_url;
-          dlWinExe.textContent = '↓ Instalador (.exe' + fmtSize(winExe) + ')';
+          dlWinExe.textContent = '↓ Instalador Mangora (.exe' + fmtSize(winExe) + ')';
+          if (!isAndroid && !isIOS && !isLinux && !isMac) {
+            heroBtn.href = winExe.browser_download_url;
+            heroLabel.textContent = 'Descargar Mangora para Windows' + fmtSize(winExe);
+          }
         }
-        if (winZip) {
-          dlWinZip.href = winZip.browser_download_url;
-          dlWinZip.textContent = 'Versión portable (.zip' + fmtSize(winZip) + ')';
-        }
-        if (linuxTar) {
-          dlLinux.href = linuxTar.browser_download_url;
-          dlLinux.textContent = '↓ Linux x86_64 (.tar.gz' + fmtSize(linuxTar) + ')';
-        } else if (!stable) {
-          dlLinux.href = active.html_url;
-          dlLinux.textContent = 'Ver en GitHub Releases ↗';
-        }
-        if (macArm) {
-          dlMacArm.href = macArm.browser_download_url;
-          dlMacArm.textContent = '↓ Apple Silicon (.tar.gz' + fmtSize(macArm) + ')';
-        } else if (!stable) {
-          dlMacArm.href = active.html_url;
-          dlMacArm.textContent = 'Ver en GitHub Releases ↗';
-        }
-        if (macIntel) {
-          dlMacIntel.href = macIntel.browser_download_url;
-          dlMacIntel.textContent = 'Intel x86_64 (.tar.gz' + fmtSize(macIntel) + ')';
-        } else if (!stable) {
-          dlMacIntel.href = active.html_url;
-          dlMacIntel.textContent = 'Ver todas las plataformas ↗';
+        if (dlWinMsi && winMsi) {
+          dlWinMsi.href = winMsi.browser_download_url;
+          dlWinMsi.textContent = 'Paquete MSI (.msi' + fmtSize(winMsi) + ')';
         }
 
-        if (isLinux && linuxTar) {
-          heroBtn.href = linuxTar.browser_download_url;
-          heroLabel.textContent = 'Descargar para Linux (.tar.gz)';
+        if (eyebrow) {
+          eyebrow.textContent = 'Mangora · Lector multiplataforma · ' + cleanVer(active.tag_name);
         }
-
-        if (stable) {
-          eyebrow.textContent = 'Lector de manga · ' + stable.tag_name;
-          meta.textContent = 'Versión estable ' + stable.tag_name + ' · Descarga directa oficial.';
-        } else {
-          meta.textContent = 'Última compilación publicada (' + (active.name || active.tag_name) + ') · Descarga directa oficial.';
+        if (meta) {
+          meta.textContent = 'Versión ' + active.tag_name + ' · Instaladores oficiales para Windows, Android e iOS.';
         }
-        if (active.html_url) {
+        if (allLink && active.html_url) {
           allLink.href = active.html_url;
         }
       } catch {}
