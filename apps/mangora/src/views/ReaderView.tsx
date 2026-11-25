@@ -923,7 +923,7 @@ export function ReaderView({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className="relative flex-1 overflow-auto"
+        className="relative flex-1 touch-pan-x touch-pan-y overflow-auto"
       >
         {isLoading ? (
           <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 p-6 text-center">
