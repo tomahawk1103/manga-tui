@@ -56,7 +56,21 @@ export interface ReaderViewProps {
   onClose: () => Promise<void> | void;
   onNotify: (message: string) => void;
   onRegisterBackHandler?: (handler: (() => Promise<boolean>) | null) => void;
+  source?: ReaderSource;
 }
+
+export interface ReaderSource {
+  openChapter: typeof openReaderChapter;
+  pageUrl: typeof buildReaderPageUrl;
+  saveProgress: typeof saveReaderProgress;
+  pageSize?: { width: number; height: number };
+}
+
+const nativeSource: ReaderSource = {
+  openChapter: openReaderChapter,
+  pageUrl: buildReaderPageUrl,
+  saveProgress: saveReaderProgress,
+};
 
 function buildSpreads(pageCount: number, firstPageSingle: boolean): number[][] {
   if (pageCount <= 0) return [];
@@ -90,6 +104,7 @@ export function ReaderView({
   onClose,
   onNotify,
   onRegisterBackHandler,
+  source = nativeSource,
 }: ReaderViewProps) {
   const t = getTranslations(language).reader;
   const hito5Labels = getHito5Labels(language);
@@ -147,7 +162,7 @@ export function ReaderView({
       if (lastSavedKeyRef.current === key) return;
       lastSavedKeyRef.current = key;
       try {
-        await saveReaderProgress({
+        await source.saveProgress({
           mangaId: targetSession.mangaId,
           provider: targetSession.provider,
           mangaTitle: targetSession.mangaTitle,
@@ -162,7 +177,7 @@ export function ReaderView({
         // Keep reading fluid even if transient DB busy lock happens
       }
     },
-    [],
+    [source],
   );
 
   // Open selected chapter session
@@ -173,7 +188,7 @@ export function ReaderView({
     setFailedPages({});
     pageRefs.current = [];
 
-    openReaderChapter(activeRequest)
+    source.openChapter(activeRequest)
       .then((res) => {
         if (!active) return;
         setSession(res);
@@ -192,7 +207,7 @@ export function ReaderView({
     return () => {
       active = false;
     };
-  }, [activeRequest, reloadNonce]);
+  }, [activeRequest, reloadNonce, source]);
 
   // Restore initial page scroll position in cascade mode
   useEffect(() => {
@@ -203,6 +218,21 @@ export function ReaderView({
     }, 80);
     return () => window.clearTimeout(timer);
   }, [session?.sessionId, session?.initialPage, prefs.viewMode]);
+
+  useEffect(() => {
+    if (source === nativeSource) return;
+    const save = () => void flushProgress(latestSessionRef.current, latestPageRef.current);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") save();
+    };
+    window.addEventListener("pagehide", save);
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    return () => {
+      window.removeEventListener("pagehide", save);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      save();
+    };
+  }, [flushProgress, source]);
 
   // Debounced auto-save reading progress on page change
   useEffect(() => {
@@ -221,7 +251,7 @@ export function ReaderView({
       const idx = currentPage + offset;
       if (idx < session.pageCount) {
         const img = new Image();
-        img.src = buildReaderPageUrl(session.sessionId, idx);
+        img.src = source.pageUrl(session.sessionId, idx);
         preloaded.push(img);
       }
     }
@@ -230,7 +260,7 @@ export function ReaderView({
         img.src = "";
       });
     };
-  }, [session, currentPage]);
+  }, [session, currentPage, source]);
 
   const applyPrefs = useCallback(
     (patch: Partial<ReaderPrefs>, persist = true) => {
@@ -574,7 +604,7 @@ export function ReaderView({
   const renderPageImage = (pageIndex: number) => {
     if (!session) return null;
     const nonce = failedPages[pageIndex] ?? 0;
-    const src = buildReaderPageUrl(session.sessionId, pageIndex);
+    const src = source.pageUrl(session.sessionId, pageIndex);
     const cacheBustedSrc = nonce > 0 ? `${src}${src.includes("?") ? "&" : "?"}r=${nonce}` : src;
 
     const isCascade = prefs.viewMode === "cascade";
@@ -619,6 +649,8 @@ export function ReaderView({
       >
         <img
           src={cacheBustedSrc}
+          width={source.pageSize?.width}
+          height={source.pageSize?.height}
           alt={`${session.mangaTitle} - ${pageIndex + 1}`}
           loading={Math.abs(pageIndex - currentPage) <= 3 ? "eager" : "lazy"}
           decoding="async"

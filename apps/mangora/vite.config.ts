@@ -6,7 +6,8 @@ const host = (
   globalThis as { process?: { env?: Record<string, string | undefined> } }
 ).process?.env?.TAURI_DEV_HOST;
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
+  ...(mode === "web" && { root: "web", base: "./" }),
   plugins: [react(), tailwindcss()],
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_ENV_*"],
@@ -25,4 +26,4 @@ export default defineConfig({
       ignored: ["**/src-tauri/**"],
     },
   },
-});
+}));

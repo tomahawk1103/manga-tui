@@ -1,0 +1,11 @@
+{
+  "name": "Mangora Web",
+  "short_name": "Mangora",
+  "id": "./",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "lang": "es",
+  "background_color": "#f8f7f1",
+  "theme_color": "#f8f7f1"
+}
