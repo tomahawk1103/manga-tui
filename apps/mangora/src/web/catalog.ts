@@ -12,18 +12,19 @@ export interface Chapter {
 export interface Series {
   id: string;
   title: string;
-  cover: string;
+  cover?: string;
   language: string;
   chapters: Chapter[];
 }
 
 interface ChapterManifest {
-  width: number;
-  height: number;
+  width?: number;
+  height?: number;
   pages: string[];
 }
 
-const catalogUrl = new URL(import.meta.env.VITE_MANGORA_CATALOG_URL || "./api/catalog.json", document.baseURI);
+const defaultCatalog = import.meta.env.MODE === "mangaoni" ? "./api/mangaoni/catalog.json" : "./api/catalog.json";
+const catalogUrl = new URL(import.meta.env.VITE_MANGORA_CATALOG_URL || defaultCatalog, document.baseURI);
 
 async function fetchJson<T>(url: URL): Promise<T> {
   const response = await fetch(url, { cache: "no-cache" });
@@ -33,7 +34,7 @@ async function fetchJson<T>(url: URL): Promise<T> {
 
 export async function loadCatalog(): Promise<Series[]> {
   const series = await fetchJson<Series[]>(catalogUrl);
-  return series.map((item) => ({ ...item, cover: new URL(item.cover, catalogUrl).href }));
+  return series.map((item) => ({ ...item, cover: item.cover && new URL(item.cover, catalogUrl).href }));
 }
 
 export function chapterRequest(series: Series, chapter: Chapter): OpenReaderChapterRequest {
@@ -65,7 +66,7 @@ export function savedPage(seriesId: string, chapterId: string): number | null {
 }
 
 export function makeReaderSource(series: Series): ReaderSource {
-  const loaded = new Map<string, { pages: string[]; width: number; height: number }>();
+  const loaded = new Map<string, ChapterManifest>();
 
   function neighbor(chapter: Chapter | undefined): ReaderChapterNeighbor | null {
     if (!chapter) return null;
@@ -80,7 +81,10 @@ export function makeReaderSource(series: Series): ReaderSource {
   }
 
   return {
-    pageSize: (sessionId) => loaded.get(sessionId),
+    pageSize(sessionId) {
+      const chapter = loaded.get(sessionId);
+      if (chapter?.width && chapter.height) return { width: chapter.width, height: chapter.height };
+    },
     pageUrl: (sessionId, index) => loaded.get(sessionId)!.pages[index],
     async openChapter(request) {
       const index = series.chapters.findIndex((chapter) => chapter.id === request.chapterId);
@@ -89,8 +93,7 @@ export function makeReaderSource(series: Series): ReaderSource {
       const url = new URL(chapter.manifest, catalogUrl);
       const manifest = await fetchJson<ChapterManifest>(url);
       if (!Array.isArray(manifest.pages) || manifest.pages.length === 0 ||
-          !Number.isFinite(manifest.width) || manifest.width <= 0 ||
-          !Number.isFinite(manifest.height) || manifest.height <= 0) {
+          manifest.pages.some((page) => typeof page !== "string" || !page)) {
         throw new Error("El servidor no devolvió páginas válidas para este capítulo.");
       }
       const pages = manifest.pages.map((page) => new URL(page, url).href);
@@ -99,7 +102,7 @@ export function makeReaderSource(series: Series): ReaderSource {
         sessionId: chapter.id,
         mangaId: series.id,
         mangaTitle: series.title,
-        coverUrl: series.cover,
+        coverUrl: series.cover ?? null,
         provider: request.provider,
         providerLabel: "Mangora",
         chapterId: chapter.id,

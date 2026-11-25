@@ -1,5 +1,13 @@
 [
   {
+    "id": "mangaoni-dandadan",
+    "title": "Dandadan",
+    "language": "es",
+    "chapters": [
+      { "id": "831345", "title": "Capítulo 254 · MangaOni", "number": "254", "manifest": "./dandadan-254.json" }
+    ]
+  },
+  {
     "id": "mangora-sample",
     "title": "Manga de muestra",
     "cover": "../../images/pagina-1.jpg",
