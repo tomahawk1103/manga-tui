@@ -250,15 +250,18 @@ async fn select_source(
     client: &reqwest::Client,
     mirrors: &[VideoMirror],
 ) -> Result<(usize, Arc<proxy::Source>), AnimeError> {
-    let mut last_error = AnimeError::UnsupportedMirror("No supported mirrors for this episode".into());
+    if mirrors.is_empty() {
+        return Err(AnimeError::UnsupportedMirror("No supported mirrors for this episode".into()));
+    }
+    let mut failures = Vec::with_capacity(mirrors.len());
     for (index, mirror) in mirrors.iter().enumerate() {
         let result = resolve_source(extractor, client, mirror).await;
         match result {
             Ok(stream) => return Ok((index, Arc::new(stream))),
-            Err(error) => last_error = error,
+            Err(error) => failures.push((mirror.server_name.clone(), error)),
         }
     }
-    Err(last_error)
+    Err(AnimeError::MirrorsFailed(failures))
 }
 
 async fn resolve_source(
@@ -825,5 +828,27 @@ mod tests {
         denied.assert_async().await;
         embed.assert_async().await;
         media.assert_async().await;
+
+        let mut failing_mirrors = mirrors;
+        failing_mirrors[1].embed_url = format!("http://{host}/embed-missing.html");
+        let Err(AnimeError::MirrorsFailed(failures)) =
+            select_source(&ExtractorRegistry::default(), &client, &failing_mirrors).await
+        else {
+            panic!("expected both mirror failures");
+        };
+        let codes: Vec<_> = failures
+            .iter()
+            .map(|(name, error)| {
+                let AnimeError::Http {
+                    status: Some(status),
+                    ..
+                } = error
+                else {
+                    panic!("expected HTTP status for {name}");
+                };
+                (name.as_str(), *status)
+            })
+            .collect();
+        assert_eq!(codes, [("HLS", 403), ("MP4Upload", 404)]);
     }
 }

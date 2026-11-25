@@ -29,6 +29,7 @@ pub enum AnimeError {
     NotFound(String),
     RateLimited(String),
     UnsupportedMirror(String),
+    MirrorsFailed(Vec<(String, AnimeError)>),
     ExtractionFailed(String),
     InvalidInput(String),
     Persistence(String),
@@ -49,6 +50,13 @@ impl Display for AnimeError {
             Self::NotFound(msg) => write!(f, "Not found: {msg}"),
             Self::RateLimited(msg) => write!(f, "Rate limited: {msg}"),
             Self::UnsupportedMirror(msg) => write!(f, "Unsupported mirror: {msg}"),
+            Self::MirrorsFailed(failures) => {
+                write!(f, "Playback mirrors failed")?;
+                for (server, error) in failures {
+                    write!(f, " | {server}: {error}")?;
+                }
+                Ok(())
+            },
             Self::ExtractionFailed(msg) => write!(f, "Extraction failed: {msg}"),
             Self::InvalidInput(msg) => write!(f, "Invalid input: {msg}"),
             Self::Persistence(msg) => write!(f, "Playback history error: {msg}"),

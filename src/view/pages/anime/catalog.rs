@@ -140,20 +140,37 @@ pub(super) async fn playback(
         AnimeProviders::AnimeAv1 => AnimeProviders::JkAnime,
         AnimeProviders::JkAnime => AnimeProviders::AnimeAv1,
     };
-    let provider = Arc::new(Provider::new(alternate)?);
-    let candidates = provider.search(&anime.title, 1).await?;
-    let Some(candidate) = unique_title(&anime.title, &candidates.items) else { return Err(original) };
-    let source = provider.get_details(&candidate.slug).await?;
-    if title_key(&source.title) != title_key(&anime.title)
-        || matches!((anime.mal_id, source.mal_id), (Some(a), Some(b)) if a != b)
-        || (anime.anime_type != anime_core::AnimeType::Unknown
-            && source.anime_type != anime_core::AnimeType::Unknown
-            && anime.anime_type != source.anime_type)
-    {
-        return Err(original);
+    let fallback = async {
+        let provider = Arc::new(Provider::new(alternate)?);
+        let candidates = provider.search(&anime.title, 1).await?;
+        let Some(candidate) = unique_title(&anime.title, &candidates.items) else { return Ok(None) };
+        let source = provider.get_details(&candidate.slug).await?;
+        if title_key(&source.title) != title_key(&anime.title)
+            || matches!((anime.mal_id, source.mal_id), (Some(a), Some(b)) if a != b)
+            || (anime.anime_type != anime_core::AnimeType::Unknown
+                && source.anime_type != anime_core::AnimeType::Unknown
+                && anime.anime_type != source.anime_type)
+        {
+            return Ok(None);
+        }
+        start_anime_playback_with_owner(provider, &source, &anime, episodes, index, config, None)
+            .await
+            .map(Some)
     }
-    let server = start_anime_playback_with_owner(provider, &source, &anime, episodes, index, config, None).await?;
-    Ok((server, alternate))
+    .await;
+    match (fallback, original) {
+        (Ok(Some(server)), _) => Ok((server, alternate)),
+        (Err(AnimeError::MirrorsFailed(other)), AnimeError::MirrorsFailed(mut failures)) => {
+            failures.extend(other);
+            Err(AnimeError::MirrorsFailed(failures))
+        },
+        (Err(error), original @ AnimeError::MirrorsFailed(_)) => {
+            log::debug!("Anime playback fallback on {alternate} failed: {error}");
+            Err(original)
+        },
+        (Err(error), _) => Err(error),
+        (Ok(None), original) => Err(original),
+    }
 }
 
 fn title_key(title: &str) -> String {

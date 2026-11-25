@@ -366,8 +366,13 @@ impl Resolve for PublicDns {
 }
 
 pub(super) fn valid_url(url: &Url) -> bool {
+    let allowed_port = match url.port_or_known_default() {
+        Some(80 | 443) => true,
+        Some(183) => url.scheme() == "https" && url.host_str().is_some_and(|host| host.ends_with(".mp4upload.com")),
+        _ => false,
+    };
     matches!(url.scheme(), "http" | "https")
-        && matches!(url.port_or_known_default(), Some(80 | 443))
+        && allowed_port
         && url.username().is_empty()
         && url.password().is_none()
         && url.host_str().is_some_and(|host| {
@@ -413,11 +418,17 @@ mod tests {
             "http://[fd00::1]/x",
             "file:///secret",
             "https://cdn.example.test:8888/x",
+            "https://cdn.example.test:183/x",
+            "http://a4.mp4upload.com:183/x",
+            "https://a4.mp4upload.com.example.test:183/x",
+            "https://fake-mp4upload.com:183/x",
+            "https://user:password@a4.mp4upload.com:183/x",
             "https://user:password@cdn.example.test/x",
         ] {
             assert!(!valid_url(&Url::parse(target).unwrap()), "{target}");
         }
         assert!(valid_url(&Url::parse("https://cdn.example.test/stream").unwrap()));
+        assert!(valid_url(&Url::parse("https://a4.mp4upload.com:183/video.mp4").unwrap()));
         assert!(PublicDns.resolve("localhost".parse().unwrap()).await.is_err());
     }
 }

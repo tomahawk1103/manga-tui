@@ -485,10 +485,7 @@ impl AnimePage {
                     },
                     Err(error) => failed(tr("No se pudo abrir el reproductor.", "Unable to open the player."), error),
                 },
-                Err(error) => failed(
-                    tr("Ningún servidor compatible pudo iniciar la reproducción.", "No supported mirror could start playback."),
-                    error,
-                ),
+                Err(error) => playback_failure(error),
             }
         }));
     }
@@ -965,6 +962,32 @@ fn clicked_row(area: Rect, list: &ListState, position: Position, count: usize) -
 fn failed(message: &str, error: impl std::fmt::Display) -> AnimeAction {
     log::debug!("Anime: {error}");
     AnimeAction::Error(message.to_owned())
+}
+
+fn playback_failure(error: AnimeError) -> AnimeAction {
+    let message = match &error {
+        AnimeError::MirrorsFailed(failures) => failures
+            .iter()
+            .map(|(server, cause)| {
+                let reason = match cause {
+                    AnimeError::Http {
+                        status: Some(status),
+                        ..
+                    } => format!("HTTP {status}"),
+                    AnimeError::Http { .. } => tr("fallo de conexión", "connection failed").into(),
+                    AnimeError::InvalidInput(_) => tr("enlace rechazado", "link rejected").into(),
+                    AnimeError::Parse(_) => tr("formato inválido", "invalid format").into(),
+                    _ => tr("vídeo no disponible", "video unavailable").into(),
+                };
+                let server: String = server.chars().filter(|ch| !ch.is_control()).take(32).collect();
+                format!("{server}: {reason}")
+            })
+            .collect::<Vec<_>>()
+            .join(" · "),
+        AnimeError::UnsupportedMirror(_) => tr("No hay servidores compatibles.", "No supported mirrors.").into(),
+        _ => tr("No se pudo iniciar la reproducción.", "Unable to start playback.").into(),
+    };
+    failed(&message, error)
 }
 
 async fn launch(server: &AnimePlaybackServer, config: &AnimeConfig) -> std::io::Result<Option<Child>> {
