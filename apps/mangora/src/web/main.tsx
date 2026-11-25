@@ -124,7 +124,7 @@ function WebApp({ initialPrefs }: { initialPrefs: ReaderPrefs }) {
             </label>
             <button type="submit" disabled={!query.trim()} className="editorial-btn-primary min-h-[44px] disabled:opacity-50">Buscar en InManga</button>
           </form>
-          <p className="text-sm text-[var(--muted)]">La búsqueda abre el catálogo de InManga.</p>
+          <a className="inline-block text-sm underline" href="https://inmanga.com/manga/consult">Abrir catálogo de InManga</a>
           {matches.length ? matches.map((item) => (
             <a key={item.id} href={seriesRoute(item.id)} className="editorial-card flex max-w-md items-center gap-4 p-3">
               <img src={item.cover} alt="" className="w-20" />
