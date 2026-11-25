@@ -145,6 +145,52 @@ export function patchInfoPlist(plistXml) {
   return next;
 }
 
+export function disableUnsignedCodeSigningInPbxproj(pbxprojContent) {
+  const settingsOverrides = [
+    ["CODE_SIGNING_ALLOWED", "NO"],
+    ["CODE_SIGNING_REQUIRED", "NO"],
+    ["CODE_SIGN_IDENTITY", '""'],
+    ["DEVELOPMENT_TEAM", '""'],
+  ];
+
+  return pbxprojContent.replace(/buildSettings\s*=\s*\{([\s\S]*?)\n(\s*)\};/g, (full, body, indent) => {
+    let nextBody = body;
+    for (const [key, val] of settingsOverrides) {
+      const keyRegex = new RegExp(`([\\t ]*${key}\\s*=\\s*)[^;]*;`, "g");
+      if (keyRegex.test(nextBody)) {
+        nextBody = nextBody.replace(keyRegex, `$1${val};`);
+      } else {
+        const lineIndent = `${indent}\t`;
+        nextBody = `${nextBody.replace(/\s*$/, "")}\n${lineIndent}${key} = ${val};`;
+      }
+    }
+    return `buildSettings = {${nextBody}\n${indent}};`;
+  });
+}
+
+function findPbxprojRecursive(dir) {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.name === "build" || entry.name.endsWith(".xcarchive")) {
+      continue;
+    }
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      if (entry.name.endsWith(".xcodeproj")) {
+        const candidate = path.join(fullPath, "project.pbxproj");
+        if (fs.existsSync(candidate)) {
+          return candidate;
+        }
+      }
+      const nested = findPbxprojRecursive(fullPath);
+      if (nested) {
+        return nested;
+      }
+    }
+  }
+  return null;
+}
+
 export function configureIosProject(appleDir) {
   if (!fs.existsSync(appleDir)) {
     throw new Error(`Apple project directory not found at: ${appleDir}`);
@@ -160,15 +206,27 @@ export function configureIosProject(appleDir) {
     fs.writeFileSync(plistPath, patched, "utf8");
   }
 
-  return { plistPath };
+  const pbxprojPath = findPbxprojRecursive(appleDir);
+  if (pbxprojPath) {
+    const origPbx = fs.readFileSync(pbxprojPath, "utf8");
+    const patchedPbx = disableUnsignedCodeSigningInPbxproj(origPbx);
+    if (patchedPbx !== origPbx) {
+      fs.writeFileSync(pbxprojPath, patchedPbx, "utf8");
+    }
+  }
+
+  return { plistPath, pbxprojPath };
 }
 
 function runSelfTest() {
   const tempRoot = fs.mkdtempSync(path.join(os.tmpdir(), "mangora-ios-patcher-"));
   try {
     const iosDir = path.join(tempRoot, "Mangora_iOS");
+    const xcodeprojDir = path.join(tempRoot, "mangora.xcodeproj");
     fs.mkdirSync(iosDir, { recursive: true });
+    fs.mkdirSync(xcodeprojDir, { recursive: true });
     const plistPath = path.join(iosDir, "Info.plist");
+    const pbxprojPath = path.join(xcodeprojDir, "project.pbxproj");
 
     const samplePlist = `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -190,15 +248,35 @@ function runSelfTest() {
 </plist>
 `;
 
+    const samplePbxproj = `// !$*UTF8*$!
+{
+\tobjects = {
+\t\tAABBCCDD /* Release */ = {
+\t\t\tisa = XCBuildConfiguration;
+\t\t\tbuildSettings = {
+\t\t\t\tCODE_SIGN_STYLE = Automatic;
+\t\t\t\tDEVELOPMENT_TEAM = ABCDE12345;
+\t\t\t\tPRODUCT_BUNDLE_IDENTIFIER = io.github.tomahawk1103.mangora;
+\t\t\t};
+\t\t\tname = Release;
+\t\t};
+\t};
+}
+`;
+
     fs.writeFileSync(plistPath, samplePlist, "utf8");
+    fs.writeFileSync(pbxprojPath, samplePbxproj, "utf8");
 
     configureIosProject(tempRoot);
     const afterFirst = fs.readFileSync(plistPath, "utf8");
+    const pbxAfterFirst = fs.readFileSync(pbxprojPath, "utf8");
 
     configureIosProject(tempRoot);
     const afterSecond = fs.readFileSync(plistPath, "utf8");
+    const pbxAfterSecond = fs.readFileSync(pbxprojPath, "utf8");
 
     assert.equal(afterFirst, afterSecond, "Info.plist patcher must be idempotent");
+    assert.equal(pbxAfterFirst, pbxAfterSecond, "project.pbxproj patcher must be idempotent");
     assert.match(afterFirst, /<key>NSAppTransportSecurity<\/key>[\s\S]*?<key>NSAllowsArbitraryLoads<\/key>\s*<true\/>/);
     assert.match(afterFirst, /<key>CFBundleURLTypes<\/key>[\s\S]*?<string>mangora<\/string>/);
     assert.match(afterFirst, /<key>CFBundleURLName<\/key>\s*<string>io\.github\.tomahawk1103\.mangora<\/string>/);
@@ -206,6 +284,10 @@ function runSelfTest() {
     assert.match(afterFirst, /<key>UIFileSharingEnabled<\/key>\s*<true\/>/);
     assert.match(afterFirst, /<key>LSSupportsOpeningDocumentsInPlace<\/key>\s*<true\/>/);
     assert.match(afterFirst, /<key>ITSAppUsesNonExemptEncryption<\/key>\s*<false\/>/);
+    assert.match(pbxAfterFirst, /CODE_SIGNING_ALLOWED = NO;/);
+    assert.match(pbxAfterFirst, /CODE_SIGNING_REQUIRED = NO;/);
+    assert.match(pbxAfterFirst, /CODE_SIGN_IDENTITY = "";/);
+    assert.match(pbxAfterFirst, /DEVELOPMENT_TEAM = "";/);
 
     console.log("configure-mangora-ios self-test passed.");
   } finally {

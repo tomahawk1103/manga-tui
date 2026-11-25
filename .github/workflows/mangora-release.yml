@@ -213,10 +213,8 @@ jobs:
           cache: 'npm'
           cache-dependency-path: apps/mangora/package-lock.json
 
-      - name: Setup Rust stable with Apple iOS targets
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - name: Install Apple iOS Rust targets on active toolchain
+        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
 
       - name: Install Mangora frontend dependencies
         working-directory: apps/mangora
@@ -244,39 +242,19 @@ jobs:
           set -euo pipefail
           export PATH="$HOME/.cargo/bin:$PATH"
           VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
-          XCODEPROJ=$(find src-tauri/gen/apple -maxdepth 1 -name "*.xcodeproj" | head -n 1)
-          if [ -z "${XCODEPROJ:-}" ]; then
-            echo "No se encontro ningun .xcodeproj en src-tauri/gen/apple." >&2
-            exit 1
-          fi
 
-          IOS_SCHEME=$(xcodebuild -list -json -project "$XCODEPROJ" | node -e "
-            const fs = require('fs');
-            const data = JSON.parse(fs.readFileSync(0, 'utf8'));
-            const schemes = (data.project && data.project.schemes) || [];
-            const found = schemes.find((s) => s.endsWith('_iOS')) || 'Mangora_iOS';
-            process.stdout.write(found);
-          ")
-          echo "Using Xcode project=$XCODEPROJ scheme=$IOS_SCHEME version=$VERSION"
+          npx tauri ios build --ci --target aarch64 || true
 
-          ARCHIVE_PATH="$RUNNER_TEMP/Mangora.xcarchive"
-          rm -rf "$ARCHIVE_PATH"
-          xcodebuild archive \
-            -project "$XCODEPROJ" \
-            -scheme "$IOS_SCHEME" \
-            -configuration Release \
-            -destination "generic/platform=iOS" \
-            -archivePath "$ARCHIVE_PATH" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            CODE_SIGN_IDENTITY="" \
-            DEVELOPMENT_TEAM=""
-
-          APP_BUNDLE=$(find "$ARCHIVE_PATH/Products/Applications" -maxdepth 1 -name "*.app" | head -n 1)
+          APP_BUNDLE=$(find src-tauri/gen/apple/build -path "*.xcarchive/Products/Applications/*.app" -type d 2>/dev/null | head -n 1 || true)
           if [ -z "${APP_BUNDLE:-}" ]; then
-            echo "No se encontro el bundle .app dentro del xcarchive." >&2
+            APP_BUNDLE=$(find src-tauri/gen/apple/build -type d \( -path "*Release-iphoneos/*.app" -o -path "*iphoneos/*.app" \) 2>/dev/null | head -n 1 || true)
+          fi
+          if [ -z "${APP_BUNDLE:-}" ]; then
+            echo "No se encontro ningun bundle .app generado tras tauri ios build." >&2
+            find src-tauri/gen/apple/build -maxdepth 5 2>/dev/null || true
             exit 1
           fi
+          echo "Located iOS app bundle: $APP_BUNDLE"
 
           rm -rf "$APP_BUNDLE/_CodeSignature"
 
@@ -324,7 +302,11 @@ jobs:
           if-no-files-found: error
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/mangora-v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)
+    if: >-
+      always() &&
+      (startsWith(github.ref, 'refs/tags/mangora-v') || (github.event_name == 'workflow_dispatch' && inputs.publish_release == true)) &&
+      needs.build-windows.result == 'success' &&
+      needs.build-android.result == 'success'
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -352,10 +334,10 @@ jobs:
           set -euo pipefail
           TAG="${{ startsWith(github.ref, 'refs/tags/mangora-v') && github.ref_name || inputs.release_tag }}"
           VERSION=$(node -p "require('./apps/mangora/src-tauri/tauri.conf.json').version")
-          IPA_FILE=$(find release-assets -type f -name "Mangora-*-ios-unsigned.ipa" | head -n 1)
+          IPA_FILE=$(find release-assets -type f -name "Mangora-*-ios-unsigned.ipa" | head -n 1 || true)
           if [ -z "${IPA_FILE:-}" ]; then
-            echo "No se encontro ningun IPA iOS en release-assets." >&2
-            exit 1
+            echo "::warning::No se encontro ningun IPA iOS en release-assets; se omite la actualizacion de docs/sidestore.json para no bloquear Windows y Android."
+            exit 0
           fi
           node scripts/update-sidestore-source.mjs \
             --source docs/sidestore.json \
