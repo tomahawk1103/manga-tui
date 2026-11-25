@@ -61,6 +61,7 @@ export interface InitialAppState {
   onboardingCompleted: boolean;
   downloadFormat: DownloadFormat;
   readerPrefs: ReaderPrefs;
+  supportBannerDismissed: boolean;
   library: LibraryDetection;
 }
 
@@ -386,6 +387,132 @@ export interface OfflineSeriesItem {
   totalSizeBytes: number;
   totalSizeLabel: string;
   coverUrl: string | null;
+}
+
+export type FeedbackCategory = "suggestion" | "bugReport" | "brokenProvider";
+
+export interface SubmitFeedbackRequest {
+  category: FeedbackCategory;
+  message: string;
+  includeDiagnostics: boolean;
+}
+
+export interface SubmitFeedbackResponse {
+  delivered: boolean;
+  mode: "proxy" | "githubFallback" | string;
+  statusMessage: string;
+  fallbackIssueUrl: string | null;
+}
+
+export interface FeedbackConfigDto {
+  proxyConfigured: boolean;
+  fallbackIssuesUrl: string;
+}
+
+export interface DetectedCloudFolderDto {
+  providerLabel: string;
+  path: string;
+}
+
+export interface CloudSyncReportDto {
+  syncedAt: string;
+  totalMangas: number;
+  totalReadChapters: number;
+  totalFavorites: number;
+  chaptersUploaded: number;
+  chaptersDownloaded: number;
+  bytesTransferred: number;
+}
+
+export interface CloudStatusDto {
+  connected: boolean;
+  backend: "googleDrive" | "localFolder" | null;
+  summary: string;
+  accountEmail: string | null;
+  accountDisplayName: string | null;
+  localFolderPath: string | null;
+  localFolderLabel: string | null;
+  hasEmbeddedOauth: boolean;
+  savedClientId: string | null;
+  lastSyncAt: string | null;
+  lastSyncReport: CloudSyncReportDto | null;
+  detectedFolders: DetectedCloudFolderDto[];
+}
+
+export interface AnilistStatusDto {
+  connected: boolean;
+  clientIdHint: string | null;
+  source: string | null;
+  trackReadingHistory: boolean;
+}
+
+export interface MalSyncReportDto {
+  syncedAt: string;
+  importedFromMal: number;
+  pushedToMal: number;
+  totalMalEntries: number;
+}
+
+export interface MalStatusDto {
+  connected: boolean;
+  username: string | null;
+  summary: string;
+  hasEmbeddedOauth: boolean;
+  savedClientId: string | null;
+  lastSyncAt: string | null;
+  lastSyncReport: MalSyncReportDto | null;
+}
+
+export interface TrackersStatusDto {
+  anilist: AnilistStatusDto;
+  myAnimeList: MalStatusDto;
+}
+
+export interface SupportConfigDto {
+  kofiUrl: string | null;
+  sponsorsUrl: string;
+  discordUrl: string;
+  githubUrl: string;
+  githubIssuesUrl: string;
+}
+
+export interface IntegrationsOverviewDto {
+  cloud: CloudStatusDto;
+  trackers: TrackersStatusDto;
+  supportConfig: SupportConfigDto;
+  feedbackConfig: FeedbackConfigDto;
+  mangaTuiDetected: boolean;
+}
+
+export interface OAuthStartResultDto {
+  provider: "googleDrive" | "myAnimeList" | string;
+  mode: "loopback" | "deeplink" | string;
+  authorizeUrl: string | null;
+  redirectUri: string | null;
+  completed: boolean;
+  overview: IntegrationsOverviewDto;
+}
+
+export interface CloudSyncActionResultDto {
+  report: CloudSyncReportDto;
+  overview: IntegrationsOverviewDto;
+  appState: InitialAppState;
+}
+
+export interface MalSyncActionResultDto {
+  report: MalSyncReportDto;
+  overview: IntegrationsOverviewDto;
+  appState: InitialAppState;
+}
+
+export interface UpdateCheckResultDto {
+  currentVersion: string;
+  latestVersion: string;
+  updateAvailable: boolean;
+  releaseUrl: string;
+  releaseNotes: string;
+  publishedAt: string | null;
+  checkedAt: string;
 }
 
 export function libraryKey(mangaId: string, provider: string): string {

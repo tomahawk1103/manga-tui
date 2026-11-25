@@ -1,19 +1,24 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { BottomNav } from "./components/BottomNav";
+import { FeedbackModal } from "./components/FeedbackModal";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { getTranslations } from "./lib/i18n";
 import {
   controlDownloadQueue,
+  defaultBrowserIntegrationsOverview,
+  dismissSupportBanner,
   enqueueChaptersDownload,
   getDownloadQueueSnapshot,
   getInitialState,
+  getIntegrationsOverview,
   getLibraryOverview,
   listOfflineLibrary,
   openDataFolder,
   openDownloadsFolder,
   openExternalUrl,
+  openMangaTuiDesktop,
   saveOnboardingPreferences,
   saveReaderPrefs,
   setDefaultProvider,
@@ -32,6 +37,7 @@ import {
   type DownloadQueueSnapshot,
   type EnqueueChaptersRequest,
   type InitialAppState,
+  type IntegrationsOverviewDto,
   type LibraryOverview,
   type NavSection,
   type OfflineSeriesItem,
@@ -61,6 +67,8 @@ export function App() {
   const [downloadQueue, setDownloadQueue] = useState<DownloadQueueSnapshot | null>(null);
   const [offlineSeries, setOfflineSeries] = useState<OfflineSeriesItem[]>([]);
   const [offlineLoading, setOfflineLoading] = useState(false);
+  const [integrationsOverview, setIntegrationsOverview] = useState<IntegrationsOverviewDto | null>(null);
+  const [feedbackOpen, setFeedbackOpen] = useState(false);
   const [downloadCompletedTick, setDownloadCompletedTick] = useState(0);
   const [navigationTarget, setNavigationTarget] = useState<"genres" | "search" | null>(null);
   const [replayOnboarding, setReplayOnboarding] = useState(false);
@@ -97,14 +105,18 @@ export function App() {
   const loadInitial = useCallback(async () => {
     setErrorMessage(null);
     try {
-      const [next, overview] = await Promise.all([
+      const [next, overview, integrations] = await Promise.all([
         getInitialState(),
         getLibraryOverview().catch(() => null),
+        getIntegrationsOverview().catch(() => null),
       ]);
       setAppState(next);
       uiLangRef.current = next.uiLanguage;
       if (overview) {
         setLibraryOverview(overview);
+      }
+      if (integrations) {
+        setIntegrationsOverview(integrations);
       }
     } catch (err) {
       setErrorMessage(err instanceof Error ? err.message : String(err));
@@ -122,6 +134,12 @@ export function App() {
     if (appState?.onboardingCompleted && activeSection === "downloads") {
       void getDownloadQueueSnapshot().then(setDownloadQueue).catch(() => {});
       void loadOfflineSeries();
+    }
+    if (
+      appState?.onboardingCompleted &&
+      (activeSection === "settings" || activeSection === "support")
+    ) {
+      void getIntegrationsOverview().then(setIntegrationsOverview).catch(() => {});
     }
   }, [activeSection, appState?.onboardingCompleted, loadLibrary, loadOfflineSeries]);
 
@@ -370,6 +388,16 @@ export function App() {
   }
 
   const nextTheme: ThemeMode = appState.themeMode === "paper" ? "ink" : "paper";
+  const resolvedSupportConfig =
+    integrationsOverview?.supportConfig ?? defaultBrowserIntegrationsOverview().supportConfig;
+
+  const openExternalSafe = async (url: string) => {
+    try {
+      await openExternalUrl(url);
+    } catch (err) {
+      setErrorMessage(err instanceof Error ? err.message : String(err));
+    }
+  };
 
   const navigate = (section: NavSection) => {
     setSelectedSeries(null);
@@ -384,6 +412,7 @@ export function App() {
         onSelectSection={navigate}
         themeMode={appState.themeMode}
         onToggleTheme={() => void runMutation(() => setThemeMode(nextTheme), true)}
+        onOpenFeedback={() => setFeedbackOpen(true)}
         uiLanguage={appState.uiLanguage}
         appVersion={appState.appVersion}
         activeDownloadCount={activeDownloadCount}
@@ -456,6 +485,8 @@ export function App() {
                       setSelectedSeries(null);
                       setReplayOnboarding(true);
                     }}
+                    onOpenSupport={() => navigate("support")}
+                    onDismissSupportBanner={() => runMutation(() => dismissSupportBanner(), false)}
                   />
                 )}
 
@@ -502,6 +533,7 @@ export function App() {
                 {activeSection === "settings" && (
                   <SettingsView
                     appState={appState}
+                    overview={integrationsOverview}
                     focusGenres={navigationTarget === "genres"}
                     isSaving={isSaving}
                     onChangeLanguage={(lang) => runMutation(() => setUiLanguage(lang), true)}
@@ -521,19 +553,32 @@ export function App() {
                         setErrorMessage(err instanceof Error ? err.message : String(err));
                       }
                     }}
+                    onOpenExternal={openExternalSafe}
+                    onOpenFeedback={() => setFeedbackOpen(true)}
+                    onOpenMangaTui={async () => {
+                      try {
+                        await openMangaTuiDesktop();
+                      } catch (err) {
+                        setErrorMessage(err instanceof Error ? err.message : String(err));
+                      }
+                    }}
+                    onOverviewChanged={(nextOverview, nextAppState) => {
+                      setIntegrationsOverview(nextOverview);
+                      if (nextAppState) {
+                        setAppState(nextAppState);
+                        void loadLibrary();
+                      }
+                    }}
+                    onNotify={showToast}
                   />
                 )}
 
                 {activeSection === "support" && (
                   <SupportView
                     appState={appState}
-                    onOpenExternal={async (url) => {
-                      try {
-                        await openExternalUrl(url);
-                      } catch (err) {
-                        setErrorMessage(err instanceof Error ? err.message : String(err));
-                      }
-                    }}
+                    supportConfig={resolvedSupportConfig}
+                    onOpenExternal={openExternalSafe}
+                    onOpenFeedback={() => setFeedbackOpen(true)}
                   />
                 )}
               </>
@@ -559,6 +604,14 @@ export function App() {
           onNotify={showToast}
         />
       )}
+
+      <FeedbackModal
+        open={feedbackOpen}
+        language={appState.uiLanguage}
+        onClose={() => setFeedbackOpen(false)}
+        onOpenExternal={openExternalSafe}
+        onNotify={showToast}
+      />
 
       {toastMessage && (
         <div

@@ -1,4 +1,13 @@
-import { BookOpen, Compass, Download, HeartHandshake, Moon, Settings, Sun } from "lucide-react";
+import {
+  BookOpen,
+  Compass,
+  Download,
+  HeartHandshake,
+  MessageSquarePlus,
+  Moon,
+  Settings,
+  Sun,
+} from "lucide-react";
 import type { NavSection, ThemeMode, UiLanguage } from "../types/mangora";
 import { getTranslations } from "../lib/i18n";
 
@@ -7,6 +16,7 @@ interface SidebarProps {
   onSelectSection: (section: NavSection) => void;
   themeMode: ThemeMode;
   onToggleTheme: () => void;
+  onOpenFeedback: () => void;
   uiLanguage: UiLanguage;
   appVersion: string;
   activeDownloadCount?: number;
@@ -17,6 +27,7 @@ export function Sidebar({
   onSelectSection,
   themeMode,
   onToggleTheme,
+  onOpenFeedback,
   uiLanguage,
   appVersion,
   activeDownloadCount = 0,
@@ -80,6 +91,15 @@ export function Sidebar({
       </div>
 
       <div className="flex flex-col gap-2.5 border-t-2 border-[var(--ink)] bg-[var(--paper)] p-4">
+        <button
+          type="button"
+          onClick={onOpenFeedback}
+          className="flex w-full cursor-pointer items-center gap-2.5 border-2 border-[var(--ink)] bg-[var(--surface)] px-3.5 py-2 text-left text-xs font-bold text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)]"
+        >
+          <MessageSquarePlus className="h-4 w-4 shrink-0 text-[var(--red-text)]" aria-hidden="true" />
+          <span className="truncate">{t.feedback.sidebarBtn}</span>
+        </button>
+
         <button
           type="button"
           aria-current={activeSection === "support" ? "page" : undefined}

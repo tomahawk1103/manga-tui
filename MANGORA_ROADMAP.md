@@ -15,7 +15,7 @@ flowchart LR
     H1["Hito 1<br/>Tauri v2 + Diseño Editorial + Onboarding<br/>En validación"]
     H2["Hito 2<br/>Explorar + Biblioteca + Ficha AniList<br/>En validación"]
     H3["Hito 3<br/>Lector HD Nativo + Descargas Offline<br/>En validación"]
-    H4["Hito 4<br/>Ajustes + Buzón + Monster 2€ + Escritorio/Android/iOS<br/>⏳ Pendiente"]
+    H4["Hito 4<br/>Ajustes + Buzón + Monster 2€ + Escritorio/Android/iOS<br/>En validación"]
     H5["Hito 5 (v1.1+)<br/>Personalización Visual + Métricas Locales<br/>Integración pendiente"]
 
     Base --> H1 --> H2 --> H3 --> H4 --> H5
@@ -26,7 +26,7 @@ flowchart LR
 | **Hito 1** | En validación | Scaffold Tauri v2 multiplataforma en `apps/mangora/`, sistema de diseño editorial (`docs/index.html`), shell móvil (`BottomNav` + *safe areas*) y Onboarding |
 | **Hito 2** | En validación | Explorar/Buscar con portadas HD y bloque *"Para ti"*, Biblioteca compartida SQLite y Ficha de serie completa con capítulos, AniList y Discord |
 | **Hito 3** | En validación | Lector HD nativo táctil y de escritorio (online + 100 % offline en CBZ/RAW/EPUB/PDF) y gestor de cola de descargas en tiempo real |
-| **Hito 4** | ⏳ Pendiente | Ajustes simples (Drive/AniList/MAL con *deep links* en móvil), Buzón seguro, *"¿Me invitas a un Monster? ⚡ 2 €"* y empaquetado Windows/Android/iOS |
+| **Hito 4** | En validación | Ajustes simples (Drive/Carpeta Nube/AniList/MAL/Updates + acceso a `manga-tui`), Buzón seguro (`feedback.rs`), *"¿Me invitas a un Monster? ⚡ 2 €"* + banner descartable y empaquetado Windows/Android/iOS |
 | **Hito 5 (v1.1+)** | Módulos en `MANGORA`, integración pendiente | Personalización visual avanzada de temas/tarjetas y métricas locales ampliadas del lector |
 
 ---
@@ -42,7 +42,7 @@ El trabajo de Mangora está reunido en `manga-tui/`, rama `MANGORA`. La aplicaci
 | Explorar | Búsqueda por título en el proveedor activo (`search_catalog` + `multi_provider`), bloque *«Para ti según tus gustos»* (`get_for_you_recommendations`), portadas HD, paginación, filtros por idioma/género en resultados visibles, favorito en 1 clic (`toggle_library_favorite`) y apertura directa de la Ficha de serie. | Validación en red real contra proveedores activos y filtros aplicados a todo el catálogo remoto. |
 | Biblioteca y ficha de serie | Biblioteca visual interactiva conectada a `history/manga-tui-history.db` (`get_library_overview`, `toggle_library_favorite`) con pestañas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente**, **Ficha de serie completa** (`SeriesDetailView`) con capítulos online/offline, selección múltiple de descargas y **Lector HD nativo** (`ReaderView` + protocolo `mangora://`: Cascada, Página única, Doble página, RTL/LTR, zoom/gestos táctiles, marcadores SQLite y lectura local CBZ/RAW/EPUB/PDF). | Validación manual con red real en escritorio y móvil de todos los modos del lector y descargas en vivo. |
 | Descargas y cola | Gestor conectado a `ManagedDownloadQueue` (`downloads.rs`, eventos `mangora://download-queue` y `mangora://download-chapter-finished`), selector de formato (`CBZ`/`PDF`/`EPUB`/`RAW`), controles por tarea/globales y estantería 100 % offline (`list_offline_library`) con apertura directa a ficha/lector. | Validación manual de colas reales y almacenamiento sandbox en Android/iOS. |
-| Ajustes y apoyo | Cambio de idioma, tema, proveedor y géneros; apertura de la carpeta de datos; enlaces a Discord y GitHub. | Drive y trackers guiados, buzón de opiniones, donaciones activas y paquete instalable. |
+| Ajustes y apoyo | Cambio de idioma, tema, proveedor y géneros; Google Drive (`cloud.rs` loopback/deep-link) + carpeta sincronizada local, trackers AniList y MyAnimeList (`mal.rs`), comprobador de actualizaciones (`mangora-v*`), Buzón de Opiniones seguro (`feedback.rs` sin webhooks embebidos), tarjeta *"¿Me invitas a un Monster? ⚡ 2 €"*, banner descartable en Inicio, Agradecimientos y botón **Abrir manga-tui** en escritorio. | Validación manual con cuentas OAuth reales, empaquetado Windows con NSIS/WiX y ejecución de `mangora-release.yml` con Android NDK y Xcode. |
 | Apariencia y métricas | Módulos, migración y componentes del hito 5 presentes en el repositorio. | Registrar sus comandos Tauri e incorporar sus componentes a las pantallas. |
 
 Para probar la app de escritorio en Windows, ejecutar `npm.cmd install` y `npm.cmd run tauri dev` desde `apps/mangora/`. `npm.cmd run dev` abre la vista previa web en `http://localhost:1420`; la búsqueda del catálogo requiere Tauri. La compilación de Vite, `cargo check --workspace --locked --offline` y las pruebas activas del workspace pasaron. En Chromium se verificaron el tour, el reintento tras un fallo de guardado y la búsqueda con respuestas simuladas. La prueba de red con MangaDex falló por falta de conexión en el entorno de pruebas, y allí la ventana nativa devolvió «Acceso denegado».
@@ -232,9 +232,15 @@ Pendiente de validación manual en `tauri dev` con capítulos en red real.
 
 ## Hito 4 · Ajustes Sencillos, Buzón de Opiniones, "Monster ⚡ 2 €" y Empaquetado Multiplataforma
 
-- **Estado:** `⏳ Pendiente`
+- **Estado:** `En validación`
 
-Ya se pueden cambiar idioma, tema, proveedor y géneros desde Ajustes, repetir el tour y abrir la carpeta de datos en escritorio. Apoyar incluye enlaces a Discord y GitHub; el bloque de Monster todavía es informativo.
+Hito 4 está integrado en backend y UI (`apps/mangora/src-tauri/src/integrations.rs`, `feedback.rs`, `state.rs`, `FeedbackModal.tsx`, `SettingsView.tsx`, `SupportView.tsx`, `HomeView.tsx`, `Sidebar.tsx`, `tauri.conf.json`, `scripts/package-mangora-windows.ps1` y `.github/workflows/mangora-release.yml`):
+
+- **Nube y Trackers:** Google Drive OAuth PKCE (loopback en escritorio y `mangora://oauth/google` + pegado de callback en móvil), vinculación 1-clic con carpetas sincronizadas detectadas (`OneDrive`/`iCloud`/`Google Drive Desktop`), AniList (keyring con fallback `[anilist]` en `config.toml`), MyAnimeList OAuth PKCE + sincronización SQLite, y comprobador de releases `mangora-v*`.
+- **Buzón seguro y Apoyo:** `FeedbackModal` con validación `10–2000` chars, diagnóstico opcional no personal, rechazo estricto de URLs de webhook de Discord en `validate_proxy_url` y fallback automático a GitHub Issues pre-rellenado; pantalla de apoyo *"¿Me invitas a un Monster? ⚡ 2 €"* (Ko-fi vía `MANGORA_KOFI_URL` + GitHub Sponsors), Discord, tarjeta de Agradecimientos y banner sutil descartable permanentemente tras leer 5 capítulos (`supportBannerDismissed`).
+- **Empaquetado y acceso dual:** configuración NSIS/MSI/Android en `tauri.conf.json`, script local Windows y workflow independiente `.github/workflows/mangora-release.yml`, además del botón **Abrir manga-tui en terminal** en Ajustes cuando `manga-tui` está instalado.
+
+Pendiente de validación manual en una sesión nativa con red real, cuentas OAuth de prueba y generación de paquetes Android/iOS con sus SDKs.
 
 ### Prompt sugerido para nuevo hilo
 
@@ -262,9 +268,9 @@ Ya se pueden cambiar idioma, tema, proveedor y géneros desde Ajustes, repetir e
 
 ### Criterios de aceptación
 
-- [ ] Ajustes permite cambiar tema, idioma, proveedor recomendado y gestionar Google Drive Sync y AniList/MAL sin usar comandos de terminal tanto en escritorio como en Android/iOS (*deep links*).
-- [ ] El Buzón de Opiniones valida campos, muestra confirmación/error comprensible y no expone credenciales ni webhooks privados en el código fuente o binario.
-- [ ] La sección de apoyo muestra la opción *"¿Me invitas a un Monster? ⚡ 2 €"* (Ko-fi), GitHub Sponsors y Discord de forma totalmente voluntaria y sin muros de pago.
+- [x] Ajustes permite cambiar tema, idioma, proveedor recomendado y gestionar Google Drive Sync y AniList/MAL sin usar comandos de terminal tanto en escritorio como en Android/iOS (*deep links*).
+- [x] El Buzón de Opiniones valida campos, muestra confirmación/error comprensible y no expone credenciales ni webhooks privados en el código fuente o binario.
+- [x] La sección de apoyo muestra la opción *"¿Me invitas a un Monster? ⚡ 2 €"* (Ko-fi), GitHub Sponsors y Discord de forma totalmente voluntaria y sin muros de pago.
 - [ ] Los paquetes de instalación de Mangora (Windows, Android APK/AAB e iOS IPA en macOS) se generan correctamente y conviven sin conflictos con el instalador de `manga-tui`.
 
 ---
@@ -301,11 +307,11 @@ Ya se pueden cambiar idioma, tema, proveedor y géneros desde Ajustes, repetir e
 
 ## Acceso entre MANGORA y manga-tui en escritorio
 
-**Pendiente tras completar el recorrido ficha → capítulos → lectura en MANGORA.**
+**Parcialmente integrado (Mangora → `manga-tui` implementado; falta `manga-tui` → MANGORA).**
 
 - Mantener MANGORA y `manga-tui` como aplicaciones con sus propios ejecutables y accesos directos. MANGORA conserva el flujo de ratón y `manga-tui` el de terminal y teclado.
 - Compartir la biblioteca, las descargas y el progreso de lectura a través de `manga-core` para poder retomar un manga desde cualquiera de las dos. Mantener el tema y las preferencias visuales de cada interfaz por separado.
-- Añadir **Abrir manga-tui** en Ajustes de MANGORA y **Abrir MANGORA** en el menú de `manga-tui`. Las acciones aparecen cuando se detecta la otra aplicación instalada.
+- Añadir **Abrir manga-tui** en Ajustes de MANGORA (`launch_manga_tui_desktop`, ya integrado en `SettingsView.tsx` + `integrations.rs`) y **Abrir MANGORA** en el menú de `manga-tui` (pendiente en TUI).
 - Verificar que ambos accesos abren la aplicación correspondiente y que el progreso guardado en una se puede retomar en la otra.
 
 ## Reglas y Convenciones para Futuros Hilos

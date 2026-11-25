@@ -29,11 +29,26 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "tomahawk1103",
+    "category": "Entertainment",
+    "shortDescription": "Editorial manga reader powered by manga-core",
+    "longDescription": "Mangora is a cross-platform paper-and-ink manga reader built with Tauri v2 and manga-core for Windows, macOS, Linux, Android, and iOS.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
+      "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "languages": ["Spanish", "English"],
+        "displayLanguageSelector": true,
+        "installMode": "currentUser"
+      }
+    },
+    "android": {
+      "minSdkVersion": 24
+    }
   }
 }

@@ -890,6 +890,118 @@ pub fn open_downloads_folder(app: tauri::AppHandle, state: State<'_, AppState>) 
     open_folder_in_file_manager(&app, &dir, "downloads", true)
 }
 
+#[tauri::command]
+pub fn get_integrations_overview(state: State<'_, AppState>) -> Result<crate::integrations::IntegrationsOverviewDto, String> {
+    crate::integrations::build_integrations_overview(&state)
+}
+
+#[tauri::command]
+pub async fn connect_google_drive(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    pending_oauth: State<'_, crate::integrations::PendingOAuthStore>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    use_deeplink: Option<bool>,
+) -> Result<crate::integrations::OAuthStartResultDto, String> {
+    crate::integrations::connect_google_drive(&app, &state, &pending_oauth, client_id, client_secret, use_deeplink.unwrap_or(false))
+        .await
+}
+
+#[tauri::command]
+pub fn connect_local_cloud_folder(
+    state: State<'_, AppState>,
+    folder_path: String,
+    provider_label: Option<String>,
+) -> Result<crate::integrations::IntegrationsOverviewDto, String> {
+    crate::integrations::connect_local_cloud_folder(&state, folder_path, provider_label)
+}
+
+#[tauri::command]
+pub async fn run_cloud_sync_now(
+    state: State<'_, AppState>,
+    mode: String,
+) -> Result<crate::integrations::CloudSyncActionResultDto, String> {
+    crate::integrations::run_cloud_sync_now(&state, &mode).await
+}
+
+#[tauri::command]
+pub fn disconnect_cloud(state: State<'_, AppState>) -> Result<crate::integrations::IntegrationsOverviewDto, String> {
+    crate::integrations::disconnect_cloud(&state)
+}
+
+#[tauri::command]
+pub async fn save_anilist_credentials(
+    state: State<'_, AppState>,
+    client_id: String,
+    access_token: String,
+    verify: Option<bool>,
+) -> Result<crate::integrations::IntegrationsOverviewDto, String> {
+    crate::integrations::save_anilist_credentials(&state, client_id, access_token, verify.unwrap_or(true)).await
+}
+
+#[tauri::command]
+pub fn disconnect_anilist(state: State<'_, AppState>) -> Result<crate::integrations::IntegrationsOverviewDto, String> {
+    crate::integrations::disconnect_anilist(&state)
+}
+
+#[tauri::command]
+pub async fn connect_myanimelist(
+    app: tauri::AppHandle,
+    state: State<'_, AppState>,
+    pending_oauth: State<'_, crate::integrations::PendingOAuthStore>,
+    client_id: Option<String>,
+    client_secret: Option<String>,
+    use_deeplink: Option<bool>,
+) -> Result<crate::integrations::OAuthStartResultDto, String> {
+    crate::integrations::connect_myanimelist(&app, &state, &pending_oauth, client_id, client_secret, use_deeplink.unwrap_or(false))
+        .await
+}
+
+#[tauri::command]
+pub async fn sync_myanimelist_now(state: State<'_, AppState>) -> Result<crate::integrations::MalSyncActionResultDto, String> {
+    crate::integrations::sync_myanimelist_now(&state).await
+}
+
+#[tauri::command]
+pub fn disconnect_myanimelist(state: State<'_, AppState>) -> Result<crate::integrations::IntegrationsOverviewDto, String> {
+    crate::integrations::disconnect_myanimelist(&state)
+}
+
+#[tauri::command]
+pub async fn complete_oauth_callback(
+    state: State<'_, AppState>,
+    pending_oauth: State<'_, crate::integrations::PendingOAuthStore>,
+    provider: String,
+    callback_input: String,
+) -> Result<crate::integrations::IntegrationsOverviewDto, String> {
+    crate::integrations::complete_oauth_callback(&state, &pending_oauth, &provider, &callback_input).await
+}
+
+#[tauri::command]
+pub async fn check_mangora_updates(state: State<'_, AppState>) -> Result<crate::integrations::UpdateCheckResultDto, String> {
+    let snap = state.snapshot()?;
+    crate::integrations::check_mangora_updates(&snap.app_version).await
+}
+
+#[tauri::command]
+pub async fn submit_feedback(
+    state: State<'_, AppState>,
+    request: crate::feedback::SubmitFeedbackRequest,
+) -> Result<crate::feedback::SubmitFeedbackResponse, String> {
+    crate::feedback::submit_feedback_action(&state, request).await
+}
+
+#[tauri::command]
+pub fn dismiss_support_banner(state: State<'_, AppState>) -> Result<InitialAppState, String> {
+    state.dismiss_support_banner()
+}
+
+#[tauri::command]
+pub fn open_manga_tui_desktop() -> Result<(), String> {
+    crate::integrations::launch_manga_tui_desktop()
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;

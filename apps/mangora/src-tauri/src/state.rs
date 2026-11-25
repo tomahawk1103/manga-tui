@@ -110,6 +110,7 @@ pub struct MangoraPrefs {
     pub favorite_genres: Vec<String>,
     pub theme_mode: ThemeMode,
     pub reader_prefs: ReaderPrefs,
+    pub support_banner_dismissed: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -156,6 +157,7 @@ pub struct InitialAppState {
     pub onboarding_completed: bool,
     pub download_format: String,
     pub reader_prefs: ReaderPrefs,
+    pub support_banner_dismissed: bool,
     pub library: LibraryDetection,
 }
 
@@ -590,6 +592,16 @@ impl AppState {
 
         Ok(build_initial_state(&inner))
     }
+
+    pub fn dismiss_support_banner(&self) -> Result<InitialAppState, String> {
+        let mut inner = self.lock_inner()?;
+        let mut next_prefs = inner.prefs.clone();
+        next_prefs.support_banner_dismissed = true;
+        save_prefs_in_dir(&inner.config_dir, &next_prefs)?;
+        inner.prefs = next_prefs;
+
+        Ok(build_initial_state(&inner))
+    }
 }
 
 pub fn recommended_provider_for_language(lang: UiLanguage) -> MangaProviders {
@@ -848,6 +860,7 @@ fn build_initial_state(inner: &AppStateInner) -> InitialAppState {
         onboarding_completed: inner.prefs.onboarding_completed,
         download_format: download_type_toml_value(active_download_type()).to_string(),
         reader_prefs: inner.prefs.reader_prefs.clone(),
+        support_banner_dismissed: inner.prefs.support_banner_dismissed,
         library,
     }
 }
@@ -1212,5 +1225,18 @@ mod tests {
 
         assert!(!unmarked.is_read);
         assert_eq!(unmarked.app_state.library.chapters_read, 0);
+    }
+
+    #[test]
+    fn dismiss_support_banner_persists_across_restart() {
+        let temp = TempTestDir::new("dismiss_support_banner");
+        let state = make_test_state(&temp.path);
+        assert!(!state.snapshot().unwrap().support_banner_dismissed);
+
+        let updated = state.dismiss_support_banner().unwrap();
+        assert!(updated.support_banner_dismissed);
+
+        let reloaded = make_test_state(&temp.path);
+        assert!(reloaded.snapshot().unwrap().support_banner_dismissed);
     }
 }

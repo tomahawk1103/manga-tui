@@ -1,6 +1,8 @@
 pub mod anilist;
 pub mod commands;
 pub mod downloads;
+pub mod feedback;
+pub mod integrations;
 pub mod reader;
 pub mod state;
 
@@ -33,6 +35,7 @@ pub fn run() {
             let db_path = app_state.db_path().map_err(std::io::Error::other)?;
 
             app.manage(ReaderSessionStore::new());
+            app.manage(integrations::PendingOAuthStore::new());
             app.manage(app_state);
 
             let app_for_snap = app.handle().clone();
@@ -79,6 +82,21 @@ pub fn run() {
             commands::open_external_url,
             commands::open_data_folder,
             commands::open_downloads_folder,
+            commands::get_integrations_overview,
+            commands::connect_google_drive,
+            commands::connect_local_cloud_folder,
+            commands::run_cloud_sync_now,
+            commands::disconnect_cloud,
+            commands::save_anilist_credentials,
+            commands::disconnect_anilist,
+            commands::connect_myanimelist,
+            commands::sync_myanimelist_now,
+            commands::disconnect_myanimelist,
+            commands::complete_oauth_callback,
+            commands::check_mangora_updates,
+            commands::submit_feedback,
+            commands::dismiss_support_banner,
+            commands::open_manga_tui_desktop,
         ])
         .run(tauri::generate_context!())
         .expect("error while running mangora tauri application");

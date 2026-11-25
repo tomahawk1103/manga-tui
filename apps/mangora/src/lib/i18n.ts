@@ -385,6 +385,84 @@ export interface Translations {
     tourDesc: string;
     relaunchTourBtn: string;
     savedToast: string;
+    cloudTitle: string;
+    cloudDesc: string;
+    cloudConnectedBadge: string;
+    cloudDisconnectedBadge: string;
+    cloudConnectDriveBtn: string;
+    cloudConnectingBtn: string;
+    cloudSyncNowBtn: string;
+    cloudSyncingBtn: string;
+    cloudDisconnectBtn: string;
+    cloudModeLibrary: string;
+    cloudModeFull: string;
+    cloudLastSyncLabel: string;
+    cloudDetectedFoldersLabel: string;
+    cloudManualFolderPlaceholder: string;
+    cloudLinkFolderBtn: string;
+    cloudAdvancedToggle: string;
+    cloudClientIdPlaceholder: string;
+    cloudClientSecretPlaceholder: string;
+    cloudMissingClientIdHint: string;
+    cloudSyncDoneToast: (mangas: number) => string;
+    trackersTitle: string;
+    trackersDesc: string;
+    anilistLabel: string;
+    anilistGetTokenLink: string;
+    anilistClientIdLabel: string;
+    anilistTokenLabel: string;
+    anilistSaveBtn: string;
+    anilistSavingBtn: string;
+    anilistDisconnectBtn: string;
+    anilistConnectedLabel: (hint: string | null) => string;
+    malLabel: string;
+    malConnectBtn: string;
+    malSyncBtn: string;
+    malSyncingBtn: string;
+    malDisconnectBtn: string;
+    malAdvancedToggle: string;
+    malSyncDoneToast: (imported: number, pushed: number) => string;
+    oauthPendingTitle: string;
+    oauthPendingDesc: string;
+    oauthCallbackPlaceholder: string;
+    oauthCompleteBtn: string;
+    updatesTitle: string;
+    updatesCurrentLabel: string;
+    updatesCheckBtn: string;
+    updatesCheckingBtn: string;
+    updatesUpToDate: string;
+    updatesAvailableLabel: (ver: string) => string;
+    updatesOpenReleaseBtn: string;
+    mailboxCardTitle: string;
+    mailboxCardDesc: string;
+    mailboxOpenBtn: string;
+    desktopTuiTitle: string;
+    desktopTuiDesc: string;
+    desktopTuiOpenBtn: string;
+  };
+  feedback: {
+    sidebarBtn: string;
+    eyebrow: string;
+    title: string;
+    subtitle: string;
+    categoryLabel: string;
+    categories: {
+      suggestion: string;
+      bugReport: string;
+      brokenProvider: string;
+    };
+    messageLabel: string;
+    messagePlaceholder: string;
+    charsCount: (count: number) => string;
+    diagnosticsLabel: string;
+    diagnosticsHint: string;
+    submitBtn: string;
+    submittingBtn: string;
+    openGithubFallbackBtn: string;
+    deliveredTitle: string;
+    fallbackTitle: string;
+    closeBtn: string;
+    minLengthError: string;
   };
   support: {
     eyebrow: string;
@@ -396,11 +474,24 @@ export interface Translations {
     githubTitle: string;
     githubDesc: string;
     githubBtn: string;
+    mailboxTitle: string;
+    mailboxDesc: string;
+    mailboxBtn: string;
     monsterTitle: string;
     monsterDesc: string;
+    monsterNoKofiNote: string;
     monsterBadge: string;
+    monsterKofiBtn: string;
+    monsterSponsorsBtn: string;
+    supportersTitle: string;
+    supportersDesc: string;
+    supportersList: string[];
     privacyTitle: string;
     privacyDesc: string;
+    bannerEyebrow: string;
+    bannerText: (chapters: number) => string;
+    bannerCta: string;
+    bannerDismiss: string;
   };
   errors: {
     loadFailed: string;
@@ -792,6 +883,95 @@ const ES: Translations = {
     tourDesc: "Puedes repetir la bienvenida en cualquier momento para repasar las secciones o reconfigurar todo.",
     relaunchTourBtn: "Volver a lanzar el tour",
     savedToast: "Preferencia guardada",
+    cloudTitle: "Nube y sincronización (Google Drive / Carpeta)",
+    cloudDesc:
+      "Sincroniza biblioteca, favoritos, marcadores y descargas sin editar archivos ni depender de un servidor central.",
+    cloudConnectedBadge: "Conectada",
+    cloudDisconnectedBadge: "Sin vincular",
+    cloudConnectDriveBtn: "Conectar Google Drive (1 clic)",
+    cloudConnectingBtn: "Autorizando en navegador…",
+    cloudSyncNowBtn: "Sincronizar ahora",
+    cloudSyncingBtn: "Sincronizando…",
+    cloudDisconnectBtn: "Desvincular",
+    cloudModeLibrary: "Solo progreso y biblioteca",
+    cloudModeFull: "Sincronización completa (+ descargas)",
+    cloudLastSyncLabel: "Última sincronización:",
+    cloudDetectedFoldersLabel: "Carpetas en la nube detectadas en tu equipo:",
+    cloudManualFolderPlaceholder: "Ruta a carpeta de Drive / OneDrive / iCloud...",
+    cloudLinkFolderBtn: "Vincular carpeta",
+    cloudAdvancedToggle: "Opciones avanzadas (Client ID OAuth propio)",
+    cloudClientIdPlaceholder: "Google OAuth Client ID...",
+    cloudClientSecretPlaceholder: "Google Client Secret (opcional)...",
+    cloudMissingClientIdHint:
+      "Esta compilación no incluye Client ID embebido. Introduce tus credenciales OAuth arriba o vincula una carpeta sincronizada.",
+    cloudSyncDoneToast: (mangas) => `Nube sincronizada (${mangas} series)`,
+    trackersTitle: "Trackers externos (AniList y MyAnimeList)",
+    trackersDesc:
+      "Actualiza automáticamente tu progreso en AniList o sincroniza tu lista de MyAnimeList.",
+    anilistLabel: "AniList",
+    anilistGetTokenLink: "Abrir guía PIN / Token ↗",
+    anilistClientIdLabel: "Client ID",
+    anilistTokenLabel: "Access Token",
+    anilistSaveBtn: "Verificar y guardar",
+    anilistSavingBtn: "Verificando…",
+    anilistDisconnectBtn: "Desvincular",
+    anilistConnectedLabel: (hint) =>
+      hint ? `Conectado (${hint}) · seguimiento activo` : "Conectado · seguimiento activo",
+    malLabel: "MyAnimeList",
+    malConnectBtn: "Conectar MyAnimeList",
+    malSyncBtn: "Sincronizar lista MAL",
+    malSyncingBtn: "Sincronizando MAL…",
+    malDisconnectBtn: "Desvincular",
+    malAdvancedToggle: "Client ID / Secret propio",
+    malSyncDoneToast: (imported, pushed) =>
+      `MAL sincronizado (+${imported} importados · ${pushed} enviados)`,
+    oauthPendingTitle: "Completa la autorización móvil",
+    oauthPendingDesc:
+      "Tras aceptar en el navegador, pega aquí la URL de redirección (mangora://oauth/...) o el código recibido:",
+    oauthCallbackPlaceholder: "mangora://oauth/...?code=...&state=...",
+    oauthCompleteBtn: "Confirmar autorización",
+    updatesTitle: "Actualizaciones y versión",
+    updatesCurrentLabel: "Versión instalada",
+    updatesCheckBtn: "Buscar actualizaciones",
+    updatesCheckingBtn: "Comprobando…",
+    updatesUpToDate: "Estás en la última versión estable disponible.",
+    updatesAvailableLabel: (ver) => `Nueva versión disponible: ${ver}`,
+    updatesOpenReleaseBtn: "Abrir página de descarga ↗",
+    mailboxCardTitle: "Buzón de opiniones y fallos",
+    mailboxCardDesc:
+      "Envía sugerencias, errores o avisa si algún proveedor de manga dejó de cargar.",
+    mailboxOpenBtn: "Abrir Buzón de Opiniones",
+    desktopTuiTitle: "Cambiar a manga-tui (terminal)",
+    desktopTuiDesc:
+      "Detectamos `manga-tui` instalado en este equipo. Toda tu biblioteca, progreso y descargas se comparten al instante.",
+    desktopTuiOpenBtn: "Abrir manga-tui en terminal",
+  },
+  feedback: {
+    sidebarBtn: "Buzón de opiniones",
+    eyebrow: "Buzón seguro · Comunidad",
+    title: "Cuéntanos qué mejorar.",
+    subtitle:
+      "Sin webhooks ni telemetría oculta: tu mensaje solo se envía cuando tú pulsas enviar.",
+    categoryLabel: "Categoría",
+    categories: {
+      suggestion: "Sugerencia",
+      bugReport: "Fallo técnico",
+      brokenProvider: "Proveedor roto",
+    },
+    messageLabel: "Tu mensaje",
+    messagePlaceholder:
+      "Cuéntanos qué ha pasado, qué serie/servidor estabas usando o qué te gustaría ver en Mangora...",
+    charsCount: (count) => `${count} / 2000 caracteres (mínimo 10)`,
+    diagnosticsLabel: "Adjuntar versión de app y sistema operativo",
+    diagnosticsHint:
+      "Solo añade versión de Mangora, sistema operativo, idioma y proveedor activo. Nunca incluye historial ni descargas.",
+    submitBtn: "Enviar opinión",
+    submittingBtn: "Enviando…",
+    openGithubFallbackBtn: "Abrir en GitHub Issues ↗",
+    deliveredTitle: "¡Gracias! Mensaje enviado correctamente.",
+    fallbackTitle: "Listo para enviar por GitHub Issues",
+    closeBtn: "Cerrar",
+    minLengthError: "Escribe al menos 10 caracteres para que podamos ayudarte.",
   },
   support: {
     eyebrow: "Comunidad y apoyo",
@@ -806,13 +986,34 @@ const ES: Translations = {
     githubDesc:
       "Revisa cada línea de Rust y TypeScript, consulta lanzamientos oficiales o abre una incidencia técnica.",
     githubBtn: "Ver repositorio ↗",
+    mailboxTitle: "Buzón de opiniones y reportes",
+    mailboxDesc:
+      "¿Un capítulo no carga o tienes una idea? Envía un aviso rápido con diagnóstico opcional sin salir de Mangora.",
+    mailboxBtn: "Abrir buzón",
     monsterTitle: "¿Me invitas a un Monster? ⚡ 2 €",
     monsterDesc:
-      "El apoyo voluntario ayuda a mantener el proyecto vivo. Nunca habrá muros de pago ni funciones bloqueadas. En el Hito 4 conectaremos los enlaces directos a Ko-fi y GitHub Sponsors.",
+      "Tu apoyo voluntario paga el café/Monster de las noches de código y el servidor de pruebas. Nunca habrá muros de pago, anuncios ni funciones bloqueadas. En Ko-fi puedes elegir 2 € o la cantidad libre que quieras sin crear cuenta.",
+    monsterNoKofiNote:
+      "Si el enlace directo de Ko-fi no está fijado en esta compilación (`MANGORA_KOFI_URL`), puedes apoyar directamente mediante GitHub Sponsors.",
     monsterBadge: "100 % voluntario · Sin paywalls",
+    monsterKofiBtn: "Invitar a un Monster ⚡ 2 € (Ko-fi) ↗",
+    monsterSponsorsBtn: "Apoyar en GitHub Sponsors ↗",
+    supportersTitle: "Agradecimientos · Supporters",
+    supportersDesc:
+      "Gracias a todas las personas de la comunidad que mantienen viva esta app:",
+    supportersList: [
+      "Colaboradores de Rust, React y CSS que aportan PRs y mejoras.",
+      "Testers de Windows, Android e iOS en el Discord oficial.",
+      "Supporters voluntarios que invitan a un Monster ⚡ para impulsar nuevos hitos.",
+    ],
     privacyTitle: "Privacidad local garantizada",
     privacyDesc:
       "Tu historial, favoritos, gustos y biblioteca viven únicamente en tu equipo. Puedes usar la app sin crear ninguna cuenta.",
+    bannerEyebrow: "Gracias por leer con Mangora",
+    bannerText: (chapters) =>
+      `Ya llevas ${chapters} capítulos leídos en local. Si Mangora te ahorra tiempo, puedes apoyar su desarrollo abierto de forma 100 % voluntaria.`,
+    bannerCta: "¿Un Monster? ⚡ 2 €",
+    bannerDismiss: "No volver a mostrar",
   },
   errors: {
     loadFailed: "No se pudo inicializar el almacenamiento local de Mangora.",
@@ -1204,6 +1405,95 @@ const EN: Translations = {
     tourDesc: "You can relaunch the onboarding assistant anytime to review sections or update your setup.",
     relaunchTourBtn: "Relaunch onboarding tour",
     savedToast: "Preference saved",
+    cloudTitle: "Cloud & Sync (Google Drive / Folder)",
+    cloudDesc:
+      "Keep your library, favorites, bookmarks, and downloaded chapters synced without editing config files.",
+    cloudConnectedBadge: "Connected",
+    cloudDisconnectedBadge: "Not linked",
+    cloudConnectDriveBtn: "Connect Google Drive (1-click)",
+    cloudConnectingBtn: "Authorizing in browser…",
+    cloudSyncNowBtn: "Sync now",
+    cloudSyncingBtn: "Syncing…",
+    cloudDisconnectBtn: "Disconnect",
+    cloudModeLibrary: "Progress & library only",
+    cloudModeFull: "Full sync (+ downloads)",
+    cloudLastSyncLabel: "Last sync:",
+    cloudDetectedFoldersLabel: "Cloud folders detected on this device:",
+    cloudManualFolderPlaceholder: "Path to Drive / OneDrive / iCloud folder...",
+    cloudLinkFolderBtn: "Link folder",
+    cloudAdvancedToggle: "Advanced (Custom OAuth Client ID)",
+    cloudClientIdPlaceholder: "Google OAuth Client ID...",
+    cloudClientSecretPlaceholder: "Google Client Secret (optional)...",
+    cloudMissingClientIdHint:
+      "No embedded OAuth Client ID in this build. Enter your credentials above or link a local synced folder.",
+    cloudSyncDoneToast: (mangas) => `Cloud synced (${mangas} series)`,
+    trackersTitle: "External Trackers (AniList & MyAnimeList)",
+    trackersDesc:
+      "Automatically track chapters on AniList or sync your manga list with MyAnimeList.",
+    anilistLabel: "AniList",
+    anilistGetTokenLink: "Open PIN / Token guide ↗",
+    anilistClientIdLabel: "Client ID",
+    anilistTokenLabel: "Access Token",
+    anilistSaveBtn: "Verify & save",
+    anilistSavingBtn: "Verifying…",
+    anilistDisconnectBtn: "Disconnect",
+    anilistConnectedLabel: (hint) =>
+      hint ? `Connected (${hint}) · auto-tracking on` : "Connected · auto-tracking on",
+    malLabel: "MyAnimeList",
+    malConnectBtn: "Connect MyAnimeList",
+    malSyncBtn: "Sync MAL list",
+    malSyncingBtn: "Syncing MAL…",
+    malDisconnectBtn: "Disconnect",
+    malAdvancedToggle: "Custom Client ID / Secret",
+    malSyncDoneToast: (imported, pushed) =>
+      `MAL synced (+${imported} imported · ${pushed} pushed)`,
+    oauthPendingTitle: "Complete mobile authorization",
+    oauthPendingDesc:
+      "After approving in your browser, paste the callback URL (mangora://oauth/...) or code here:",
+    oauthCallbackPlaceholder: "mangora://oauth/...?code=...&state=...",
+    oauthCompleteBtn: "Confirm authorization",
+    updatesTitle: "Updates & Version",
+    updatesCurrentLabel: "Installed version",
+    updatesCheckBtn: "Check for updates",
+    updatesCheckingBtn: "Checking…",
+    updatesUpToDate: "You are already on the latest stable release.",
+    updatesAvailableLabel: (ver) => `Update available: ${ver}`,
+    updatesOpenReleaseBtn: "Open release page ↗",
+    mailboxCardTitle: "Feedback & Bug Mailbox",
+    mailboxCardDesc:
+      "Send feature ideas, bug reports, or report a broken manga source.",
+    mailboxOpenBtn: "Open Feedback Mailbox",
+    desktopTuiTitle: "Switch to manga-tui (terminal)",
+    desktopTuiDesc:
+      "`manga-tui` was detected on this machine. All library progress and downloads stay shared automatically.",
+    desktopTuiOpenBtn: "Open manga-tui in terminal",
+  },
+  feedback: {
+    sidebarBtn: "Feedback mailbox",
+    eyebrow: "Feedback mailbox · Community",
+    title: "Tell us what to improve.",
+    subtitle:
+      "Zero hidden telemetry: your message is only sent when you explicitly press submit.",
+    categoryLabel: "Category",
+    categories: {
+      suggestion: "Suggestion",
+      bugReport: "Technical bug",
+      brokenProvider: "Broken source",
+    },
+    messageLabel: "Your message",
+    messagePlaceholder:
+      "Describe what happened, which series/source you used, or what feature would help you...",
+    charsCount: (count) => `${count} / 2000 characters (10 minimum)`,
+    diagnosticsLabel: "Attach app version & operating system",
+    diagnosticsHint:
+      "Includes only Mangora version, OS, UI language, and active source. Never reading history or downloads.",
+    submitBtn: "Send feedback",
+    submittingBtn: "Sending…",
+    openGithubFallbackBtn: "Open pre-filled GitHub Issue ↗",
+    deliveredTitle: "Thanks! Feedback delivered successfully.",
+    fallbackTitle: "Ready to open on GitHub Issues",
+    closeBtn: "Close",
+    minLengthError: "Please enter at least 10 characters so we can act on your feedback.",
   },
   support: {
     eyebrow: "Community & support",
@@ -1218,13 +1508,34 @@ const EN: Translations = {
     githubDesc:
       "Inspect every line of Rust and TypeScript, track official releases, or open a bug report.",
     githubBtn: "View repository ↗",
+    mailboxTitle: "Feedback & Bug Mailbox",
+    mailboxDesc:
+      "Found a bug or broken source? Send a quick structured report with optional diagnostics straight from Mangora.",
+    mailboxBtn: "Open mailbox",
     monsterTitle: "Buy me a Monster? ⚡ €2",
     monsterDesc:
-      "Voluntary support helps keep development moving. There are never paywalls or locked features. Milestone 4 wires direct Ko-fi and GitHub Sponsors links.",
+      "Voluntary support fuels late-night coding and test servers. There will never be paywalls, ads, or locked features. On Ko-fi you can donate €2 or any amount with no account required.",
+    monsterNoKofiNote:
+      "If no direct Ko-fi URL is bundled in this build (`MANGORA_KOFI_URL`), you can support development directly via GitHub Sponsors.",
     monsterBadge: "100% voluntary · No paywalls",
+    monsterKofiBtn: "Buy me a Monster ⚡ €2 (Ko-fi) ↗",
+    monsterSponsorsBtn: "Support on GitHub Sponsors ↗",
+    supportersTitle: "Supporters & Acknowledgments",
+    supportersDesc:
+      "Thank you to everyone in the community helping keep this project alive:",
+    supportersList: [
+      "Rust, React, and CSS contributors sending pull requests and fixes.",
+      "Windows, Android, and iOS community testers in our Discord server.",
+      "Voluntary supporters buying a Monster ⚡ to keep new milestones moving.",
+    ],
     privacyTitle: "Local-first privacy",
     privacyDesc:
       "Your history, favorites, genres, and library live locally on your computer. No account required.",
+    bannerEyebrow: "Thanks for reading with Mangora",
+    bannerText: (chapters) =>
+      `You have already read ${chapters} chapters locally. If Mangora helps you read cleanly, you can optionally support its open-source development.`,
+    bannerCta: "Monster? ⚡ €2",
+    bannerDismiss: "Don't show again",
   },
   errors: {
     loadFailed: "Could not initialize Mangora local storage.",

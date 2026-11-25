@@ -1,4 +1,4 @@
-import { Compass, RotateCcw } from "lucide-react";
+import { Compass, RotateCcw, X, Zap } from "lucide-react";
 import { LibraryShelf } from "../components/LibraryShelf";
 import type {
   InitialAppState,
@@ -19,6 +19,8 @@ interface HomeViewProps {
   onOpenSeries: (series: SeriesSelection) => void;
   onSearch: () => void;
   onRelaunchTour: () => void;
+  onOpenSupport?: () => void;
+  onDismissSupportBanner?: () => Promise<void>;
 }
 
 export function HomeView({
@@ -32,9 +34,16 @@ export function HomeView({
   onOpenSeries,
   onSearch,
   onRelaunchTour,
+  onOpenSupport,
+  onDismissSupportBanner,
 }: HomeViewProps) {
   const t = getTranslations(appState.uiLanguage);
   const activeProvider = appState.availableProviders.find((p) => p.id === appState.activeProvider);
+  const showSupportMilestoneBanner =
+    appState.library.chaptersRead >= 5 &&
+    !appState.supportBannerDismissed &&
+    Boolean(onOpenSupport) &&
+    Boolean(onDismissSupportBanner);
 
   return (
     <div className="space-y-8">
@@ -135,6 +144,35 @@ export function HomeView({
         onOpenSeries={onOpenSeries}
         onExplore={onSearch}
       />
+
+      {/* Subtle permanently-dismissible reading-milestone support banner */}
+      {showSupportMilestoneBanner && (
+        <section className="editorial-box-thin flex flex-wrap items-center justify-between gap-4 bg-[var(--surface)] p-4">
+          <div className="min-w-0 flex-1">
+            <div className="font-mono-editorial mb-0.5 text-[11px] font-bold uppercase text-[var(--red-text)]">
+              {t.support.bannerEyebrow}
+            </div>
+            <p className="text-xs text-[var(--muted)]">
+              {t.support.bannerText(appState.library.chaptersRead)}
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
+            <button type="button" onClick={onOpenSupport} className="editorial-btn-primary text-xs">
+              <Zap className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{t.support.bannerCta}</span>
+            </button>
+            <button
+              type="button"
+              disabled={isSaving}
+              onClick={() => void onDismissSupportBanner?.()}
+              className="editorial-btn-secondary text-xs"
+            >
+              <X className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{t.support.bannerDismiss}</span>
+            </button>
+          </div>
+        </section>
+      )}
 
       {/* Shared library status callout */}
       <section className="editorial-callout p-5 sm:p-6">

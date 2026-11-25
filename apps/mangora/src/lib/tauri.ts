@@ -3,6 +3,7 @@ import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type {
   AniListCommunityInfo,
+  CloudSyncActionResultDto,
   DownloadChapterFinishedEvent,
   DownloadFormat,
   DownloadQueueAction,
@@ -10,8 +11,11 @@ import type {
   EnqueueChaptersRequest,
   ForYouResponse,
   InitialAppState,
+  IntegrationsOverviewDto,
   LibraryEntry,
   LibraryOverview,
+  MalSyncActionResultDto,
+  OAuthStartResultDto,
   OfflineSeriesItem,
   OnboardingPreferencesPayload,
   OpenReaderChapterRequest,
@@ -23,12 +27,15 @@ import type {
   SeriesDetailResponse,
   SeriesSelection,
   SetDownloadFormatResult,
+  SubmitFeedbackRequest,
+  SubmitFeedbackResponse,
   ThemeMode,
   ToggleChapterReadPayload,
   ToggleChapterReadResult,
   ToggleFavoritePayload,
   ToggleFavoriteResult,
   UiLanguage,
+  UpdateCheckResultDto,
 } from "../types/mangora";
 
 const BROWSER_STORAGE_KEY = "mangora_browser_fallback_v1";
@@ -134,6 +141,7 @@ function defaultBrowserState(): InitialAppState {
     favoriteGenres: [],
     onboardingCompleted: false,
     downloadFormat: "cbz",
+    supportBannerDismissed: false,
     readerPrefs: {
       viewMode: "cascade",
       direction: "rtl",
@@ -636,4 +644,211 @@ export async function subscribeDownloadChapterFinished(
   return listen<DownloadChapterFinishedEvent>("mangora://download-chapter-finished", (event) => {
     handler(event.payload);
   });
+}
+
+export function defaultBrowserIntegrationsOverview(): IntegrationsOverviewDto {
+  return {
+    cloud: {
+      connected: false,
+      backend: null,
+      summary: "Sin vincular",
+      accountEmail: null,
+      accountDisplayName: null,
+      localFolderPath: null,
+      localFolderLabel: null,
+      hasEmbeddedOauth: false,
+      savedClientId: null,
+      lastSyncAt: null,
+      lastSyncReport: null,
+      detectedFolders: [],
+    },
+    trackers: {
+      anilist: {
+        connected: false,
+        clientIdHint: null,
+        source: null,
+        trackReadingHistory: false,
+      },
+      myAnimeList: {
+        connected: false,
+        username: null,
+        summary: "Sin vincular",
+        hasEmbeddedOauth: false,
+        savedClientId: null,
+        lastSyncAt: null,
+        lastSyncReport: null,
+      },
+    },
+    supportConfig: {
+      kofiUrl: null,
+      sponsorsUrl: "https://github.com/sponsors/tomahawk1103",
+      discordUrl: "https://discord.gg/SeqsWUCpVx",
+      githubUrl: "https://github.com/tomahawk1103/manga-tui",
+      githubIssuesUrl: "https://github.com/tomahawk1103/manga-tui/issues/new",
+    },
+    feedbackConfig: {
+      proxyConfigured: false,
+      fallbackIssuesUrl: "https://github.com/tomahawk1103/manga-tui/issues/new",
+    },
+    mangaTuiDetected: false,
+  };
+}
+
+export async function getIntegrationsOverview(): Promise<IntegrationsOverviewDto> {
+  if (isTauriRuntime()) {
+    return invoke<IntegrationsOverviewDto>("get_integrations_overview");
+  }
+  return defaultBrowserIntegrationsOverview();
+}
+
+export async function connectGoogleDrive(params: {
+  clientId?: string;
+  clientSecret?: string;
+  useDeeplink?: boolean;
+}): Promise<OAuthStartResultDto> {
+  if (!isTauriRuntime()) {
+    throw new Error("Conectar Google Drive requiere la aplicación nativa Mangora.");
+  }
+  return invoke<OAuthStartResultDto>("connect_google_drive", {
+    clientId: params.clientId ?? null,
+    clientSecret: params.clientSecret ?? null,
+    useDeeplink: params.useDeeplink ?? false,
+  });
+}
+
+export async function connectLocalCloudFolder(
+  folderPath: string,
+  providerLabel?: string,
+): Promise<IntegrationsOverviewDto> {
+  if (!isTauriRuntime()) {
+    throw new Error("Vincular carpeta sincronizada requiere la aplicación nativa Mangora.");
+  }
+  return invoke<IntegrationsOverviewDto>("connect_local_cloud_folder", {
+    folderPath,
+    providerLabel: providerLabel ?? null,
+  });
+}
+
+export async function runCloudSyncNow(
+  mode: "libraryOnly" | "fullSync" | "pushDownloads" | "pullDownloads",
+): Promise<CloudSyncActionResultDto> {
+  if (!isTauriRuntime()) {
+    throw new Error("Sincronizar nube requiere la aplicación nativa Mangora.");
+  }
+  return invoke<CloudSyncActionResultDto>("run_cloud_sync_now", { mode });
+}
+
+export async function disconnectCloud(): Promise<IntegrationsOverviewDto> {
+  if (isTauriRuntime()) {
+    return invoke<IntegrationsOverviewDto>("disconnect_cloud");
+  }
+  return defaultBrowserIntegrationsOverview();
+}
+
+export async function saveAnilistCredentials(params: {
+  clientId: string;
+  accessToken: string;
+  verify?: boolean;
+}): Promise<IntegrationsOverviewDto> {
+  if (!isTauriRuntime()) {
+    throw new Error("Configurar AniList requiere la aplicación nativa Mangora.");
+  }
+  return invoke<IntegrationsOverviewDto>("save_anilist_credentials", {
+    clientId: params.clientId,
+    accessToken: params.accessToken,
+    verify: params.verify ?? true,
+  });
+}
+
+export async function disconnectAnilist(): Promise<IntegrationsOverviewDto> {
+  if (isTauriRuntime()) {
+    return invoke<IntegrationsOverviewDto>("disconnect_anilist");
+  }
+  return defaultBrowserIntegrationsOverview();
+}
+
+export async function connectMyAnimeList(params: {
+  clientId?: string;
+  clientSecret?: string;
+  useDeeplink?: boolean;
+}): Promise<OAuthStartResultDto> {
+  if (!isTauriRuntime()) {
+    throw new Error("Conectar MyAnimeList requiere la aplicación nativa Mangora.");
+  }
+  return invoke<OAuthStartResultDto>("connect_myanimelist", {
+    clientId: params.clientId ?? null,
+    clientSecret: params.clientSecret ?? null,
+    useDeeplink: params.useDeeplink ?? false,
+  });
+}
+
+export async function syncMyAnimeListNow(): Promise<MalSyncActionResultDto> {
+  if (!isTauriRuntime()) {
+    throw new Error("Sincronizar MyAnimeList requiere la aplicación nativa Mangora.");
+  }
+  return invoke<MalSyncActionResultDto>("sync_myanimelist_now");
+}
+
+export async function disconnectMyAnimeList(): Promise<IntegrationsOverviewDto> {
+  if (isTauriRuntime()) {
+    return invoke<IntegrationsOverviewDto>("disconnect_myanimelist");
+  }
+  return defaultBrowserIntegrationsOverview();
+}
+
+export async function completeOAuthCallback(
+  provider: "googleDrive" | "myAnimeList",
+  callbackInput: string,
+): Promise<IntegrationsOverviewDto> {
+  if (!isTauriRuntime()) {
+    throw new Error("Completar OAuth requiere la aplicación nativa Mangora.");
+  }
+  return invoke<IntegrationsOverviewDto>("complete_oauth_callback", {
+    provider,
+    callbackInput,
+  });
+}
+
+export async function checkMangoraUpdates(): Promise<UpdateCheckResultDto> {
+  if (!isTauriRuntime()) {
+    return {
+      currentVersion: readBrowserState().appVersion,
+      latestVersion: `mangora-v${readBrowserState().appVersion}`,
+      updateAvailable: false,
+      releaseUrl: "https://github.com/tomahawk1103/manga-tui/releases",
+      releaseNotes: "Preview web: abre la aplicación nativa para consultar releases reales.",
+      publishedAt: null,
+      checkedAt: new Date().toISOString(),
+    };
+  }
+  return invoke<UpdateCheckResultDto>("check_mangora_updates");
+}
+
+export async function submitFeedback(
+  request: SubmitFeedbackRequest,
+): Promise<SubmitFeedbackResponse> {
+  if (isTauriRuntime()) {
+    return invoke<SubmitFeedbackResponse>("submit_feedback", { request });
+  }
+  const url = `https://github.com/tomahawk1103/manga-tui/issues/new?title=${encodeURIComponent(`[Mangora][${request.category}]`)}&body=${encodeURIComponent(request.message)}`;
+  return {
+    delivered: false,
+    mode: "githubFallback",
+    statusMessage: "Preview web: preparamos tu mensaje en GitHub Issues.",
+    fallbackIssueUrl: url,
+  };
+}
+
+export async function dismissSupportBanner(): Promise<InitialAppState> {
+  if (isTauriRuntime()) {
+    return invoke<InitialAppState>("dismiss_support_banner");
+  }
+  return writeBrowserState({ ...readBrowserState(), supportBannerDismissed: true });
+}
+
+export async function openMangaTuiDesktop(): Promise<void> {
+  if (isTauriRuntime()) {
+    return invoke<void>("open_manga_tui_desktop");
+  }
+  throw new Error("Disponible en la aplicación de escritorio.");
 }
