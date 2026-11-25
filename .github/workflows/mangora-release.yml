@@ -125,6 +125,7 @@ jobs:
         run: |
           npm run build
           npx tauri android init --ci
+          npx tauri icon src-tauri/icons/icon.png
           node ../../scripts/configure-mangora-android.mjs --android-dir src-tauri/gen/android
           npx tauri android build --apk --target aarch64
 
@@ -234,6 +235,7 @@ jobs:
           set -euo pipefail
           npm run build
           npx tauri ios init --ci
+          npx tauri icon src-tauri/icons/icon.png
           node ../../scripts/configure-mangora-ios.mjs --apple-dir src-tauri/gen/apple
 
       - name: Build unsigned iOS xcarchive & package IPA
