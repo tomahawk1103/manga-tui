@@ -100,6 +100,10 @@ fn emit_cloud_oauth_config(root: &Path) {
     println!("cargo:rerun-if-env-changed=MANGA_TUI_GDRIVE_CLIENT_SECRET");
     println!("cargo:rerun-if-env-changed=MANGA_TUI_MAL_CLIENT_ID");
     println!("cargo:rerun-if-env-changed=MANGA_TUI_MAL_CLIENT_SECRET");
+    println!("cargo:rerun-if-env-changed=MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_ID");
+    println!("cargo:rerun-if-env-changed=MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET");
+    println!("cargo:rerun-if-env-changed=MANGA_TUI_EMBEDDED_MAL_CLIENT_ID");
+    println!("cargo:rerun-if-env-changed=MANGA_TUI_EMBEDDED_MAL_CLIENT_SECRET");
     let dotenv = root.join(".env");
     let dotenv_local = root.join(".env.local");
     println!("cargo:rerun-if-changed={}", dotenv.display());
@@ -108,23 +112,24 @@ fn emit_cloud_oauth_config(root: &Path) {
     let env_base = load_dotenv_file(&dotenv);
     let env_local = load_dotenv_file(&dotenv_local);
 
-    let resolve = |key: &str| -> Option<String> {
-        non_empty_env(key)
-            .or_else(|| env_local.get(key).cloned())
-            .or_else(|| env_base.get(key).cloned())
+    let resolve_pair = |primary: &str, embedded: &str| -> Option<String> {
+        non_empty_env(primary)
+            .or_else(|| env_local.get(primary).cloned())
+            .or_else(|| env_base.get(primary).cloned())
+            .or_else(|| non_empty_env(embedded))
             .filter(|v| !v.trim().is_empty())
     };
 
-    if let Some(client_id) = resolve("MANGA_TUI_GDRIVE_CLIENT_ID") {
+    if let Some(client_id) = resolve_pair("MANGA_TUI_GDRIVE_CLIENT_ID", "MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_ID") {
         println!("cargo:rustc-env=MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_ID={client_id}");
     }
-    if let Some(client_secret) = resolve("MANGA_TUI_GDRIVE_CLIENT_SECRET") {
+    if let Some(client_secret) = resolve_pair("MANGA_TUI_GDRIVE_CLIENT_SECRET", "MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET") {
         println!("cargo:rustc-env=MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET={client_secret}");
     }
-    if let Some(client_id) = resolve("MANGA_TUI_MAL_CLIENT_ID") {
+    if let Some(client_id) = resolve_pair("MANGA_TUI_MAL_CLIENT_ID", "MANGA_TUI_EMBEDDED_MAL_CLIENT_ID") {
         println!("cargo:rustc-env=MANGA_TUI_EMBEDDED_MAL_CLIENT_ID={client_id}");
     }
-    if let Some(client_secret) = resolve("MANGA_TUI_MAL_CLIENT_SECRET") {
+    if let Some(client_secret) = resolve_pair("MANGA_TUI_MAL_CLIENT_SECRET", "MANGA_TUI_EMBEDDED_MAL_CLIENT_SECRET") {
         println!("cargo:rustc-env=MANGA_TUI_EMBEDDED_MAL_CLIENT_SECRET={client_secret}");
     }
 }

@@ -422,6 +422,8 @@ export interface Translations {
     oauthPendingDesc: string;
     oauthCallbackPlaceholder: string;
     oauthCompleteBtn: string;
+    oauthReopenBrowserBtn: string;
+    oauthCancelBtn: string;
     updatesTitle: string;
     updatesCurrentLabel: string;
     updatesCheckBtn: string;
@@ -908,7 +910,7 @@ const ES: Translations = {
       "Actualiza automáticamente tu progreso en AniList o sincroniza tu lista de MyAnimeList.",
     anilistLabel: "AniList",
     anilistGetTokenLink: "Abrir guía PIN / Token ↗",
-    anilistClientIdLabel: "Client ID",
+    anilistClientIdLabel: "Client ID (opcional · 18641)",
     anilistTokenLabel: "Access Token",
     anilistSaveBtn: "Verificar y guardar",
     anilistSavingBtn: "Verificando…",
@@ -923,11 +925,13 @@ const ES: Translations = {
     malAdvancedToggle: "Client ID / Secret propio",
     malSyncDoneToast: (imported, pushed) =>
       `MAL sincronizado (+${imported} importados · ${pushed} enviados)`,
-    oauthPendingTitle: "Completa la autorización móvil",
+    oauthPendingTitle: "Esperando confirmación del navegador",
     oauthPendingDesc:
-      "Tras aceptar en el navegador, pega aquí la URL de redirección (mangora://oauth/...) o el código recibido:",
-    oauthCallbackPlaceholder: "mangora://oauth/...?code=...&state=...",
+      "Acepta el permiso en tu navegador y vuelve a Mangora: se conectará automáticamente. Si el navegador muestra un error de conexión local, copia la URL completa (http://127.0.0.1:...) y pégala aquí:",
+    oauthCallbackPlaceholder: "http://127.0.0.1:.../?code=...&state=...",
     oauthCompleteBtn: "Confirmar autorización",
+    oauthReopenBrowserBtn: "Reabrir navegador ↗",
+    oauthCancelBtn: "Cancelar",
     updatesTitle: "Actualizaciones y versión",
     updatesCurrentLabel: "Versión instalada",
     updatesCheckBtn: "Buscar actualizaciones",
@@ -1434,7 +1438,7 @@ const EN: Translations = {
       "Automatically track chapters on AniList or sync your manga list with MyAnimeList.",
     anilistLabel: "AniList",
     anilistGetTokenLink: "Open PIN / Token guide ↗",
-    anilistClientIdLabel: "Client ID",
+    anilistClientIdLabel: "Client ID (optional · 18641)",
     anilistTokenLabel: "Access Token",
     anilistSaveBtn: "Verify & save",
     anilistSavingBtn: "Verifying…",
@@ -1449,11 +1453,13 @@ const EN: Translations = {
     malAdvancedToggle: "Custom Client ID / Secret",
     malSyncDoneToast: (imported, pushed) =>
       `MAL synced (+${imported} imported · ${pushed} pushed)`,
-    oauthPendingTitle: "Complete mobile authorization",
+    oauthPendingTitle: "Waiting for browser authorization",
     oauthPendingDesc:
-      "After approving in your browser, paste the callback URL (mangora://oauth/...) or code here:",
-    oauthCallbackPlaceholder: "mangora://oauth/...?code=...&state=...",
+      "Approve access in your browser and return to Mangora—it will finish automatically. If the browser reports a local connection error, copy the full redirect URL (http://127.0.0.1:...) and paste it below:",
+    oauthCallbackPlaceholder: "http://127.0.0.1:.../?code=...&state=...",
     oauthCompleteBtn: "Confirm authorization",
+    oauthReopenBrowserBtn: "Reopen browser ↗",
+    oauthCancelBtn: "Cancel",
     updatesTitle: "Updates & Version",
     updatesCurrentLabel: "Installed version",
     updatesCheckBtn: "Check for updates",

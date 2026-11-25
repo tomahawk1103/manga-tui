@@ -851,6 +851,140 @@ impl Default for GoogleDriveClient {
     }
 }
 
+/// Prepared Google Drive loopback OAuth session waiting for the browser redirect callback.
+pub struct PreparedGoogleLoopbackOAuth {
+    pub listener: TcpListener,
+    pub redirect_uri: String,
+    pub authorize_url: String,
+    pub pkce: PkceChallenge,
+}
+
+/// Responds to the browser redirect socket once the OAuth authorization code has been processed.
+pub struct GoogleLoopbackResponder {
+    socket: tokio::net::TcpStream,
+}
+
+fn escape_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn build_mobile_return_snippet(mobile_return_url: Option<&str>) -> String {
+    let Some(url) = mobile_return_url.map(str::trim).filter(|u| !u.is_empty()) else {
+        return String::new();
+    };
+    let escaped_href = escape_html(url);
+    let escaped_js = url.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        "<p style='margin-top:20px;'>\
+         <a href='{escaped_href}' style='display:inline-block;padding:12px 20px;background:#7aa2f7;color:#1a1b26;font-weight:700;border-radius:8px;text-decoration:none;'>Volver a Mangora / Return to Mangora</a>\
+         </p>\
+         <script>setTimeout(function(){{ window.location.href = \"{escaped_js}\"; }}, 250);</script>"
+    )
+}
+
+impl GoogleLoopbackResponder {
+    pub async fn send_success(mut self, mobile_return_url: Option<&str>) {
+        let return_snippet = build_mobile_return_snippet(mobile_return_url);
+        let success_html = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n\
+            <html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Manga TUI - Google Drive</title></head>\
+            <body style='font-family:system-ui,sans-serif;background:#1a1b26;color:#c0caf5;text-align:center;padding:48px 20px;'>\
+            <div style='max-width:480px;margin:0 auto;background:#24283b;padding:32px;border-radius:12px;border:1px solid #7aa2f7;'>\
+            <h2 style='color:#9ece6a;margin-top:0;'>✓ Google Drive vinculado</h2>\
+            <p>La autorización se ha completado correctamente. Ya puedes cerrar esta pestaña y volver a la app.</p>\
+            {return_snippet}\
+            </div></body></html>"
+        );
+        let _ = self.socket.write_all(success_html.as_bytes()).await;
+        let _ = self.socket.shutdown().await;
+    }
+
+    pub async fn send_error(mut self, error: &str, mobile_return_url: Option<&str>) {
+        let return_snippet = build_mobile_return_snippet(mobile_return_url);
+        let escaped_error = escape_html(error);
+        let html = format!(
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n\
+            <html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Manga TUI - Google Drive</title></head>\
+            <body style='font-family:system-ui,sans-serif;background:#1a1b26;color:#f7768e;text-align:center;padding:48px 20px;'>\
+            <div style='max-width:480px;margin:0 auto;background:#24283b;padding:32px;border-radius:12px;border:1px solid #f7768e;'>\
+            <h2 style='margin-top:0;'>❌ Error de autorización en Google Drive</h2>\
+            <p style='color:#c0caf5;'>{escaped_error}</p>\
+            {return_snippet}\
+            </div></body></html>"
+        );
+        let _ = self.socket.write_all(html.as_bytes()).await;
+        let _ = self.socket.shutdown().await;
+    }
+}
+
+/// Accepts connections on a Google loopback OAuth listener, safely skipping Chrome's empty
+/// speculative TCP preconnects and `/favicon.ico` requests until a callback with `code=` or `error=` arrives.
+pub async fn accept_google_loopback_code(
+    listener: TcpListener,
+    expected_state: &str,
+) -> Result<(String, GoogleLoopbackResponder), String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+
+    loop {
+        let (mut socket, _) = tokio::time::timeout_at(deadline, listener.accept())
+            .await
+            .map_err(|_| {
+                tr(
+                    "Tiempo de espera agotado (3 min) esperando la autorización de Google en el navegador.",
+                    "Timed out (3 min) waiting for Google authorization in the browser.",
+                )
+                .to_string()
+            })?
+            .map_err(|e| format!("OAuth socket error: {e}"))?;
+
+        let mut buf = vec![0u8; 4096];
+        let read_res = tokio::time::timeout(Duration::from_secs(5), socket.read(&mut buf)).await;
+        let n = match read_res {
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => continue,
+            Ok(Ok(n)) => n,
+        };
+
+        let request_str = String::from_utf8_lossy(&buf[..n]);
+        let request_line = request_str.lines().next().unwrap_or("");
+        let path_and_query = request_line.split_whitespace().nth(1).unwrap_or("");
+        let (path, query) = path_and_query.split_once('?').unwrap_or((path_and_query, ""));
+
+        if path == "/favicon.ico" || (extract_query_param(query, "code").is_none() && extract_query_param(query, "error").is_none())
+        {
+            let _ = socket.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await;
+            let _ = socket.shutdown().await;
+            continue;
+        }
+
+        if let Some(err) = extract_query_param(query, "error") {
+            let responder = GoogleLoopbackResponder { socket };
+            responder.send_error(&err, None).await;
+            return Err(format!("Google OAuth error: {err}"));
+        }
+
+        if let Some(returned_state) = extract_query_param(query, "state")
+            && returned_state != expected_state
+        {
+            let err_msg = tr(
+                "Error de seguridad OAuth: el parámetro state no coincide (posible CSRF).",
+                "OAuth security error: state parameter mismatch (possible CSRF).",
+            );
+            let responder = GoogleLoopbackResponder { socket };
+            responder.send_error(err_msg, None).await;
+            return Err(err_msg.to_string());
+        }
+
+        if let Some(code) = extract_query_param(query, "code").filter(|c| !c.trim().is_empty()) {
+            return Ok((code, GoogleLoopbackResponder { socket }));
+        }
+    }
+}
+
 impl GoogleDriveClient {
     pub fn new() -> Self {
         let mut builder = Client::builder()
@@ -884,18 +1018,8 @@ impl GoogleDriveClient {
         self
     }
 
-    /// Runs the loopback OAuth 2.0 + PKCE authorization flow on `127.0.0.1:0`, invoking
-    /// `on_authorize_url` with the browser URL to open, waiting for the redirect callback,
-    /// and exchanging the authorization code for access and refresh tokens.
-    pub async fn run_loopback_oauth_flow<F>(
-        &self,
-        client_id: &str,
-        client_secret: Option<&str>,
-        mut on_authorize_url: F,
-    ) -> Result<OAuthTokenResponse, String>
-    where
-        F: FnMut(&str),
-    {
+    /// Prepares a loopback OAuth 2.0 + PKCE session bound on `127.0.0.1:0`.
+    pub async fn prepare_loopback_oauth(&self, client_id: &str) -> Result<PreparedGoogleLoopbackOAuth, String> {
         let client_id = client_id.trim();
         if client_id.is_empty() {
             return Err(
@@ -911,55 +1035,44 @@ impl GoogleDriveClient {
         let pkce = PkceChallenge::generate();
         let authorize_url = build_google_oauth_authorize_url(&self.auth_url, client_id, &redirect_uri, &pkce);
 
-        on_authorize_url(&authorize_url);
+        Ok(PreparedGoogleLoopbackOAuth {
+            listener,
+            redirect_uri,
+            authorize_url,
+            pkce,
+        })
+    }
 
-        let (mut socket, _) = tokio::time::timeout(Duration::from_secs(180), listener.accept())
+    /// Runs the loopback OAuth 2.0 + PKCE authorization flow on `127.0.0.1:0`, invoking
+    /// `on_authorize_url` with the browser URL to open, waiting for the redirect callback,
+    /// and exchanging the authorization code for access and refresh tokens.
+    pub async fn run_loopback_oauth_flow<F>(
+        &self,
+        client_id: &str,
+        client_secret: Option<&str>,
+        mut on_authorize_url: F,
+    ) -> Result<OAuthTokenResponse, String>
+    where
+        F: FnMut(&str),
+    {
+        let client_id = client_id.trim();
+        let prepared = self.prepare_loopback_oauth(client_id).await?;
+        on_authorize_url(&prepared.authorize_url);
+
+        let (code, responder) = accept_google_loopback_code(prepared.listener, &prepared.pkce.state).await?;
+        match self
+            .exchange_code_for_token(client_id, client_secret, &code, &prepared.pkce.code_verifier, &prepared.redirect_uri)
             .await
-            .map_err(|_| {
-                tr(
-                    "Tiempo de espera agotado (3 min) esperando la autorización de Google en el navegador.",
-                    "Timed out (3 min) waiting for Google authorization in the browser.",
-                )
-                .to_string()
-            })?
-            .map_err(|e| format!("OAuth socket error: {e}"))?;
-
-        let mut buf = vec![0u8; 4096];
-        let n = socket.read(&mut buf).await.map_err(|e| e.to_string())?;
-        let request_str = String::from_utf8_lossy(&buf[..n]);
-        let request_line = request_str.lines().next().unwrap_or("");
-        let path_and_query = request_line.split_whitespace().nth(1).unwrap_or("");
-        let query = path_and_query.split_once('?').map(|(_, q)| q).unwrap_or("");
-
-        if let Some(err) = extract_query_param(query, "error") {
-            let html = format!(
-                "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
-                 <html><body style='font-family:sans-serif;background:#1a1b26;color:#f7768e;text-align:center;padding:40px;'>\
-                 <h2>❌ Error de autorización en Google Drive</h2><p>{err}</p></body></html>"
-            );
-            let _ = socket.write_all(html.as_bytes()).await;
-            return Err(format!("Google OAuth error: {err}"));
+        {
+            Ok(tokens) => {
+                responder.send_success(None).await;
+                Ok(tokens)
+            },
+            Err(err) => {
+                responder.send_error(&err, None).await;
+                Err(err)
+            },
         }
-
-        let Some(code) = extract_query_param(query, "code") else {
-            let html = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
-                        <html><body>Missing authorization code</body></html>";
-            let _ = socket.write_all(html.as_bytes()).await;
-            return Err(tr("No se recibió código de autorización OAuth.", "No OAuth authorization code received.").to_string());
-        };
-
-        let success_html = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n\
-            <html><head><title>Manga TUI - Google Drive</title></head>\
-            <body style='font-family:system-ui,sans-serif;background:#1a1b26;color:#c0caf5;text-align:center;padding:60px;'>\
-            <div style='max-width:480px;margin:0 auto;background:#24283b;padding:32px;border-radius:12px;border:1px solid #7aa2f7;'>\
-            <h2 style='color:#9ece6a;margin-top:0;'>✓ Google Drive vinculado con Manga TUI</h2>\
-            <p>La autorización se ha completado correctamente. Ya puedes cerrar esta pestaña y volver a <b>Manga TUI</b>.</p>\
-            </div></body></html>";
-        let _ = socket.write_all(success_html.as_bytes()).await;
-        let _ = socket.shutdown().await;
-
-        self.exchange_code_for_token(client_id, client_secret, &code, &pkce.code_verifier, &redirect_uri)
-            .await
     }
 
     pub async fn exchange_code_for_token(
@@ -2281,5 +2394,45 @@ mod tests {
         assert_eq!(merged.manga_genres[0].genre, "Action");
         assert_eq!(merged.manga_genres[0].created_at.as_deref(), Some("2026-11-10 08:00:00"));
         assert_eq!(merged.manga_genres[1].genre, "Fantasy");
+    }
+
+    #[tokio::test]
+    async fn accept_google_loopback_code_skips_preconnect_and_favicon_requests() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let client_task = tokio::spawn(async move {
+            // 1. Empty speculative preconnect socket
+            let preconnect = tokio::net::TcpStream::connect(addr).await.unwrap();
+            drop(preconnect);
+
+            // 2. /favicon.ico browser request
+            let mut fav_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            fav_stream
+                .write_all(b"GET /favicon.ico HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                .await
+                .unwrap();
+            let mut fav_buf = [0u8; 256];
+            let fav_n = fav_stream.read(&mut fav_buf).await.unwrap();
+            assert!(String::from_utf8_lossy(&fav_buf[..fav_n]).contains("204 No Content"));
+            drop(fav_stream);
+
+            // 3. Actual OAuth callback
+            let mut cb_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            cb_stream
+                .write_all(b"GET /?code=abc123&state=expected_state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                .await
+                .unwrap();
+            let mut cb_buf = [0u8; 1024];
+            let cb_n = cb_stream.read(&mut cb_buf).await.unwrap();
+            let cb_resp = String::from_utf8_lossy(&cb_buf[..cb_n]);
+            assert!(cb_resp.contains("200 OK"));
+            assert!(cb_resp.contains("mangora://oauth/done"));
+        });
+
+        let (code, responder) = accept_google_loopback_code(listener, "expected_state").await.unwrap();
+        assert_eq!(code, "abc123");
+        responder.send_success(Some("mangora://oauth/done")).await;
+        client_task.await.unwrap();
     }
 }

@@ -44,6 +44,10 @@ jobs:
       - name: Build and package Mangora Windows installers (NSIS + MSI)
         shell: pwsh
         env:
+          MANGA_TUI_GDRIVE_CLIENT_ID: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_ID }}
+          MANGA_TUI_GDRIVE_CLIENT_SECRET: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_SECRET }}
+          MANGA_TUI_MAL_CLIENT_ID: ${{ secrets.MANGA_TUI_MAL_CLIENT_ID }}
+          MANGA_TUI_MAL_CLIENT_SECRET: ${{ secrets.MANGA_TUI_MAL_CLIENT_SECRET }}
           MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_ID: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_ID }}
           MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_SECRET }}
           MANGA_TUI_EMBEDDED_MAL_CLIENT_ID: ${{ secrets.MANGA_TUI_MAL_CLIENT_ID }}
@@ -107,6 +111,10 @@ jobs:
       - name: Initialize Tauri Android & build APK
         working-directory: apps/mangora
         env:
+          MANGA_TUI_GDRIVE_CLIENT_ID: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_ID }}
+          MANGA_TUI_GDRIVE_CLIENT_SECRET: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_SECRET }}
+          MANGA_TUI_MAL_CLIENT_ID: ${{ secrets.MANGA_TUI_MAL_CLIENT_ID }}
+          MANGA_TUI_MAL_CLIENT_SECRET: ${{ secrets.MANGA_TUI_MAL_CLIENT_SECRET }}
           MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_ID: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_ID }}
           MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_SECRET }}
           MANGA_TUI_EMBEDDED_MAL_CLIENT_ID: ${{ secrets.MANGA_TUI_MAL_CLIENT_ID }}
@@ -231,6 +239,10 @@ jobs:
       - name: Build unsigned iOS xcarchive & package IPA
         working-directory: apps/mangora
         env:
+          MANGA_TUI_GDRIVE_CLIENT_ID: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_ID }}
+          MANGA_TUI_GDRIVE_CLIENT_SECRET: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_SECRET }}
+          MANGA_TUI_MAL_CLIENT_ID: ${{ secrets.MANGA_TUI_MAL_CLIENT_ID }}
+          MANGA_TUI_MAL_CLIENT_SECRET: ${{ secrets.MANGA_TUI_MAL_CLIENT_SECRET }}
           MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_ID: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_ID }}
           MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_SECRET }}
           MANGA_TUI_EMBEDDED_MAL_CLIENT_ID: ${{ secrets.MANGA_TUI_MAL_CLIENT_ID }}

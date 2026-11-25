@@ -241,7 +241,7 @@ impl MalConnectionState {
         }
         // Never persist raw tokens in plain JSON on disk when OS keyring is available
         let mut sanitized = self.clone();
-        if !cfg!(any(test, feature = "test-utils")) {
+        if keyring_has_stored_mal_token() {
             sanitized.fallback_access_token = None;
             sanitized.fallback_refresh_token = None;
             sanitized.fallback_client_secret = None;
@@ -405,6 +405,152 @@ pub struct MalUserMangaEntry {
     pub picture_url: Option<String>,
 }
 
+fn keyring_has_stored_mal_token() -> bool {
+    if cfg!(any(test, feature = "test-utils", target_os = "android")) {
+        return false;
+    }
+    KeyringStorage::new()
+        .get_secret(SECRET_MAL_ACCESS_TOKEN)
+        .ok()
+        .flatten()
+        .is_some_and(|s| !s.trim().is_empty())
+}
+
+fn escape_html(input: &str) -> String {
+    input
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&#39;")
+}
+
+fn build_mobile_return_snippet(mobile_return_url: Option<&str>) -> String {
+    let Some(url) = mobile_return_url.map(str::trim).filter(|u| !u.is_empty()) else {
+        return String::new();
+    };
+    let escaped_href = escape_html(url);
+    let escaped_js = url.replace('\\', "\\\\").replace('"', "\\\"");
+    format!(
+        "<p style='margin-top:20px;'>\
+         <a href='{escaped_href}' style='display:inline-block;padding:12px 20px;background:#7aa2f7;color:#1a1b26;font-weight:700;border-radius:8px;text-decoration:none;'>Volver a Mangora / Return to Mangora</a>\
+         </p>\
+         <script>setTimeout(function(){{ window.location.href = \"{escaped_js}\"; }}, 250);</script>"
+    )
+}
+
+/// Prepared MyAnimeList loopback OAuth session waiting for the browser redirect callback.
+pub struct PreparedMalLoopbackOAuth {
+    pub listener: TcpListener,
+    pub redirect_uri: String,
+    pub authorize_url: String,
+    pub pkce: MalPkceChallenge,
+}
+
+/// Responds to the browser redirect socket once the MAL OAuth authorization code has been processed.
+pub struct MalLoopbackResponder {
+    socket: tokio::net::TcpStream,
+}
+
+impl MalLoopbackResponder {
+    pub async fn send_success(mut self, mobile_return_url: Option<&str>) {
+        let return_snippet = build_mobile_return_snippet(mobile_return_url);
+        let success_html = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n\
+            <html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Manga TUI - MyAnimeList</title></head>\
+            <body style='font-family:system-ui,sans-serif;background:#1a1b26;color:#c0caf5;text-align:center;padding:48px 20px;'>\
+            <div style='max-width:480px;margin:0 auto;background:#24283b;padding:32px;border-radius:12px;border:1px solid #2e51a2;'>\
+            <h2 style='color:#9ece6a;margin-top:0;'>✓ Sesión iniciada en MyAnimeList</h2>\
+            <p>Tu cuenta de MyAnimeList ya está conectada. Ya puedes cerrar esta pestaña y volver a la app.</p>\
+            {return_snippet}\
+            </div></body></html>"
+        );
+        let _ = self.socket.write_all(success_html.as_bytes()).await;
+        let _ = self.socket.shutdown().await;
+    }
+
+    pub async fn send_error(mut self, error: &str, mobile_return_url: Option<&str>) {
+        let return_snippet = build_mobile_return_snippet(mobile_return_url);
+        let escaped_error = escape_html(error);
+        let html = format!(
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n\
+            <html><head><meta name='viewport' content='width=device-width,initial-scale=1'><title>Manga TUI - MyAnimeList</title></head>\
+            <body style='font-family:system-ui,sans-serif;background:#1a1b26;color:#f7768e;text-align:center;padding:48px 20px;'>\
+            <div style='max-width:480px;margin:0 auto;background:#24283b;padding:32px;border-radius:12px;border:1px solid #f7768e;'>\
+            <h2 style='margin-top:0;'>❌ Error de autorización en MyAnimeList</h2>\
+            <p style='color:#c0caf5;'>{escaped_error}</p>\
+            {return_snippet}\
+            </div></body></html>"
+        );
+        let _ = self.socket.write_all(html.as_bytes()).await;
+        let _ = self.socket.shutdown().await;
+    }
+}
+
+/// Accepts connections on a MyAnimeList loopback OAuth listener, skipping Chrome's empty
+/// speculative TCP preconnects and `/favicon.ico` requests until a callback with `code=` or `error=` arrives.
+pub async fn accept_mal_loopback_code(
+    listener: TcpListener,
+    expected_state: &str,
+) -> Result<(String, MalLoopbackResponder), String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(180);
+
+    loop {
+        let (mut socket, _) = tokio::time::timeout_at(deadline, listener.accept())
+            .await
+            .map_err(|_| {
+                tr(
+                    "Tiempo de espera agotado (3 min) esperando la autorización de MyAnimeList en el navegador.",
+                    "Timed out (3 min) waiting for MyAnimeList authorization in the browser.",
+                )
+                .to_string()
+            })?
+            .map_err(|e| format!("OAuth socket error: {e}"))?;
+
+        let mut buf = vec![0u8; 4096];
+        let read_res = tokio::time::timeout(Duration::from_secs(5), socket.read(&mut buf)).await;
+        let n = match read_res {
+            Ok(Ok(0)) | Ok(Err(_)) | Err(_) => continue,
+            Ok(Ok(n)) => n,
+        };
+
+        let request_str = String::from_utf8_lossy(&buf[..n]);
+        let request_line = request_str.lines().next().unwrap_or("");
+        let path_and_query = request_line.split_whitespace().nth(1).unwrap_or("");
+        let (path, query) = path_and_query.split_once('?').unwrap_or((path_and_query, ""));
+
+        if path == "/favicon.ico" || (extract_query_param(query, "code").is_none() && extract_query_param(query, "error").is_none())
+        {
+            let _ = socket.write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n").await;
+            let _ = socket.shutdown().await;
+            continue;
+        }
+
+        if let Some(err) = extract_query_param(query, "error") {
+            let responder = MalLoopbackResponder { socket };
+            responder.send_error(&err, None).await;
+            return Err(format!("MyAnimeList OAuth error: {err}"));
+        }
+
+        // Strict anti-CSRF state verification
+        if let Some(returned_state) = extract_query_param(query, "state")
+            && returned_state != expected_state
+        {
+            let err_msg = tr(
+                "Error de seguridad OAuth: el parámetro state no coincide (posible CSRF).",
+                "OAuth security error: state parameter mismatch (possible CSRF).",
+            );
+            let responder = MalLoopbackResponder { socket };
+            responder.send_error(err_msg, None).await;
+            return Err(err_msg.to_string());
+        }
+
+        if let Some(code) = extract_query_param(query, "code").filter(|c| !c.trim().is_empty()) {
+            return Ok((code, MalLoopbackResponder { socket }));
+        }
+    }
+}
+
 /// Official MyAnimeList API v2 Client & `MangaTracker` implementation.
 #[derive(Debug, Clone)]
 pub struct MyAnimeListClient {
@@ -470,9 +616,67 @@ impl MyAnimeListClient {
         self
     }
 
+    /// Prepares a loopback OAuth 2.0 + PKCE session bound on `127.0.0.1:8765` (retrying briefly
+    /// in case a previous listener is still releasing the port).
+    pub async fn prepare_loopback_oauth(&self, client_id: &str) -> Result<PreparedMalLoopbackOAuth, String> {
+        let client_id = client_id.trim();
+        if client_id.is_empty() {
+            return Err(
+                tr("El Client ID de MyAnimeList no puede estar vacío.", "MyAnimeList Client ID cannot be empty.").to_string()
+            );
+        }
+
+        let mut bound_8765: Option<TcpListener> = None;
+        let mut last_err: Option<std::io::Error> = None;
+        for attempt in 0..5 {
+            match TcpListener::bind("127.0.0.1:8765").await {
+                Ok(l) => {
+                    bound_8765 = Some(l);
+                    break;
+                },
+                Err(e) => {
+                    last_err = Some(e);
+                    if attempt < 4 {
+                        tokio::time::sleep(Duration::from_millis(40)).await;
+                    }
+                },
+            }
+        }
+
+        let listener = match bound_8765 {
+            Some(l) => l,
+            None => {
+                #[cfg(any(target_os = "android", target_os = "ios"))]
+                {
+                    let detail = last_err.map(|e| e.to_string()).unwrap_or_default();
+                    return Err(format!("Failed to bind local OAuth callback port 8765 (required by MyAnimeList): {detail}"));
+                }
+                #[cfg(not(any(target_os = "android", target_os = "ios")))]
+                {
+                    let _ = last_err;
+                    TcpListener::bind("127.0.0.1:0")
+                        .await
+                        .map_err(|e| format!("Failed to bind local OAuth callback port: {e}"))?
+                }
+            },
+        };
+
+        let local_addr = listener.local_addr().map_err(|e| e.to_string())?;
+        let redirect_uri = format!("http://127.0.0.1:{}/callback", local_addr.port());
+        let pkce = MalPkceChallenge::generate();
+        let authorize_url = build_mal_oauth_authorize_url(&self.auth_url, client_id, &redirect_uri, &pkce);
+
+        Ok(PreparedMalLoopbackOAuth {
+            listener,
+            redirect_uri,
+            authorize_url,
+            pkce,
+        })
+    }
+
     /// Runs the loopback OAuth 2.0 + PKCE flow for MyAnimeList.
     /// Binds to `127.0.0.1:8765` first (so users can register a fixed Redirect URL `http://127.0.0.1:8765/callback` in MAL),
-    /// falling back to an ephemeral port `127.0.0.1:0` if 8765 is busy.
+    /// falling back to an ephemeral port `127.0.0.1:0` on desktop if 8765 is busy.
     pub async fn run_loopback_oauth_flow<F>(
         &self,
         client_id: &str,
@@ -483,87 +687,23 @@ impl MyAnimeListClient {
         F: FnMut(&str),
     {
         let client_id = client_id.trim();
-        if client_id.is_empty() {
-            return Err(
-                tr("El Client ID de MyAnimeList no puede estar vacío.", "MyAnimeList Client ID cannot be empty.").to_string()
-            );
-        }
+        let prepared = self.prepare_loopback_oauth(client_id).await?;
+        on_authorize_url(&prepared.authorize_url);
 
-        let listener = match TcpListener::bind("127.0.0.1:8765").await {
-            Ok(l) => l,
-            Err(_) => TcpListener::bind("127.0.0.1:0")
-                .await
-                .map_err(|e| format!("Failed to bind local OAuth callback port: {e}"))?,
-        };
-        let local_addr = listener.local_addr().map_err(|e| e.to_string())?;
-        let redirect_uri = format!("http://127.0.0.1:{}/callback", local_addr.port());
-        let pkce = MalPkceChallenge::generate();
-        let authorize_url = build_mal_oauth_authorize_url(&self.auth_url, client_id, &redirect_uri, &pkce);
-
-        on_authorize_url(&authorize_url);
-
-        let (mut socket, _) = tokio::time::timeout(Duration::from_secs(180), listener.accept())
+        let (code, responder) = accept_mal_loopback_code(prepared.listener, &prepared.pkce.state).await?;
+        match self
+            .exchange_code_for_token(client_id, client_secret, &code, &prepared.pkce.code_verifier, &prepared.redirect_uri)
             .await
-            .map_err(|_| {
-                tr(
-                    "Tiempo de espera agotado (3 min) esperando la autorización de MyAnimeList en el navegador.",
-                    "Timed out (3 min) waiting for MyAnimeList authorization in the browser.",
-                )
-                .to_string()
-            })?
-            .map_err(|e| format!("OAuth socket error: {e}"))?;
-
-        let mut buf = vec![0u8; 4096];
-        let n = socket.read(&mut buf).await.map_err(|e| e.to_string())?;
-        let request_str = String::from_utf8_lossy(&buf[..n]);
-        let request_line = request_str.lines().next().unwrap_or("");
-        let path_and_query = request_line.split_whitespace().nth(1).unwrap_or("");
-        let query = path_and_query.split_once('?').map(|(_, q)| q).unwrap_or("");
-
-        if let Some(err) = extract_query_param(query, "error") {
-            let html = format!(
-                "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
-                 <html><body style='font-family:sans-serif;background:#1a1b26;color:#f7768e;text-align:center;padding:40px;'>\
-                 <h2>❌ Error de autorización en MyAnimeList</h2><p>{err}</p></body></html>"
-            );
-            let _ = socket.write_all(html.as_bytes()).await;
-            return Err(format!("MyAnimeList OAuth error: {err}"));
-        }
-
-        // Strict anti-CSRF state verification
-        if let Some(returned_state) = extract_query_param(query, "state")
-            && returned_state != pkce.state
         {
-            return Err(tr(
-                "Error de seguridad OAuth: el parámetro state no coincide (posible CSRF).",
-                "OAuth security error: state parameter mismatch (possible CSRF).",
-            )
-            .to_string());
+            Ok(tokens) => {
+                responder.send_success(None).await;
+                Ok(tokens)
+            },
+            Err(err) => {
+                responder.send_error(&err, None).await;
+                Err(err)
+            },
         }
-
-        let Some(code) = extract_query_param(query, "code") else {
-            let html = "HTTP/1.1 400 Bad Request\r\nContent-Type: text/html; charset=utf-8\r\n\r\n\
-                        <html><body>Missing authorization code</body></html>";
-            let _ = socket.write_all(html.as_bytes()).await;
-            return Err(tr(
-                "No se recibió código de autorización de MyAnimeList.",
-                "No OAuth authorization code received from MyAnimeList.",
-            )
-            .to_string());
-        };
-
-        let success_html = "HTTP/1.1 200 OK\r\nContent-Type: text/html; charset=utf-8\r\nConnection: close\r\n\r\n\
-            <html><head><title>Manga TUI - MyAnimeList</title></head>\
-            <body style='font-family:system-ui,sans-serif;background:#1a1b26;color:#c0caf5;text-align:center;padding:60px;'>\
-            <div style='max-width:480px;margin:0 auto;background:#24283b;padding:32px;border-radius:12px;border:1px solid #2e51a2;'>\
-            <h2 style='color:#9ece6a;margin-top:0;'>✓ Sesión iniciada en MyAnimeList</h2>\
-            <p>Tu cuenta de MyAnimeList ya está conectada con Manga TUI. Ya puedes cerrar esta pestaña y volver a la app.</p>\
-            </div></body></html>";
-        let _ = socket.write_all(success_html.as_bytes()).await;
-        let _ = socket.shutdown().await;
-
-        self.exchange_code_for_token(client_id, client_secret, &code, &pkce.code_verifier, &redirect_uri)
-            .await
     }
 
     pub async fn exchange_code_for_token(
@@ -1194,5 +1334,70 @@ mod tests {
         assert_eq!(state.get_refresh_token().as_deref(), Some("fresh_refresh_token"));
 
         let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn mal_connection_state_persists_fallback_tokens_and_clears_on_disconnect() {
+        let base_dir = PathBuf::from("./test_results/mal_state_persistence_test");
+        let _ = fs::remove_dir_all(&base_dir);
+        fs::create_dir_all(&base_dir).unwrap();
+        let state_path = base_dir.join(MAL_STATE_FILE_NAME);
+
+        let mut state = MalConnectionState::default();
+        state.save_oauth_tokens("mal_cid", Some("mal_sec"), "mal_access_123", Some("mal_refresh_456"));
+        state.username = Some("ReaderSan".to_string());
+        state.save_to_path(&state_path).unwrap();
+
+        let reloaded = MalConnectionState::load_from_path(&state_path);
+        assert!(reloaded.is_connected());
+        assert_eq!(reloaded.get_access_token().as_deref(), Some("mal_access_123"));
+        assert_eq!(reloaded.get_refresh_token().as_deref(), Some("mal_refresh_456"));
+        assert_eq!(reloaded.username.as_deref(), Some("ReaderSan"));
+
+        let mut cleared = reloaded;
+        cleared.clear_credentials();
+        cleared.save_to_path(&state_path).unwrap();
+        let reloaded_after_clear = MalConnectionState::load_from_path(&state_path);
+        assert!(!reloaded_after_clear.is_connected());
+        assert_eq!(reloaded_after_clear.get_access_token(), None);
+
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[tokio::test]
+    async fn accept_mal_loopback_code_skips_preconnect_and_favicon_requests() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+
+        let client_task = tokio::spawn(async move {
+            let preconnect = tokio::net::TcpStream::connect(addr).await.unwrap();
+            drop(preconnect);
+
+            let mut fav_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            fav_stream
+                .write_all(b"GET /favicon.ico HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                .await
+                .unwrap();
+            let mut fav_buf = [0u8; 256];
+            let fav_n = fav_stream.read(&mut fav_buf).await.unwrap();
+            assert!(String::from_utf8_lossy(&fav_buf[..fav_n]).contains("204 No Content"));
+            drop(fav_stream);
+
+            let mut cb_stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+            cb_stream
+                .write_all(b"GET /callback?code=mal_code_789&state=mal_state HTTP/1.1\r\nHost: 127.0.0.1\r\n\r\n")
+                .await
+                .unwrap();
+            let mut cb_buf = [0u8; 1024];
+            let cb_n = cb_stream.read(&mut cb_buf).await.unwrap();
+            let cb_resp = String::from_utf8_lossy(&cb_buf[..cb_n]);
+            assert!(cb_resp.contains("200 OK"));
+            assert!(cb_resp.contains("mangora://oauth/done"));
+        });
+
+        let (code, responder) = accept_mal_loopback_code(listener, "mal_state").await.unwrap();
+        assert_eq!(code, "mal_code_789");
+        responder.send_success(Some("mangora://oauth/done")).await;
+        client_task.await.unwrap();
     }
 }

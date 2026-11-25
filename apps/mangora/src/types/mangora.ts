@@ -487,11 +487,18 @@ export interface IntegrationsOverviewDto {
 
 export interface OAuthStartResultDto {
   provider: "googleDrive" | "myAnimeList" | string;
-  mode: "loopback" | "deeplink" | string;
+  mode: "loopback" | "loopback_async" | "deeplink" | string;
   authorizeUrl: string | null;
   redirectUri: string | null;
   completed: boolean;
   overview: IntegrationsOverviewDto;
+}
+
+export interface OAuthCompletedEventDto {
+  provider: "googleDrive" | "myAnimeList" | string;
+  ok: boolean;
+  error: string | null;
+  overview: IntegrationsOverviewDto | null;
 }
 
 export interface CloudSyncActionResultDto {

@@ -238,6 +238,23 @@ impl From<GetAnilistAccessTokenBody> for Body {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct AnilistViewer {
+    pub id: u32,
+    pub name: String,
+}
+
+#[derive(Debug, Deserialize)]
+struct ViewerQueryResponse {
+    data: Option<ViewerQueryData>,
+}
+
+#[derive(Debug, Deserialize)]
+struct ViewerQueryData {
+    #[serde(rename = "Viewer")]
+    viewer: Option<AnilistViewer>,
+}
+
 impl Anilist {
     pub fn new(base_url: Url) -> Self {
         let mut default_headers = HeaderMap::new();
@@ -291,6 +308,33 @@ impl Anilist {
 
         let is_valid = response.status() != StatusCode::UNAUTHORIZED && response.status() != StatusCode::BAD_REQUEST;
         Ok(is_valid)
+    }
+
+    /// Verifies the configured AniList Bearer token against `query { Viewer { id name } }`.
+    pub async fn verify_viewer_token(&self) -> Result<Option<AnilistViewer>, Box<dyn Error>> {
+        let body = json!({
+            "query": "query { Viewer { id name } }"
+        })
+        .to_string();
+
+        let response = self
+            .client
+            .post(self.base_url.clone())
+            .body(body)
+            .header(AUTHORIZATION, self.auth_header())
+            .send()
+            .await?;
+
+        let status = response.status();
+        if status == StatusCode::UNAUTHORIZED || status == StatusCode::BAD_REQUEST {
+            return Ok(None);
+        }
+        if !status.is_success() {
+            return Err(format!("AniList Viewer verification failed with HTTP {status}").into());
+        }
+
+        let parsed: ViewerQueryResponse = response.json().await?;
+        Ok(parsed.data.and_then(|d| d.viewer))
     }
 }
 
@@ -656,5 +700,44 @@ mod tests {
             .expect("should not error");
 
         request.assert_async().await;
+    }
+
+    #[tokio::test]
+    async fn anilist_verifies_viewer_token_and_rejects_unauthorized() {
+        let server = MockServer::start_async().await;
+        let base_url: Url = server.base_url().parse().unwrap();
+
+        let ok_mock = server
+            .mock_async(|when, then| {
+                when.method(POST).header("Authorization", "Bearer valid_tok");
+                then.status(200).json_body(json!({
+                    "data": {
+                        "Viewer": {
+                            "id": 42,
+                            "name": "Guts"
+                        }
+                    }
+                }));
+            })
+            .await;
+
+        let valid_client = Anilist::new(base_url.clone()).with_token("valid_tok".to_string());
+        let viewer = valid_client.verify_viewer_token().await.unwrap().unwrap();
+        ok_mock.assert_async().await;
+        assert_eq!(viewer, AnilistViewer {
+            id: 42,
+            name: "Guts".to_string(),
+        });
+
+        let bad_mock = server
+            .mock_async(|when, then| {
+                when.method(POST).header("Authorization", "Bearer bad_tok");
+                then.status(401).body("Unauthorized");
+            })
+            .await;
+
+        let invalid_client = Anilist::new(base_url).with_token("bad_tok".to_string());
+        assert_eq!(invalid_client.verify_viewer_token().await.unwrap(), None);
+        bad_mock.assert_async().await;
     }
 }
