@@ -11,6 +11,7 @@ const intro = byId("intro");
 const status = byId("status");
 const epBadge = byId("ep-badge");
 const metaBadges = byId("meta-badges");
+const stageBg = byId("stage-bg");
 const token = location.pathname.split("/").pop();
 const api = "/api/" + token + "/";
 let state;
@@ -48,6 +49,12 @@ function makeChip(text, accent = false) {
 }
 
 function renderMetadata() {
+    if (stageBg && state.cover && stageBg.dataset.loaded !== state.cover) {
+        stageBg.dataset.loaded = state.cover;
+        stageBg.onload = () => { stageBg.hidden = false; };
+        stageBg.onerror = () => { stageBg.hidden = true; };
+        stageBg.src = state.cover;
+    }
     if (!metaBadges) return;
     const badges = [];
     if (state.provider) badges.push(makeChip(state.provider, true));
