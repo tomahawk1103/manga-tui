@@ -819,6 +819,7 @@ export async function checkMangoraUpdates(): Promise<UpdateCheckResultDto> {
       updateAvailable: false,
       releaseUrl: "https://github.com/tomahawk1103/manga-tui/releases",
       androidApkUrl: null,
+      iosIpaUrl: null,
       releaseNotes: "Preview web: abre la aplicación nativa para consultar releases reales.",
       publishedAt: null,
       checkedAt: new Date().toISOString(),

@@ -512,6 +512,7 @@ export interface UpdateCheckResultDto {
   updateAvailable: boolean;
   releaseUrl: string;
   androidApkUrl?: string | null;
+  iosIpaUrl?: string | null;
   releaseNotes: string;
   publishedAt: string | null;
   checkedAt: string;

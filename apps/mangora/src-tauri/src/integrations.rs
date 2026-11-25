@@ -227,6 +227,7 @@ pub struct UpdateCheckResultDto {
     pub update_available: bool,
     pub release_url: String,
     pub android_apk_url: Option<String>,
+    pub ios_ipa_url: Option<String>,
     pub release_notes: String,
     pub published_at: Option<String>,
     pub checked_at: String,
@@ -1049,6 +1050,14 @@ fn find_android_apk_asset_url(assets: &[GithubReleaseAssetDto]) -> Option<String
         .map(|a| a.browser_download_url.clone())
 }
 
+fn find_ios_ipa_asset_url(assets: &[GithubReleaseAssetDto]) -> Option<String> {
+    assets
+        .iter()
+        .find(|a| a.name.to_ascii_lowercase().ends_with("-ios-unsigned.ipa"))
+        .or_else(|| assets.iter().find(|a| a.name.to_ascii_lowercase().ends_with(".ipa")))
+        .map(|a| a.browser_download_url.clone())
+}
+
 fn parse_semver(raw: &str) -> Option<(u64, u64, u64)> {
     let stripped = raw.trim().trim_start_matches("mangora-").trim_start_matches(['v', 'V']);
     let mut parts = stripped
@@ -1096,6 +1105,7 @@ pub async fn check_mangora_updates_at(api_base_url: &str, current_version: &str)
     };
 
     let android_apk_url = find_android_apk_asset_url(&chosen.assets);
+    let ios_ipa_url = find_ios_ipa_asset_url(&chosen.assets);
 
     Ok(UpdateCheckResultDto {
         current_version: current_version.to_string(),
@@ -1106,6 +1116,7 @@ pub async fn check_mangora_updates_at(api_base_url: &str, current_version: &str)
             .clone()
             .unwrap_or_else(|| format!("{DEFAULT_GITHUB_URL}/releases/tag/{}", chosen.tag_name)),
         android_apk_url,
+        ios_ipa_url,
         release_notes: sanitize_release_notes(chosen.body.as_deref().unwrap_or("")),
         published_at: chosen.published_at.clone(),
         checked_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().to_string(),
@@ -1337,6 +1348,10 @@ mod tests {
                             {
                                 "name": "Mangora-0.2.0-android-arm64-v8a.apk",
                                 "browser_download_url": "https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.2.0/Mangora-0.2.0-android-arm64-v8a.apk"
+                            },
+                            {
+                                "name": "Mangora-0.2.0-ios-unsigned.ipa",
+                                "browser_download_url": "https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.2.0/Mangora-0.2.0-ios-unsigned.ipa"
                             }
                         ]
                     }
@@ -1351,6 +1366,10 @@ mod tests {
         assert_eq!(
             update.android_apk_url.as_deref(),
             Some("https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.2.0/Mangora-0.2.0-android-arm64-v8a.apk")
+        );
+        assert_eq!(
+            update.ios_ipa_url.as_deref(),
+            Some("https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.2.0/Mangora-0.2.0-ios-unsigned.ipa")
         );
         assert_eq!(update.release_notes, "Notas limpias de Mangora 0.2.0");
 

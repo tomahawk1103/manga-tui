@@ -82,7 +82,10 @@
     .features { padding-block: clamp(3rem, 5.5vw, 5rem) }
     h2 { font-size: clamp(2.25rem, 4vw, 3.8rem); margin-bottom: 1.75rem }
     .grid { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 2px solid var(--ink) }
-    .features .grid, .downloads .grid { grid-template-columns: repeat(4, minmax(0, 1fr)) }
+    .features .grid { grid-template-columns: repeat(4, minmax(0, 1fr)) }
+    .downloads .grid { grid-template-columns: repeat(3, minmax(0, 1fr)) }
+    .downloads .grid article:nth-child(3n+1) { border-left: 0; padding-left: 0 }
+    .downloads .grid article:nth-child(n+4) { border-top: 1px solid var(--line) }
     .grid article { padding: 1.65rem clamp(1rem, 2.4vw, 2.5rem) 1.85rem }
     .grid article:first-child { padding-left: 0 }
     .grid article + article { border-left: 1px solid var(--line) }
@@ -127,6 +130,7 @@
     .foot-links { display: flex; flex-wrap: wrap; gap: 1rem }
     @media (max-width: 980px) {
       .downloads .grid, .features .grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+      .downloads .grid article:nth-child(3n+1) { border-left: 1px solid var(--line); padding-left: clamp(1rem, 2.4vw, 2.5rem) }
       .downloads .grid article:nth-child(odd), .features .grid article:nth-child(odd) { border-left: 0; padding-left: 0 }
       .downloads .grid article:nth-child(n+3), .features .grid article:nth-child(n+3) { border-top: 1px solid var(--line) }
     }
@@ -135,9 +139,9 @@
       .intro { max-width: 50ch }
       .quick-cmd { max-width: 100% }
       .stage { width: min(100%, 560px); justify-self: center }
-      .grid, .features .grid, .privacy { grid-template-columns: 1fr }
-      .grid article, .grid article:first-child { padding: 1.35rem 0 }
-      .grid article + article { border-left: 0; border-top: 1px solid var(--line) }
+      .grid, .features .grid, .downloads .grid, .privacy { grid-template-columns: 1fr }
+      .grid article, .grid article:first-child, .downloads .grid article:nth-child(n) { padding: 1.35rem 0; border-left: 0 }
+      .grid article + article, .downloads .grid article + article { border-left: 0; border-top: 1px solid var(--line) }
       .privacy { gap: 1rem }
       .ribbon .wrap { flex-wrap: wrap; justify-content: flex-start; gap: .5rem 1.5rem }
     }
@@ -192,6 +196,7 @@
         <p class="platforms">
           <span><a href="#descargas">Windows (PowerShell / .exe / .zip)</a></span>
           <span><a href="#descargas">Android (.apk)</a></span>
+          <span><a href="#descargas">iOS (SideStore / .ipa)</a></span>
           <span><a href="#descargas">Linux</a></span>
           <span><a href="#descargas">macOS</a></span>
         </p>
@@ -276,7 +281,30 @@
           </div>
           <p class="dl-hint">Instalación directa firmada (Android 7.0+ · ARM64). Compatible con Obtainium.</p>
         </article>
+        <article>
+          <span class="glyph" aria-hidden="true">[IPA]</span>
+          <h3>iOS (SideStore)</h3>
+          <p>App táctil Mangora para iPhone e iPad (iOS 15+) con lector HD, descargas offline y sincronización con PC.</p>
+          <div class="dl-actions">
+            <a class="button" id="dl-ios-sidestore" href="sidestore://source?url=https%3A%2F%2Ftomahawk1103.github.io%2Fmanga-tui%2Fsidestore.json">+ Añadir a SideStore</a>
+            <a class="dl-link" id="dl-ios-ipa" href="https://github.com/tomahawk1103/manga-tui/releases">↓ Descargar .ipa (sin firmar)</a>
+            <a class="dl-link" href="./sidestore.json">Fuente SideStore (.json) ↗</a>
+            <button class="copy-btn" type="button" data-copy="https://tomahawk1103.github.io/manga-tui/sidestore.json">Copiar URL de fuente</button>
+          </div>
+          <p class="dl-hint">iOS 15+ · Instala y actualiza sin PC mediante SideStore o AltStore.</p>
+        </article>
       </div>
+      <details class="smartscreen-note">
+        <summary>¿Cómo instalar Mangora en iPhone o iPad con SideStore (sin App Store)?</summary>
+        <div class="note-body">
+          <ol>
+            <li>Instala <strong>SideStore</strong> (o AltStore) en tu iPhone/iPad siguiendo su guía inicial con tu Apple ID gratuito.</li>
+            <li>Desde Safari en el iPhone, pulsa <strong>«+ Añadir a SideStore»</strong> arriba (o copia la URL <code>https://tomahawk1103.github.io/manga-tui/sidestore.json</code> en la pestaña <em>Sources</em> de SideStore).</li>
+            <li>Instala <strong>Mangora</strong> desde la fuente añadida: SideStore firmará el <code>.ipa</code> con tu propio perfil en segundos.</li>
+            <li>Activa el refresco automático en segundo plano (o refresca cada 7 días desde SideStore por Wi-Fi sin necesitar PC). También puedes bajar el <code>.ipa</code> suelto para Sideloadly.</li>
+          </ol>
+        </div>
+      </details>
       <details class="smartscreen-note">
         <summary>¿Edge muestra «no se descarga habitualmente» o «no seguro» al bajar el .exe?</summary>
         <div class="note-body">
@@ -450,13 +478,18 @@
 
     const ua = navigator.userAgent || '';
     const isAndroid = /Android/i.test(ua);
+    const isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
     const isLinux = /Linux/i.test(ua) && !isAndroid;
-    const isMac = /Macintosh|Mac OS X/i.test(ua);
+    const isMac = /Macintosh|Mac OS X/i.test(ua) && !isIOS;
     const heroBtn = document.querySelector('#download-btn');
     const heroLabel = document.querySelector('#download-btn-label');
     const heroCmd = document.querySelector('#hero-cmd');
 
-    if (isAndroid) {
+    if (isIOS) {
+      if (heroCmd) heroCmd.hidden = true;
+      heroBtn.href = 'sidestore://source?url=https%3A%2F%2Ftomahawk1103.github.io%2Fmanga-tui%2Fsidestore.json';
+      heroLabel.textContent = 'Añadir Mangora a SideStore (iOS)';
+    } else if (isAndroid) {
       if (heroCmd) heroCmd.hidden = true;
       heroBtn.href = '#descargas';
       heroLabel.textContent = 'Descargar APK para Android';
@@ -495,6 +528,7 @@
         const dlMacArm = document.querySelector('#dl-mac-arm');
         const dlMacIntel = document.querySelector('#dl-mac-intel');
         const dlAndroidApk = document.querySelector('#dl-android-apk');
+        const dlIosIpa = document.querySelector('#dl-ios-ipa');
         const eyebrow = document.querySelector('#eyebrow-version');
         const meta = document.querySelector('#release-meta');
         const allLink = document.querySelector('#all-releases-link');
@@ -517,6 +551,22 @@
         if (isAndroid && androidApk) {
           heroBtn.href = androidApk.browser_download_url;
           heroLabel.textContent = 'Descargar APK para Android' + fmtSize(androidApk);
+        }
+
+        const mangoraIpaRelease = releases.find(
+          (r) =>
+            !r.draft &&
+            Array.isArray(r.assets) &&
+            r.assets.some((a) => a.name && a.name.toLowerCase().endsWith('.ipa'))
+        );
+        const iosIpa = mangoraIpaRelease
+          ? mangoraIpaRelease.assets.find((a) => a.name && a.name.toLowerCase().endsWith('-ios-unsigned.ipa')) ||
+            mangoraIpaRelease.assets.find((a) => a.name && a.name.toLowerCase().endsWith('.ipa'))
+          : null;
+
+        if (dlIosIpa && iosIpa) {
+          dlIosIpa.href = iosIpa.browser_download_url;
+          dlIosIpa.textContent = '↓ Mangora IPA (' + (mangoraIpaRelease.tag_name || 'iOS') + fmtSize(iosIpa) + ')';
         }
 
         if (winExe) {

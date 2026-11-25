@@ -430,6 +430,7 @@ export interface Translations {
     updatesAvailableLabel: (ver: string) => string;
     updatesOpenReleaseBtn: string;
     updatesDownloadApkBtn: string;
+    updatesDownloadIpaBtn: string;
     portableBackupTitle: string;
     portableBackupDesc: string;
     exportBackupBtn: string;
@@ -935,7 +936,8 @@ const ES: Translations = {
     updatesAvailableLabel: (ver) => `Nueva versión disponible: ${ver}`,
     updatesOpenReleaseBtn: "Abrir página de descarga ↗",
     updatesDownloadApkBtn: "Descargar APK actualizado ↓",
-    portableBackupTitle: "Copia portátil PC ↔ Android (library_sync.json)",
+    updatesDownloadIpaBtn: "Descargar IPA para SideStore ↓",
+    portableBackupTitle: "Copia portátil PC ↔ Móvil (library_sync.json)",
     portableBackupDesc:
       "Exporta o importa tu biblioteca manualmente mediante un archivo JSON compatible con manga-tui y Mangora, sin depender de Google OAuth.",
     exportBackupBtn: "Exportar copia (.json)",
@@ -1460,7 +1462,8 @@ const EN: Translations = {
     updatesAvailableLabel: (ver) => `Update available: ${ver}`,
     updatesOpenReleaseBtn: "Open release page ↗",
     updatesDownloadApkBtn: "Download updated APK ↓",
-    portableBackupTitle: "Portable PC ↔ Android backup (library_sync.json)",
+    updatesDownloadIpaBtn: "Download IPA for SideStore ↓",
+    portableBackupTitle: "Portable PC ↔ Mobile backup (library_sync.json)",
     portableBackupDesc:
       "Manually export or merge your library using a JSON file fully compatible with manga-tui and Mangora, even without Google OAuth.",
     exportBackupBtn: "Export backup (.json)",

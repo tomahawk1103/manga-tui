@@ -868,42 +868,57 @@ export function SettingsView({
             </button>
           </div>
 
-          {updateInfo && (
-            <div className="editorial-callout space-y-2 p-4 text-xs">
-              <div className="font-bold">
-                {updateInfo.updateAvailable
-                  ? t.settings.updatesAvailableLabel(updateInfo.latestVersion)
-                  : t.settings.updatesUpToDate}
-              </div>
-              {updateInfo.releaseNotes && (
-                <p className="whitespace-pre-wrap text-[var(--muted)]">{updateInfo.releaseNotes}</p>
-              )}
-              <div className="flex flex-wrap gap-2">
-                {updateInfo.androidApkUrl && (appState.platform === "android" || appState.isMobile) && (
+          {updateInfo && (() => {
+            const showAndroidApk = Boolean(updateInfo.androidApkUrl && appState.platform === "android");
+            const showIosIpa = Boolean(updateInfo.iosIpaUrl && appState.platform === "ios");
+            const hasDirectMobileDownload = showAndroidApk || showIosIpa;
+            return (
+              <div className="editorial-callout space-y-2 p-4 text-xs">
+                <div className="font-bold">
+                  {updateInfo.updateAvailable
+                    ? t.settings.updatesAvailableLabel(updateInfo.latestVersion)
+                    : t.settings.updatesUpToDate}
+                </div>
+                {updateInfo.releaseNotes && (
+                  <p className="whitespace-pre-wrap text-[var(--muted)]">{updateInfo.releaseNotes}</p>
+                )}
+                <div className="flex flex-wrap gap-2">
+                  {showAndroidApk && updateInfo.androidApkUrl && (
+                    <button
+                      type="button"
+                      onClick={() => void onOpenExternal(updateInfo.androidApkUrl!)}
+                      className="editorial-btn-primary text-xs"
+                    >
+                      <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>{t.settings.updatesDownloadApkBtn}</span>
+                    </button>
+                  )}
+                  {showIosIpa && updateInfo.iosIpaUrl && (
+                    <button
+                      type="button"
+                      onClick={() => void onOpenExternal(updateInfo.iosIpaUrl!)}
+                      className="editorial-btn-primary text-xs"
+                    >
+                      <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                      <span>{t.settings.updatesDownloadIpaBtn}</span>
+                    </button>
+                  )}
                   <button
                     type="button"
-                    onClick={() => void onOpenExternal(updateInfo.androidApkUrl!)}
-                    className="editorial-btn-primary text-xs"
+                    onClick={() => void onOpenExternal(updateInfo.releaseUrl)}
+                    className={
+                      hasDirectMobileDownload
+                        ? "editorial-btn-secondary text-xs"
+                        : "editorial-btn-primary text-xs"
+                    }
                   >
-                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>{t.settings.updatesDownloadApkBtn}</span>
+                    <span>{t.settings.updatesOpenReleaseBtn}</span>
+                    <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
                   </button>
-                )}
-                <button
-                  type="button"
-                  onClick={() => void onOpenExternal(updateInfo.releaseUrl)}
-                  className={
-                    updateInfo.androidApkUrl && (appState.platform === "android" || appState.isMobile)
-                      ? "editorial-btn-secondary text-xs"
-                      : "editorial-btn-primary text-xs"
-                  }
-                >
-                  <span>{t.settings.updatesOpenReleaseBtn}</span>
-                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-                </button>
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
         </section>
 
         <section className="editorial-card-muted flex flex-col justify-between gap-4 p-6">
