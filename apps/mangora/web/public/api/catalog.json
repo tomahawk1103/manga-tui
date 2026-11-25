@@ -1,0 +1,11 @@
+[
+  {
+    "id": "mangora-sample",
+    "title": "Manga de muestra",
+    "cover": "../../images/pagina-1.jpg",
+    "language": "es",
+    "chapters": [
+      { "id": "sample-1", "title": "Capítulo 1", "number": "1", "manifest": "./sample-1.json" }
+    ]
+  }
+]

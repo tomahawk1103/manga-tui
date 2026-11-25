@@ -63,7 +63,7 @@ export interface ReaderSource {
   openChapter: typeof openReaderChapter;
   pageUrl: typeof buildReaderPageUrl;
   saveProgress: typeof saveReaderProgress;
-  pageSize?: { width: number; height: number };
+  pageSize?: (sessionId: string) => { width: number; height: number } | undefined;
 }
 
 const nativeSource: ReaderSource = {
@@ -605,6 +605,7 @@ export function ReaderView({
     if (!session) return null;
     const nonce = failedPages[pageIndex] ?? 0;
     const src = source.pageUrl(session.sessionId, pageIndex);
+    const pageSize = source.pageSize?.(session.sessionId);
     const cacheBustedSrc = nonce > 0 ? `${src}${src.includes("?") ? "&" : "?"}r=${nonce}` : src;
 
     const isCascade = prefs.viewMode === "cascade";
@@ -649,8 +650,8 @@ export function ReaderView({
       >
         <img
           src={cacheBustedSrc}
-          width={source.pageSize?.width}
-          height={source.pageSize?.height}
+          width={pageSize?.width}
+          height={pageSize?.height}
           alt={`${session.mangaTitle} - ${pageIndex + 1}`}
           loading={Math.abs(pageIndex - currentPage) <= 3 ? "eager" : "lazy"}
           decoding="async"
