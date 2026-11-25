@@ -429,6 +429,13 @@ export interface Translations {
     updatesUpToDate: string;
     updatesAvailableLabel: (ver: string) => string;
     updatesOpenReleaseBtn: string;
+    updatesDownloadApkBtn: string;
+    portableBackupTitle: string;
+    portableBackupDesc: string;
+    exportBackupBtn: string;
+    importBackupBtn: string;
+    backupExportedToast: string;
+    backupImportedToast: (mangas: number, chapters: number) => string;
     mailboxCardTitle: string;
     mailboxCardDesc: string;
     mailboxOpenBtn: string;
@@ -927,6 +934,15 @@ const ES: Translations = {
     updatesUpToDate: "Estás en la última versión estable disponible.",
     updatesAvailableLabel: (ver) => `Nueva versión disponible: ${ver}`,
     updatesOpenReleaseBtn: "Abrir página de descarga ↗",
+    updatesDownloadApkBtn: "Descargar APK actualizado ↓",
+    portableBackupTitle: "Copia portátil PC ↔ Android (library_sync.json)",
+    portableBackupDesc:
+      "Exporta o importa tu biblioteca manualmente mediante un archivo JSON compatible con manga-tui y Mangora, sin depender de Google OAuth.",
+    exportBackupBtn: "Exportar copia (.json)",
+    importBackupBtn: "Importar / fusionar (.json)",
+    backupExportedToast: "Copia de biblioteca exportada",
+    backupImportedToast: (mangas, chapters) =>
+      `Copia fusionada (${mangas} series · ${chapters} caps. leídos)`,
     mailboxCardTitle: "Buzón de opiniones y fallos",
     mailboxCardDesc:
       "Envía sugerencias, errores o avisa si algún proveedor de manga dejó de cargar.",
@@ -1443,6 +1459,15 @@ const EN: Translations = {
     updatesUpToDate: "You are already on the latest stable release.",
     updatesAvailableLabel: (ver) => `Update available: ${ver}`,
     updatesOpenReleaseBtn: "Open release page ↗",
+    updatesDownloadApkBtn: "Download updated APK ↓",
+    portableBackupTitle: "Portable PC ↔ Android backup (library_sync.json)",
+    portableBackupDesc:
+      "Manually export or merge your library using a JSON file fully compatible with manga-tui and Mangora, even without Google OAuth.",
+    exportBackupBtn: "Export backup (.json)",
+    importBackupBtn: "Import / merge (.json)",
+    backupExportedToast: "Library backup exported",
+    backupImportedToast: (mangas, chapters) =>
+      `Backup merged (${mangas} series · ${chapters} read chapters)`,
     mailboxCardTitle: "Feedback & Bug Mailbox",
     mailboxCardDesc:
       "Send feature ideas, bug reports, or report a broken manga source.",

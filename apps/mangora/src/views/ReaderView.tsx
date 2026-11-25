@@ -30,6 +30,7 @@ import {
   useReadingSessionTracker,
 } from "../features/hito5";
 import { getTranslations } from "../lib/i18n";
+import { useScreenWakeLock } from "../lib/mobilePlatform";
 import {
   buildReaderPageUrl,
   openReaderChapter,
@@ -54,6 +55,7 @@ export interface ReaderViewProps {
   onUpdatePrefs: (prefs: ReaderPrefs) => Promise<void>;
   onClose: () => Promise<void> | void;
   onNotify: (message: string) => void;
+  onRegisterBackHandler?: (handler: (() => Promise<boolean>) | null) => void;
 }
 
 function buildSpreads(pageCount: number, firstPageSingle: boolean): number[][] {
@@ -87,6 +89,7 @@ export function ReaderView({
   onUpdatePrefs,
   onClose,
   onNotify,
+  onRegisterBackHandler,
 }: ReaderViewProps) {
   const t = getTranslations(language).reader;
   const hito5Labels = getHito5Labels(language);
@@ -346,6 +349,21 @@ export function ReaderView({
     setIsFullscreen(next);
   }, []);
 
+  useScreenWakeLock(Boolean(session && !isLoading && !loadError));
+
+  useEffect(() => {
+    if (!onRegisterBackHandler) return;
+    onRegisterBackHandler(async () => {
+      if (settingsOpen) {
+        setSettingsOpen(false);
+        return false;
+      }
+      await handleClose();
+      return true;
+    });
+    return () => onRegisterBackHandler(null);
+  }, [onRegisterBackHandler, settingsOpen, handleClose]);
+
   // Desktop keyboard shortcuts
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -603,6 +621,7 @@ export function ReaderView({
           src={cacheBustedSrc}
           alt={`${session.mangaTitle} - ${pageIndex + 1}`}
           loading={Math.abs(pageIndex - currentPage) <= 3 ? "eager" : "lazy"}
+          decoding="async"
           draggable={false}
           style={imgStyle}
           onError={() => {
@@ -697,7 +716,7 @@ export function ReaderView({
               type="button"
               onClick={() => void handleToggleFullscreen()}
               aria-label={t.fullscreenBtn}
-              className="hidden min-h-[44px] cursor-pointer touch-manipulation items-center gap-1.5 border-2 border-[var(--bar-fg)] bg-transparent px-3 py-1.5 text-xs font-bold text-[var(--bar-fg)] hover:bg-[var(--bar-fg)] hover:text-[var(--bar-bg)] sm:inline-flex"
+              className="inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-1.5 border-2 border-[var(--bar-fg)] bg-transparent px-3 py-1.5 text-xs font-bold text-[var(--bar-fg)] hover:bg-[var(--bar-fg)] hover:text-[var(--bar-bg)]"
             >
               {isFullscreen ? (
                 <Minimize2 className="h-4 w-4" aria-hidden="true" />

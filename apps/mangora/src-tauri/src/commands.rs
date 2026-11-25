@@ -1002,6 +1002,19 @@ pub fn open_manga_tui_desktop() -> Result<(), String> {
     crate::integrations::launch_manga_tui_desktop()
 }
 
+#[tauri::command]
+pub fn export_library_backup_json(state: State<'_, AppState>) -> Result<String, String> {
+    crate::integrations::export_library_backup_json(&state)
+}
+
+#[tauri::command]
+pub fn import_library_backup_json(
+    state: State<'_, AppState>,
+    json_payload: String,
+) -> Result<crate::integrations::PortableBackupImportResultDto, String> {
+    crate::integrations::import_library_backup_json(&state, &json_payload)
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;

@@ -98,6 +98,8 @@ pub fn run() {
             commands::submit_feedback,
             commands::dismiss_support_banner,
             commands::open_manga_tui_desktop,
+            commands::export_library_backup_json,
+            commands::import_library_backup_json,
             hito5::mangora_get_appearance_catalog,
             hito5::mangora_get_appearance_config,
             hito5::mangora_save_appearance_config,

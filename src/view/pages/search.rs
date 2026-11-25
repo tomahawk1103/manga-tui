@@ -336,10 +336,10 @@ fn jikan_pacer() -> &'static tokio::sync::Mutex<tokio::time::Instant> {
     PACER.get_or_init(|| tokio::sync::Mutex::new(tokio::time::Instant::now() - Duration::from_secs(2)))
 }
 
-fn jikan_page_cache()
--> &'static std::sync::Mutex<std::collections::HashMap<(DiscoveryRankingKind, u32), (Vec<DiscoveryItem>, bool)>> {
-    static CACHE: OnceLock<std::sync::Mutex<std::collections::HashMap<(DiscoveryRankingKind, u32), (Vec<DiscoveryItem>, bool)>>> =
-        OnceLock::new();
+type JikanPageCacheMap = std::collections::HashMap<(DiscoveryRankingKind, u32), (Vec<DiscoveryItem>, bool)>;
+
+fn jikan_page_cache() -> &'static std::sync::Mutex<JikanPageCacheMap> {
+    static CACHE: OnceLock<std::sync::Mutex<JikanPageCacheMap>> = OnceLock::new();
     CACHE.get_or_init(|| std::sync::Mutex::new(std::collections::HashMap::new()))
 }
 
@@ -1877,10 +1877,8 @@ where
                 KeyCode::Char('r') | KeyCode::Enter => {
                     self.local_action_tx.send(SearchPageActions::SearchMangaPage).ok();
                 },
-                KeyCode::Char('R') => {
-                    if self.state == PageState::Normal {
-                        self.local_action_tx.send(SearchPageActions::RefreshDiscovery).ok();
-                    }
+                KeyCode::Char('R') if self.state == PageState::Normal => {
+                    self.local_action_tx.send(SearchPageActions::RefreshDiscovery).ok();
                 },
 
                 _ => {},
@@ -2158,7 +2156,7 @@ where
 
         self.state = PageState::SearchingMangas;
 
-        let page = self.mangas_found_list.pagination.clone();
+        let page = self.mangas_found_list.pagination;
         let tx = self.local_event_tx.clone();
         let search_term = SearchTerm::trimmed_lowercased(self.search_bar.value());
         let extra_aliases = std::mem::take(&mut self.active_query_aliases);

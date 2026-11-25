@@ -1584,8 +1584,7 @@ where
         let tx = self.local_event_tx.clone();
         let client = Arc::clone(&self.manga_provider);
 
-        let pagination =
-            if let Some(chapters) = self.chapters.as_ref() { chapters.pagination.clone() } else { Pagination::default() };
+        let pagination = if let Some(chapters) = self.chapters.as_ref() { chapters.pagination } else { Pagination::default() };
         let filters = self.chapter_filters.clone();
         let provider = self.manga.provider;
 
@@ -2047,7 +2046,7 @@ where
                     Some(chapters) => Some(ChaptersData {
                         state: list_state,
                         widget: chapter_widget,
-                        pagination: chapters.pagination.clone(),
+                        pagination: chapters.pagination,
                     }),
                     None => Some(ChaptersData {
                         state: list_state,
@@ -2231,7 +2230,7 @@ where
         let provider = self.manga.provider;
         let tx = self.local_event_tx.clone();
         let filters = self.chapter_filters.clone();
-        let pagination = self.chapters.as_ref().map(|c| c.pagination.clone()).unwrap_or_default();
+        let pagination = self.chapters.as_ref().map(|c| c.pagination).unwrap_or_default();
         let lang = filters.language;
 
         self.tasks.spawn(async move {

@@ -226,9 +226,20 @@ pub struct UpdateCheckResultDto {
     pub latest_version: String,
     pub update_available: bool,
     pub release_url: String,
+    pub android_apk_url: Option<String>,
     pub release_notes: String,
     pub published_at: Option<String>,
     pub checked_at: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PortableBackupImportResultDto {
+    pub total_mangas: usize,
+    pub total_read_chapters: usize,
+    pub total_favorites: usize,
+    pub app_state: InitialAppState,
+    pub library: crate::state::LibraryOverview,
 }
 
 fn resolve_https_url_from(runtime_env: Option<&str>, compile_env: Option<&str>) -> Option<String> {
@@ -1011,6 +1022,12 @@ pub fn disconnect_myanimelist(state: &AppState) -> Result<IntegrationsOverviewDt
 }
 
 #[derive(Debug, Deserialize)]
+struct GithubReleaseAssetDto {
+    name: String,
+    browser_download_url: String,
+}
+
+#[derive(Debug, Deserialize)]
 struct GithubReleaseApiDto {
     tag_name: String,
     #[serde(default)]
@@ -1020,6 +1037,16 @@ struct GithubReleaseApiDto {
     published_at: Option<String>,
     body: Option<String>,
     html_url: Option<String>,
+    #[serde(default)]
+    assets: Vec<GithubReleaseAssetDto>,
+}
+
+fn find_android_apk_asset_url(assets: &[GithubReleaseAssetDto]) -> Option<String> {
+    assets
+        .iter()
+        .find(|a| a.name.to_ascii_lowercase().ends_with("-android-arm64-v8a.apk"))
+        .or_else(|| assets.iter().find(|a| a.name.to_ascii_lowercase().ends_with(".apk")))
+        .map(|a| a.browser_download_url.clone())
 }
 
 fn parse_semver(raw: &str) -> Option<(u64, u64, u64)> {
@@ -1068,6 +1095,8 @@ pub async fn check_mangora_updates_at(api_base_url: &str, current_version: &str)
         _ => chosen.tag_name.trim_start_matches("mangora-").trim_start_matches('v') != current_version.trim(),
     };
 
+    let android_apk_url = find_android_apk_asset_url(&chosen.assets);
+
     Ok(UpdateCheckResultDto {
         current_version: current_version.to_string(),
         latest_version: chosen.tag_name.clone(),
@@ -1076,9 +1105,40 @@ pub async fn check_mangora_updates_at(api_base_url: &str, current_version: &str)
             .html_url
             .clone()
             .unwrap_or_else(|| format!("{DEFAULT_GITHUB_URL}/releases/tag/{}", chosen.tag_name)),
+        android_apk_url,
         release_notes: sanitize_release_notes(chosen.body.as_deref().unwrap_or("")),
         published_at: chosen.published_at.clone(),
         checked_at: SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_secs().to_string(),
+    })
+}
+
+pub fn export_library_backup_json(state: &AppState) -> Result<String, String> {
+    let conn = state.open_db_connection()?;
+    let db = manga_core::backend::database::Database::new(&conn);
+    let snapshot = db.export_library_sync_snapshot().map_err(|e| e.to_string())?;
+    serde_json::to_string_pretty(&snapshot).map_err(|e| format!("Could not serialize library backup: {e}"))
+}
+
+pub fn import_library_backup_json(state: &AppState, json_payload: &str) -> Result<PortableBackupImportResultDto, String> {
+    let trimmed = json_payload.trim();
+    if trimmed.is_empty() {
+        return Err("Backup JSON file is empty".to_string());
+    }
+    let snapshot: manga_core::backend::cloud::LibrarySyncSnapshot =
+        serde_json::from_str(trimmed).map_err(|e| format!("Invalid library_sync.json backup file: {e}"))?;
+
+    let merged = {
+        let conn = state.open_db_connection()?;
+        let db = manga_core::backend::database::Database::new(&conn);
+        db.import_and_merge_library_sync_snapshot(&snapshot).map_err(|e| e.to_string())?
+    };
+
+    Ok(PortableBackupImportResultDto {
+        total_mangas: merged.mangas.len(),
+        total_read_chapters: merged.chapters.iter().filter(|c| c.is_read).count(),
+        total_favorites: merged.favorites.len(),
+        app_state: state.snapshot()?,
+        library: state.get_library_overview(None)?,
     })
 }
 
@@ -1272,7 +1332,13 @@ mod tests {
                         "prerelease": false,
                         "published_at": "2026-11-24T10:00:00Z",
                         "body": "<!-- manga-tui-meta: commit=abc -->\nNotas limpias de Mangora 0.2.0",
-                        "html_url": "https://github.com/tomahawk1103/manga-tui/releases/tag/mangora-v0.2.0"
+                        "html_url": "https://github.com/tomahawk1103/manga-tui/releases/tag/mangora-v0.2.0",
+                        "assets": [
+                            {
+                                "name": "Mangora-0.2.0-android-arm64-v8a.apk",
+                                "browser_download_url": "https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.2.0/Mangora-0.2.0-android-arm64-v8a.apk"
+                            }
+                        ]
                     }
                 ]));
             })
@@ -1282,6 +1348,10 @@ mod tests {
         mock.assert_async().await;
         assert!(update.update_available);
         assert_eq!(update.latest_version, "mangora-v0.2.0");
+        assert_eq!(
+            update.android_apk_url.as_deref(),
+            Some("https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.2.0/Mangora-0.2.0-android-arm64-v8a.apk")
+        );
         assert_eq!(update.release_notes, "Notas limpias de Mangora 0.2.0");
 
         let up_to_date = check_mangora_updates_at(&server.base_url(), "0.2.0").await.unwrap();
@@ -1322,5 +1392,42 @@ mod tests {
         let disconnected = disconnect_anilist(&state).unwrap();
         assert!(!disconnected.trackers.anilist.connected);
         assert!(!disconnected.trackers.anilist.track_reading_history);
+    }
+
+    #[test]
+    fn portable_backup_export_and_import_merges_library_losslessly() {
+        let src_temp = TempDirGuard::new("backup_src");
+        let dst_temp = TempDirGuard::new("backup_dst");
+        let src_state = make_state(&src_temp.path);
+        let dst_state = make_state(&dst_temp.path);
+
+        src_state
+            .toggle_chapter_read(crate::state::ToggleChapterReadPayload {
+                manga_id: "m-backup-1".to_string(),
+                provider: "inmanga".to_string(),
+                manga_title: "Dandadan".to_string(),
+                cover_url: Some("https://example.com/dd.jpg".to_string()),
+                chapter_id: "ch-backup-1".to_string(),
+                chapter_title: "Cap 1".to_string(),
+                translated_language: "es".to_string(),
+            })
+            .unwrap();
+        src_state
+            .toggle_library_favorite(crate::state::ToggleFavoritePayload {
+                manga_id: "m-backup-1".to_string(),
+                provider: "inmanga".to_string(),
+                title: "Dandadan".to_string(),
+                cover_url: Some("https://example.com/dd.jpg".to_string()),
+            })
+            .unwrap();
+
+        let exported_json = export_library_backup_json(&src_state).unwrap();
+        let imported = import_library_backup_json(&dst_state, &exported_json).unwrap();
+        assert_eq!(imported.total_mangas, 1);
+        assert_eq!(imported.total_read_chapters, 1);
+        assert_eq!(imported.total_favorites, 1);
+        assert_eq!(imported.app_state.library.library_mangas, 1);
+        assert_eq!(imported.app_state.library.favorites, 1);
+        assert_eq!(imported.library.favorites.len(), 1);
     }
 }

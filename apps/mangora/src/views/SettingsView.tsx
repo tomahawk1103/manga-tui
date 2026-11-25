@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import {
   Check,
   Cloud,
+  Download,
   ExternalLink,
   FolderOpen,
   Link2,
@@ -12,17 +13,20 @@ import {
   Sun,
   Terminal,
   Unlink,
+  Upload,
 } from "lucide-react";
 import { AppearanceCustomizerPanel } from "../features/hito5";
 import type {
   InitialAppState,
   IntegrationsOverviewDto,
   OAuthStartResultDto,
+  PortableBackupImportResultDto,
   ThemeMode,
   UiLanguage,
   UpdateCheckResultDto,
 } from "../types/mangora";
 import { GENRE_OPTIONS, getTranslations } from "../lib/i18n";
+import { shareOrDownloadBackupJson } from "../lib/mobilePlatform";
 import {
   checkMangoraUpdates,
   completeOAuthCallback,
@@ -32,6 +36,8 @@ import {
   disconnectAnilist,
   disconnectCloud,
   disconnectMyAnimeList,
+  exportLibraryBackupJson,
+  importLibraryBackupJson,
   isTauriRuntime,
   runCloudSyncNow,
   saveAnilistCredentials,
@@ -53,6 +59,7 @@ interface SettingsViewProps {
   onOpenFeedback: () => void;
   onOpenMangaTui: () => Promise<void>;
   onOverviewChanged: (overview: IntegrationsOverviewDto, updatedState?: InitialAppState) => void;
+  onBackupImported?: (res: PortableBackupImportResultDto) => void;
   onNotify: (message: string) => void;
 }
 
@@ -71,12 +78,15 @@ export function SettingsView({
   onOpenFeedback,
   onOpenMangaTui,
   onOverviewChanged,
+  onBackupImported,
   onNotify,
 }: SettingsViewProps) {
   const t = getTranslations(appState.uiLanguage);
   const desktop = isTauriRuntime();
   const genresHeading = useRef<HTMLHeadingElement>(null);
+  const backupFileInputRef = useRef<HTMLInputElement>(null);
   const [draftGenres, setDraftGenres] = useState<string[]>(appState.favoriteGenres);
+  const [backupBusy, setBackupBusy] = useState(false);
 
   // Cloud & OAuth state
   const [cloudBusy, setCloudBusy] = useState(false);
@@ -313,6 +323,38 @@ export function SettingsView({
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
       setCheckingUpdates(false);
+    }
+  };
+
+  const handleExportBackup = async () => {
+    setBackupBusy(true);
+    setActionError(null);
+    try {
+      const json = await exportLibraryBackupJson();
+      await shareOrDownloadBackupJson(json, "library_sync.json");
+      onNotify(t.settings.backupExportedToast);
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBackupBusy(false);
+    }
+  };
+
+  const handleImportBackupFile = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setBackupBusy(true);
+    setActionError(null);
+    try {
+      const payload = await file.text();
+      const res = await importLibraryBackupJson(payload);
+      onBackupImported?.(res);
+      onNotify(t.settings.backupImportedToast(res.totalMangas, res.totalReadChapters));
+    } catch (err) {
+      setActionError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBackupBusy(false);
     }
   };
 
@@ -836,14 +878,30 @@ export function SettingsView({
               {updateInfo.releaseNotes && (
                 <p className="whitespace-pre-wrap text-[var(--muted)]">{updateInfo.releaseNotes}</p>
               )}
-              <button
-                type="button"
-                onClick={() => void onOpenExternal(updateInfo.releaseUrl)}
-                className="editorial-btn-primary text-xs"
-              >
-                <span>{t.settings.updatesOpenReleaseBtn}</span>
-                <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-              </button>
+              <div className="flex flex-wrap gap-2">
+                {updateInfo.androidApkUrl && (appState.platform === "android" || appState.isMobile) && (
+                  <button
+                    type="button"
+                    onClick={() => void onOpenExternal(updateInfo.androidApkUrl!)}
+                    className="editorial-btn-primary text-xs"
+                  >
+                    <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                    <span>{t.settings.updatesDownloadApkBtn}</span>
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void onOpenExternal(updateInfo.releaseUrl)}
+                  className={
+                    updateInfo.androidApkUrl && (appState.platform === "android" || appState.isMobile)
+                      ? "editorial-btn-secondary text-xs"
+                      : "editorial-btn-primary text-xs"
+                  }
+                >
+                  <span>{t.settings.updatesOpenReleaseBtn}</span>
+                  <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
+                </button>
+              </div>
             </div>
           )}
         </section>
@@ -925,6 +983,40 @@ export function SettingsView({
               {t.settings.mobileStorageNote}
             </p>
           )}
+
+          <div className="mt-5 border-t border-[var(--line)] pt-4">
+            <h3 className="font-mono-editorial text-xs font-bold uppercase text-[var(--ink)]">
+              {t.settings.portableBackupTitle}
+            </h3>
+            <p className="mt-1 text-xs text-[var(--muted)]">{t.settings.portableBackupDesc}</p>
+            <input
+              ref={backupFileInputRef}
+              type="file"
+              accept=".json,application/json"
+              onChange={(e) => void handleImportBackupFile(e)}
+              className="hidden"
+            />
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button
+                type="button"
+                disabled={backupBusy}
+                onClick={() => void handleExportBackup()}
+                className="editorial-btn-secondary text-xs"
+              >
+                <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{t.settings.exportBackupBtn}</span>
+              </button>
+              <button
+                type="button"
+                disabled={backupBusy}
+                onClick={() => backupFileInputRef.current?.click()}
+                className="editorial-btn-secondary text-xs"
+              >
+                <Upload className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{t.settings.importBackupBtn}</span>
+              </button>
+            </div>
+          </div>
         </section>
 
         <section className="editorial-callout flex flex-col justify-between p-6">

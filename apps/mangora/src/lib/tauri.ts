@@ -19,6 +19,7 @@ import type {
   OfflineSeriesItem,
   OnboardingPreferencesPayload,
   OpenReaderChapterRequest,
+  PortableBackupImportResultDto,
   ProviderOption,
   ReaderPrefs,
   ReaderSessionResponse,
@@ -817,12 +818,60 @@ export async function checkMangoraUpdates(): Promise<UpdateCheckResultDto> {
       latestVersion: `mangora-v${readBrowserState().appVersion}`,
       updateAvailable: false,
       releaseUrl: "https://github.com/tomahawk1103/manga-tui/releases",
+      androidApkUrl: null,
       releaseNotes: "Preview web: abre la aplicación nativa para consultar releases reales.",
       publishedAt: null,
       checkedAt: new Date().toISOString(),
     };
   }
   return invoke<UpdateCheckResultDto>("check_mangora_updates");
+}
+
+export async function exportLibraryBackupJson(): Promise<string> {
+  if (isTauriRuntime()) {
+    return invoke<string>("export_library_backup_json");
+  }
+  const state = readBrowserState();
+  return JSON.stringify(
+    {
+      schema_version: 1,
+      app_version: state.appVersion,
+      synced_at: new Date().toISOString(),
+      mangas: [],
+      chapters: [],
+      favorites: [],
+      dismissed_notifications: [],
+      search_history: [],
+      collections: [],
+      manga_genres: [],
+    },
+    null,
+    2,
+  );
+}
+
+export async function importLibraryBackupJson(
+  jsonPayload: string,
+): Promise<PortableBackupImportResultDto> {
+  if (isTauriRuntime()) {
+    return invoke<PortableBackupImportResultDto>("import_library_backup_json", {
+      jsonPayload,
+    });
+  }
+  const parsed = JSON.parse(jsonPayload) as {
+    mangas?: unknown[];
+    chapters?: Array<{ is_read?: boolean }>;
+    favorites?: unknown[];
+  };
+  return {
+    totalMangas: Array.isArray(parsed.mangas) ? parsed.mangas.length : 0,
+    totalReadChapters: Array.isArray(parsed.chapters)
+      ? parsed.chapters.filter((c) => Boolean(c.is_read)).length
+      : 0,
+    totalFavorites: Array.isArray(parsed.favorites) ? parsed.favorites.length : 0,
+    appState: readBrowserState(),
+    library: await getLibraryOverview(),
+  };
 }
 
 export async function submitFeedback(

@@ -526,7 +526,7 @@ enum LocalChapterHandleKind {
     },
     Pdf {
         path: PathBuf,
-        doc: std::sync::Mutex<Document>,
+        doc: Box<std::sync::Mutex<Document>>,
         page_ids: Vec<ObjectId>,
     },
 }
@@ -570,7 +570,7 @@ impl LocalChapterHandle {
                     .collect();
                 LocalChapterHandleKind::Pdf {
                     path: path.clone(),
-                    doc: std::sync::Mutex::new(doc),
+                    doc: Box::new(std::sync::Mutex::new(doc)),
                     page_ids,
                 }
             },

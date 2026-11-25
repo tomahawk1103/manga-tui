@@ -356,13 +356,12 @@ pub async fn resolve_and_open_chapter(
         )
     };
 
-    if chapter_number == "?" {
-        if let Some(off_ch) = offline_manga
+    if chapter_number == "?"
+        && let Some(off_ch) = offline_manga
             .as_ref()
             .and_then(|m| m.chapters.iter().find(|c| c.chapter.id == chapter_id))
-        {
-            chapter_number = off_ch.chapter.chapter_number.clone();
-        }
+    {
+        chapter_number = off_ch.chapter.chapter_number.clone();
     }
     if chapter_title.is_empty() {
         chapter_title = if chapter_number == "?" { "Capítulo".to_string() } else { format!("Cap. {chapter_number}") };

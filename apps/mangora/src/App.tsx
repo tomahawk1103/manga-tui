@@ -6,6 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { useMangoraAppearance } from "./features/hito5";
 import { getTranslations } from "./lib/i18n";
+import { useScreenWakeLock } from "./lib/mobilePlatform";
 import {
   controlDownloadQueue,
   defaultBrowserIntegrationsOverview,
@@ -78,7 +79,23 @@ export function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
   const uiLangRef = useRef<"es" | "en">("es");
+  const readerBackHandlerRef = useRef<(() => Promise<boolean>) | null>(null);
+  const backStateRef = useRef({
+    feedbackOpen: false,
+    hasReader: false,
+    hasSeries: false,
+    replayOnboarding: false,
+    activeSection: "home" as NavSection,
+  });
   const { config: appearanceConfig, palettes: appearancePalettes, updateAppearance } = useMangoraAppearance();
+
+  const pushBackGuard = useCallback(() => {
+    try {
+      window.history.pushState({ mangoraBackGuard: true }, "");
+    } catch {
+      // Ignore history API errors in restricted WebViews
+    }
+  }, []);
 
   const loadLibrary = useCallback(async (search?: string) => {
     setLibraryLoading(true);
@@ -220,6 +237,55 @@ export function App() {
     );
   }, [downloadQueue]);
 
+  useScreenWakeLock(activeDownloadCount > 0);
+
+  useEffect(() => {
+    backStateRef.current = {
+      feedbackOpen,
+      hasReader: Boolean(readerTarget),
+      hasSeries: Boolean(selectedSeries),
+      replayOnboarding,
+      activeSection,
+    };
+  }, [feedbackOpen, readerTarget, selectedSeries, replayOnboarding, activeSection]);
+
+  useEffect(() => {
+    const onPopState = () => {
+      const current = backStateRef.current;
+      if (current.feedbackOpen) {
+        setFeedbackOpen(false);
+        return;
+      }
+      if (current.hasReader) {
+        const handler = readerBackHandlerRef.current;
+        if (handler) {
+          void handler().then((closed) => {
+            if (!closed) {
+              pushBackGuard();
+            }
+          });
+        } else {
+          setReaderTarget(null);
+        }
+        return;
+      }
+      if (current.hasSeries) {
+        setSelectedSeries(null);
+        return;
+      }
+      if (current.replayOnboarding) {
+        setReplayOnboarding(false);
+        return;
+      }
+      if (current.activeSection !== "home") {
+        setActiveSection("home");
+      }
+    };
+
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
+  }, [pushBackGuard]);
+
   const activeDownloadChapterIds = useMemo(() => {
     const ids = new Set<string>();
     if (!downloadQueue || !selectedSeries) return ids;
@@ -279,8 +345,33 @@ export function App() {
 
   const openSeries = (series: SeriesSelection) => {
     setErrorMessage(null);
+    if (!selectedSeries) {
+      pushBackGuard();
+    }
     setSelectedSeries(series);
     mainRef.current?.scrollTo({ top: 0 });
+  };
+
+  const openReader = (req: OpenReaderChapterRequest) => {
+    if (!readerTarget) {
+      pushBackGuard();
+    }
+    setReaderTarget(req);
+  };
+
+  const openFeedback = () => {
+    if (!feedbackOpen) {
+      pushBackGuard();
+    }
+    setFeedbackOpen(true);
+  };
+
+  const startTourReplay = () => {
+    setSelectedSeries(null);
+    if (!replayOnboarding) {
+      pushBackGuard();
+    }
+    setReplayOnboarding(true);
   };
 
   const handleEnqueueDownload = async (payload: EnqueueChaptersRequest) => {
@@ -390,6 +481,13 @@ export function App() {
   const activePaletteSpec = appearancePalettes.find((p) => p.id === appearanceConfig.palette);
   const effectiveThemeMode: ThemeMode = activePaletteSpec?.is_dark ? "ink" : "paper";
   const nextTheme: ThemeMode = effectiveThemeMode === "paper" ? "ink" : "paper";
+
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute("content", effectiveThemeMode === "ink" ? "#0c0c0b" : "#191918");
+    }
+  }, [effectiveThemeMode]);
   const handleSwitchThemeMode = async (mode: ThemeMode) => {
     await Promise.all([
       runMutation(() => setThemeMode(mode), true),
@@ -408,6 +506,9 @@ export function App() {
   };
 
   const navigate = (section: NavSection) => {
+    if (section !== "home" && activeSection === "home" && !selectedSeries) {
+      pushBackGuard();
+    }
     setSelectedSeries(null);
     setNavigationTarget(null);
     setActiveSection(section);
@@ -420,7 +521,7 @@ export function App() {
         onSelectSection={navigate}
         themeMode={effectiveThemeMode}
         onToggleTheme={() => void handleSwitchThemeMode(nextTheme)}
-        onOpenFeedback={() => setFeedbackOpen(true)}
+        onOpenFeedback={openFeedback}
         uiLanguage={appState.uiLanguage}
         appVersion={appState.appVersion}
         activeDownloadCount={activeDownloadCount}
@@ -461,7 +562,7 @@ export function App() {
                 onBack={() => setSelectedSeries(null)}
                 onToggleFavorite={handleToggleFavorite}
                 onToggleChapterRead={handleToggleChapterRead}
-                onOpenReader={(req) => setReaderTarget(req)}
+                onOpenReader={openReader}
                 onEnqueueDownload={handleEnqueueDownload}
                 onNotify={showToast}
                 onOpenExternal={async (url) => {
@@ -488,12 +589,9 @@ export function App() {
                     onSearch={() => {
                       setSelectedSeries(null);
                       setNavigationTarget("search");
-                      setActiveSection("explore");
+                      navigate("explore");
                     }}
-                    onRelaunchTour={() => {
-                      setSelectedSeries(null);
-                      setReplayOnboarding(true);
-                    }}
+                    onRelaunchTour={startTourReplay}
                     onOpenSupport={() => navigate("support")}
                     onDismissSupportBanner={() => runMutation(() => dismissSupportBanner(), false)}
                   />
@@ -551,10 +649,7 @@ export function App() {
                       runMutation(() => setDefaultProvider(provider), true)
                     }
                     onSaveGenres={(genres) => runMutation(() => setFavoriteGenres(genres), true)}
-                    onRelaunchTour={() => {
-                      setSelectedSeries(null);
-                      setReplayOnboarding(true);
-                    }}
+                    onRelaunchTour={startTourReplay}
                     onOpenDataFolder={async () => {
                       try {
                         await openDataFolder();
@@ -563,7 +658,7 @@ export function App() {
                       }
                     }}
                     onOpenExternal={openExternalSafe}
-                    onOpenFeedback={() => setFeedbackOpen(true)}
+                    onOpenFeedback={openFeedback}
                     onOpenMangaTui={async () => {
                       try {
                         await openMangaTuiDesktop();
@@ -578,6 +673,10 @@ export function App() {
                         void loadLibrary();
                       }
                     }}
+                    onBackupImported={(res) => {
+                      setAppState(res.appState);
+                      setLibraryOverview(res.library);
+                    }}
                     onNotify={showToast}
                   />
                 )}
@@ -587,7 +686,7 @@ export function App() {
                     appState={appState}
                     supportConfig={resolvedSupportConfig}
                     onOpenExternal={openExternalSafe}
-                    onOpenFeedback={() => setFeedbackOpen(true)}
+                    onOpenFeedback={openFeedback}
                   />
                 )}
               </>
@@ -611,6 +710,9 @@ export function App() {
           onUpdatePrefs={handleUpdateReaderPrefs}
           onClose={handleCloseReader}
           onNotify={showToast}
+          onRegisterBackHandler={(handler) => {
+            readerBackHandlerRef.current = handler;
+          }}
         />
       )}
 
@@ -626,7 +728,7 @@ export function App() {
         <div
           role="status"
           aria-live="polite"
-          className="ink-bar fixed right-4 bottom-20 z-[60] border-2 border-[var(--ink)] px-4 py-2 text-xs font-bold shadow-[4px_4px_0_var(--red)] md:right-6 md:bottom-5"
+          className="ink-bar fixed right-4 bottom-[calc(4.75rem+var(--safe-bottom))] z-[60] border-2 border-[var(--ink)] px-4 py-2 text-xs font-bold shadow-[4px_4px_0_var(--red)] md:right-6 md:bottom-5"
         >
           ✓ {toastMessage}
         </div>

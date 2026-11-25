@@ -30,3 +30,11 @@ dist/
 node_modules/
 apps/mangora/dist/
 apps/mangora/src-tauri/gen/schemas/
+
+# Android signing keystores & Mangora release bundles
+.keystore/
+*.jks
+*.keystore
+dist-mangora/
+dist-android/
+apps/mangora/src-tauri/gen/android/

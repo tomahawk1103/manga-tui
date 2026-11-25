@@ -200,7 +200,7 @@ impl AnimePlaybackServer {
     pub fn open_web(&self) -> io::Result<()> {
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         {
-            return open::that_detached(self.watch_url());
+            open::that_detached(self.watch_url())
         }
         #[cfg(any(target_os = "android", target_os = "ios"))]
         {

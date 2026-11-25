@@ -511,9 +511,18 @@ export interface UpdateCheckResultDto {
   latestVersion: string;
   updateAvailable: boolean;
   releaseUrl: string;
+  androidApkUrl?: string | null;
   releaseNotes: string;
   publishedAt: string | null;
   checkedAt: string;
+}
+
+export interface PortableBackupImportResultDto {
+  totalMangas: number;
+  totalReadChapters: number;
+  totalFavorites: number;
+  appState: InitialAppState;
+  library: LibraryOverview;
 }
 
 export function libraryKey(mangaId: string, provider: string): string {

@@ -286,7 +286,7 @@ pub async fn fetch_source(source: NewsSource) -> Result<Vec<NewsItem>, String> {
 
 /// Sorts newest first; undated items go last.
 pub fn sort_newest_first(items: &mut [NewsItem]) {
-    items.sort_by(|a, b| b.published.cmp(&a.published));
+    items.sort_by_key(|a| std::cmp::Reverse(a.published));
 }
 
 #[cfg(test)]
