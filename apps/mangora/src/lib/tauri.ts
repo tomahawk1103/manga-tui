@@ -15,6 +15,7 @@ import type {
   LibraryEntry,
   LibraryOverview,
   MalSyncActionResultDto,
+  OAuthCompletedEventDto,
   OAuthStartResultDto,
   OfflineSeriesItem,
   OnboardingPreferencesPayload,
@@ -811,6 +812,17 @@ export async function completeOAuthCallback(
   });
 }
 
+export async function subscribeOAuthCompleted(
+  handler: (event: OAuthCompletedEventDto) => void,
+): Promise<() => void> {
+  if (!isTauriRuntime()) {
+    return () => {};
+  }
+  return listen<OAuthCompletedEventDto>("mangora://oauth-completed", (event) => {
+    handler(event.payload);
+  });
+}
+
 export async function checkMangoraUpdates(): Promise<UpdateCheckResultDto> {
   if (!isTauriRuntime()) {
     return {
@@ -849,6 +861,13 @@ export async function exportLibraryBackupJson(): Promise<string> {
     null,
     2,
   );
+}
+
+export async function exportLibraryBackupFile(): Promise<string> {
+  if (isTauriRuntime()) {
+    return invoke<string>("export_library_backup_file");
+  }
+  throw new Error("Disponible en la aplicación nativa.");
 }
 
 export async function importLibraryBackupJson(

@@ -36,11 +36,14 @@ import {
   disconnectAnilist,
   disconnectCloud,
   disconnectMyAnimeList,
+  exportLibraryBackupFile,
   exportLibraryBackupJson,
+  getIntegrationsOverview,
   importLibraryBackupJson,
   isTauriRuntime,
   runCloudSyncNow,
   saveAnilistCredentials,
+  subscribeOAuthCompleted,
   syncMyAnimeListNow,
 } from "../lib/tauri";
 
@@ -127,6 +130,85 @@ export function SettingsView({
     }
   }, [focusGenres]);
 
+  useEffect(() => {
+    let active = true;
+    let unlisten: (() => void) | undefined;
+
+    void subscribeOAuthCompleted((event) => {
+      if (!active) return;
+      setPendingOAuth(null);
+      setOauthCallbackInput("");
+      setCloudBusy(false);
+      setMalBusy(false);
+      if (event.ok && event.overview) {
+        onOverviewChanged(event.overview);
+        onNotify(
+          event.provider === "googleDrive"
+            ? t.settings.cloudConnectedBadge
+            : t.settings.savedToast,
+        );
+      } else if (event.error) {
+        setActionError(event.error);
+      }
+    }).then((fn) => {
+      if (active) unlisten = fn;
+      else fn();
+    });
+
+    return () => {
+      active = false;
+      unlisten?.();
+    };
+  }, [onNotify, onOverviewChanged, t.settings.cloudConnectedBadge, t.settings.savedToast]);
+
+  useEffect(() => {
+    if (!pendingOAuth) return;
+    const provider = pendingOAuth.provider;
+    let checking = false;
+
+    const refreshIfConnected = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const next = await getIntegrationsOverview();
+        const connected =
+          provider === "googleDrive"
+            ? next.cloud.connected
+            : next.trackers.myAnimeList.connected;
+        if (connected) {
+          onOverviewChanged(next);
+          setPendingOAuth(null);
+          setOauthCallbackInput("");
+          onNotify(
+            provider === "googleDrive"
+              ? t.settings.cloudConnectedBadge
+              : t.settings.savedToast,
+          );
+        }
+      } catch {
+        // Ignore transient foreground refresh errors
+      } finally {
+        checking = false;
+      }
+    };
+
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void refreshIfConnected();
+      }
+    };
+    const onFocus = () => {
+      void refreshIfConnected();
+    };
+
+    document.addEventListener("visibilitychange", onVisibility);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      document.removeEventListener("visibilitychange", onVisibility);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [onNotify, onOverviewChanged, pendingOAuth, t.settings.cloudConnectedBadge, t.settings.savedToast]);
+
   const toggleDraftGenre = (id: string) => {
     setDraftGenres((prev) => (prev.includes(id) ? prev.filter((item) => item !== id) : [...prev, id]));
   };
@@ -211,7 +293,7 @@ export function SettingsView({
     setActionError(null);
     try {
       const next = await saveAnilistCredentials({
-        clientId: anilistClientId,
+        clientId: anilistClientId.trim() || "18641",
         accessToken: anilistToken,
         verify: true,
       });
@@ -330,9 +412,14 @@ export function SettingsView({
     setBackupBusy(true);
     setActionError(null);
     try {
-      const json = await exportLibraryBackupJson();
-      await shareOrDownloadBackupJson(json, "library_sync.json");
-      onNotify(t.settings.backupExportedToast);
+      if (!appState.isMobile && isTauriRuntime()) {
+        const savedPath = await exportLibraryBackupFile();
+        onNotify(`${t.settings.backupExportedToast}: ${savedPath}`);
+      } else {
+        const json = await exportLibraryBackupJson();
+        await shareOrDownloadBackupJson(json, "library_sync.json");
+        onNotify(t.settings.backupExportedToast);
+      }
     } catch (err) {
       setActionError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -527,10 +614,33 @@ export function SettingsView({
         </section>
       </div>
 
-      {/* Pending Mobile / Deep-link OAuth completion box */}
+      {/* Pending Mobile / Loopback OAuth completion box */}
       {pendingOAuth && (
         <section className="editorial-callout space-y-3 p-5">
-          <h3 className="font-display text-xl">{t.settings.oauthPendingTitle}</h3>
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <h3 className="font-display text-xl">{t.settings.oauthPendingTitle}</h3>
+            <div className="flex flex-wrap gap-2">
+              {pendingOAuth.authorizeUrl && (
+                <button
+                  type="button"
+                  onClick={() => void onOpenExternal(pendingOAuth.authorizeUrl!)}
+                  className="editorial-btn-secondary text-xs"
+                >
+                  {t.settings.oauthReopenBrowserBtn}
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => {
+                  setPendingOAuth(null);
+                  setOauthCallbackInput("");
+                }}
+                className="editorial-btn-secondary text-xs"
+              >
+                {t.settings.oauthCancelBtn}
+              </button>
+            </div>
+          </div>
           <p className="text-sm text-[var(--muted)]">{t.settings.oauthPendingDesc}</p>
           <div className="flex flex-wrap gap-2">
             <input
@@ -717,11 +827,12 @@ export function SettingsView({
               <span className="font-display text-lg">{t.settings.anilistLabel}</span>
               <button
                 type="button"
-                onClick={() =>
+                onClick={() => {
+                  const effectiveId = encodeURIComponent(anilistClientId.trim() || "18641");
                   void onOpenExternal(
-                    "https://anilist.co/api/v2/oauth/authorize?client_id=18641&response_type=token",
-                  )
-                }
+                    `https://anilist.co/api/v2/oauth/authorize?client_id=${effectiveId}&response_type=token`,
+                  );
+                }}
                 className="cursor-pointer font-mono-editorial text-xs font-bold text-[var(--red-text)] underline"
               >
                 {t.settings.anilistGetTokenLink}
@@ -763,7 +874,7 @@ export function SettingsView({
                 </div>
                 <button
                   type="submit"
-                  disabled={anilistBusy || !anilistClientId.trim() || !anilistToken.trim()}
+                  disabled={anilistBusy || !anilistToken.trim()}
                   className="editorial-btn-primary text-xs"
                 >
                   {anilistBusy ? t.settings.anilistSavingBtn : t.settings.anilistSaveBtn}

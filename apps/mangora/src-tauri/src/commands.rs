@@ -1008,6 +1008,18 @@ pub fn export_library_backup_json(state: State<'_, AppState>) -> Result<String, 
 }
 
 #[tauri::command]
+pub fn export_library_backup_file(app: tauri::AppHandle, state: State<'_, AppState>) -> Result<String, String> {
+    use tauri::Manager;
+    let target_dir = app
+        .path()
+        .download_dir()
+        .ok()
+        .or_else(|| state.data_dir().ok())
+        .ok_or_else(|| "Could not resolve Downloads directory".to_string())?;
+    crate::integrations::export_library_backup_to_path(&state, &target_dir)
+}
+
+#[tauri::command]
 pub fn import_library_backup_json(
     state: State<'_, AppState>,
     json_payload: String,

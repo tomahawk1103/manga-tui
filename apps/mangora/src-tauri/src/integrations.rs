@@ -6,22 +6,21 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use manga_core::backend::cloud::{
     CLOUD_ROOT_FOLDER_NAME, CLOUD_STATE_FILE_NAME, CloudBackendKind, CloudConnectionState, CloudSyncMode, CloudSyncReport,
-    GOOGLE_OAUTH_AUTH_URL, GoogleDriveClient, PkceChallenge, build_google_oauth_authorize_url, detect_installed_cloud_folders,
-    has_embedded_google_oauth_config, run_cloud_sync_with_paths,
+    GoogleDriveClient, accept_google_loopback_code, detect_installed_cloud_folders, has_embedded_google_oauth_config,
+    run_cloud_sync_with_paths,
 };
 use manga_core::backend::secrets::SecretStorage;
 use manga_core::backend::secrets::keyring::KeyringStorage;
-use manga_core::backend::tracker::AnilistTokenChecker;
 use manga_core::backend::tracker::anilist::{Anilist, BASE_ANILIST_API_URL};
 use manga_core::backend::tracker::myanimelist::{
-    MAL_OAUTH_AUTHORIZE_URL, MAL_STATE_FILE_NAME, MalConnectionState, MalPkceChallenge, MalSyncReport, MyAnimeListClient,
-    build_mal_oauth_authorize_url, has_embedded_mal_oauth_config,
+    MAL_STATE_FILE_NAME, MalConnectionState, MalSyncReport, MyAnimeListClient, accept_mal_loopback_code,
+    has_embedded_mal_oauth_config,
 };
 use manga_core::backend::updater::sanitize_release_notes;
 use manga_core::config::build_config_file_in_dir;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
-use tauri::AppHandle;
+use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_opener::OpenerExt;
 
 use crate::feedback::{DEFAULT_GITHUB_ISSUES_URL, FeedbackConfigDto, build_feedback_config};
@@ -31,6 +30,8 @@ pub const DEFAULT_DISCORD_URL: &str = "https://discord.gg/SeqsWUCpVx";
 pub const DEFAULT_GITHUB_URL: &str = "https://github.com/tomahawk1103/manga-tui";
 pub const DEFAULT_SPONSORS_URL: &str = "https://github.com/sponsors/tomahawk1103";
 pub const DEFAULT_RELEASES_API_URL: &str = "https://api.github.com/repos/tomahawk1103/manga-tui";
+pub const OAUTH_COMPLETED_EVENT: &str = "mangora://oauth-completed";
+pub const DEFAULT_ANILIST_CLIENT_ID: &str = "18641";
 
 const SECRET_ANILIST_CLIENT_ID: &str = "anilist_client_id";
 const SECRET_ANILIST_ACCESS_TOKEN: &str = "anilist_access_token";
@@ -45,9 +46,15 @@ pub struct PendingOAuthSession {
     pub state: String,
 }
 
+#[derive(Debug)]
+struct PendingOAuthEntry {
+    session: PendingOAuthSession,
+    abort_handle: Option<tokio::task::AbortHandle>,
+}
+
 #[derive(Debug, Default)]
 pub struct PendingOAuthStore {
-    sessions: Mutex<HashMap<String, PendingOAuthSession>>,
+    sessions: Mutex<HashMap<String, PendingOAuthEntry>>,
 }
 
 impl PendingOAuthStore {
@@ -58,20 +65,73 @@ impl PendingOAuthStore {
     }
 
     pub fn insert(&self, provider: &str, session: PendingOAuthSession) {
-        if let Ok(mut guard) = self.sessions.lock() {
-            guard.insert(provider.to_string(), session);
+        self.insert_with_abort(provider, session, None);
+    }
+
+    pub fn insert_with_abort(&self, provider: &str, session: PendingOAuthSession, abort_handle: Option<tokio::task::AbortHandle>) {
+        if let Ok(mut guard) = self.sessions.lock()
+            && let Some(prev) = guard.insert(provider.to_string(), PendingOAuthEntry {
+                session,
+                abort_handle,
+            })
+            && let Some(handle) = prev.abort_handle
+        {
+            handle.abort();
         }
     }
 
     pub fn get(&self, provider: &str) -> Option<PendingOAuthSession> {
-        self.sessions.lock().ok().and_then(|guard| guard.get(provider).cloned())
+        self.sessions.lock().ok().and_then(|guard| guard.get(provider).map(|e| e.session.clone()))
+    }
+
+    pub fn take(&self, provider: &str) -> Option<PendingOAuthSession> {
+        self.sessions.lock().ok().and_then(|mut guard| {
+            guard.remove(provider).map(|entry| {
+                if let Some(handle) = entry.abort_handle {
+                    handle.abort();
+                }
+                entry.session
+            })
+        })
+    }
+
+    pub fn take_matching_state(&self, provider: &str, expected_state: &str) -> Option<PendingOAuthSession> {
+        self.sessions.lock().ok().and_then(|mut guard| {
+            let matches = guard.get(provider).is_some_and(|e| e.session.state == expected_state);
+            if matches { guard.remove(provider).map(|e| e.session) } else { None }
+        })
+    }
+
+    pub fn remove_matching_state(&self, provider: &str, expected_state: &str) {
+        if let Ok(mut guard) = self.sessions.lock() {
+            let matches = guard.get(provider).is_some_and(|e| e.session.state == expected_state);
+            if matches {
+                guard.remove(provider);
+            }
+        }
+    }
+
+    pub fn cancel_and_remove(&self, provider: &str) {
+        if let Ok(mut guard) = self.sessions.lock()
+            && let Some(prev) = guard.remove(provider)
+            && let Some(handle) = prev.abort_handle
+        {
+            handle.abort();
+        }
     }
 
     pub fn remove(&self, provider: &str) {
-        if let Ok(mut guard) = self.sessions.lock() {
-            guard.remove(provider);
-        }
+        self.cancel_and_remove(provider);
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct OAuthCompletedEventDto {
+    pub provider: String,
+    pub ok: bool,
+    pub error: Option<String>,
+    pub overview: Option<IntegrationsOverviewDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -649,25 +709,121 @@ pub async fn connect_google_drive(
 
     let mobile_flow = cfg!(any(target_os = "android", target_os = "ios")) || use_deeplink;
     if mobile_flow {
-        let redirect_uri = "mangora://oauth/google".to_string();
-        let pkce = PkceChallenge::generate();
-        let auth_url = build_google_oauth_authorize_url(GOOGLE_OAUTH_AUTH_URL, &effective_client_id, &redirect_uri, &pkce);
-
-        pending_oauth.insert("googleDrive", PendingOAuthSession {
+        pending_oauth.cancel_and_remove("googleDrive");
+        let client = GoogleDriveClient::new();
+        let prepared = client.prepare_loopback_oauth(&effective_client_id).await?;
+        let authorize_url = prepared.authorize_url.clone();
+        let redirect_uri = prepared.redirect_uri.clone();
+        let state_token = prepared.pkce.state.clone();
+        let session = PendingOAuthSession {
             provider: "googleDrive".to_string(),
             client_id: effective_client_id,
             client_secret: effective_secret,
             redirect_uri: redirect_uri.clone(),
-            code_verifier: pkce.code_verifier,
-            state: pkce.state,
+            code_verifier: prepared.pkce.code_verifier,
+            state: state_token.clone(),
+        };
+
+        let app_handle = app.clone();
+        let listener = prepared.listener;
+        let expected_state = state_token.clone();
+        let task_handle = tokio::spawn(async move {
+            let (code, responder) = match accept_google_loopback_code(listener, &expected_state).await {
+                Ok(pair) => pair,
+                Err(err) => {
+                    app_handle
+                        .state::<PendingOAuthStore>()
+                        .remove_matching_state("googleDrive", &expected_state);
+                    let _ = app_handle.emit(OAUTH_COMPLETED_EVENT, OAuthCompletedEventDto {
+                        provider: "googleDrive".to_string(),
+                        ok: false,
+                        error: Some(err),
+                        overview: None,
+                    });
+                    return;
+                },
+            };
+
+            let Some(pending_session) = app_handle
+                .state::<PendingOAuthStore>()
+                .take_matching_state("googleDrive", &expected_state)
+            else {
+                responder.send_success(Some("mangora://oauth/done")).await;
+                return;
+            };
+
+            let client = GoogleDriveClient::new();
+            match client
+                .exchange_code_for_token(
+                    &pending_session.client_id,
+                    pending_session.client_secret.as_deref(),
+                    &code,
+                    &pending_session.code_verifier,
+                    &pending_session.redirect_uri,
+                )
+                .await
+            {
+                Ok(tokens) => {
+                    let about = client.get_about_user(&tokens.access_token).await.ok();
+                    let app_state = app_handle.state::<AppState>();
+                    let save_res = (|| -> Result<IntegrationsOverviewDto, String> {
+                        let cloud_path = cloud_state_path(&app_state)?;
+                        let mut cloud_state = CloudConnectionState::load_from_path(&cloud_path);
+                        cloud_state.backend = Some(CloudBackendKind::GoogleDriveApi);
+                        cloud_state.save_oauth_tokens(
+                            &pending_session.client_id,
+                            pending_session.client_secret.as_deref(),
+                            &tokens.access_token,
+                            tokens.refresh_token.as_deref(),
+                        );
+                        if let Some(user) = about.and_then(|a| a.user) {
+                            cloud_state.account_display_name = user.display_name;
+                            cloud_state.account_email = user.email_address;
+                        }
+                        cloud_state.save_to_path(&cloud_path)?;
+                        build_integrations_overview(&app_state)
+                    })();
+
+                    match save_res {
+                        Ok(overview) => {
+                            responder.send_success(Some("mangora://oauth/done")).await;
+                            let _ = app_handle.emit(OAUTH_COMPLETED_EVENT, OAuthCompletedEventDto {
+                                provider: "googleDrive".to_string(),
+                                ok: true,
+                                error: None,
+                                overview: Some(overview),
+                            });
+                        },
+                        Err(err) => {
+                            responder.send_error(&err, Some("mangora://oauth/done")).await;
+                            let _ = app_handle.emit(OAUTH_COMPLETED_EVENT, OAuthCompletedEventDto {
+                                provider: "googleDrive".to_string(),
+                                ok: false,
+                                error: Some(err),
+                                overview: None,
+                            });
+                        },
+                    }
+                },
+                Err(err) => {
+                    responder.send_error(&err, Some("mangora://oauth/done")).await;
+                    let _ = app_handle.emit(OAUTH_COMPLETED_EVENT, OAuthCompletedEventDto {
+                        provider: "googleDrive".to_string(),
+                        ok: false,
+                        error: Some(err),
+                        overview: None,
+                    });
+                },
+            }
         });
 
-        let _ = app.opener().open_url(&auth_url, None::<&str>);
+        pending_oauth.insert_with_abort("googleDrive", session, Some(task_handle.abort_handle()));
+        let _ = app.opener().open_url(&authorize_url, None::<&str>);
         let overview = build_integrations_overview(state)?;
         return Ok(OAuthStartResultDto {
             provider: "googleDrive".to_string(),
-            mode: "deeplink".to_string(),
-            authorize_url: Some(auth_url),
+            mode: "loopback_async".to_string(),
+            authorize_url: Some(authorize_url),
             redirect_uri: Some(redirect_uri),
             completed: false,
             overview,
@@ -776,27 +932,51 @@ pub fn disconnect_cloud(state: &AppState) -> Result<IntegrationsOverviewDto, Str
     build_integrations_overview(state)
 }
 
+/// Extracts a raw AniList Bearer token from a raw token, `"Bearer <tok>"`, or an OAuth redirect URL (`#access_token=...`).
+pub fn extract_anilist_access_token(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if let Some(after_bearer) = trimmed.strip_prefix("Bearer ").or_else(|| trimmed.strip_prefix("bearer ")) {
+        return after_bearer.trim().to_string();
+    }
+    if let Some((_, query_or_frag)) = trimmed.split_once('#').or_else(|| trimmed.split_once('?')) {
+        for pair in query_or_frag.split('&') {
+            if let Some((k, v)) = pair.split_once('=')
+                && k == "access_token"
+            {
+                let decoded = percent_decode(v);
+                if !decoded.trim().is_empty() {
+                    return decoded.trim().to_string();
+                }
+            }
+        }
+    }
+    trimmed.to_string()
+}
+
 pub async fn save_anilist_credentials(
     state: &AppState,
     client_id: String,
     access_token: String,
     verify: bool,
 ) -> Result<IntegrationsOverviewDto, String> {
-    let clean_id = client_id.trim().to_string();
-    let clean_token = access_token.trim().to_string();
-    if clean_id.is_empty() || clean_token.is_empty() {
-        return Err("AniList Client ID and Access Token are required".to_string());
+    let clean_id = {
+        let trimmed = client_id.trim();
+        if trimmed.is_empty() { DEFAULT_ANILIST_CLIENT_ID.to_string() } else { trimmed.to_string() }
+    };
+    let clean_token = extract_anilist_access_token(&access_token);
+    if clean_token.is_empty() {
+        return Err("AniList Access Token is required".to_string());
     }
 
     if verify {
         let base_url = BASE_ANILIST_API_URL.parse().map_err(|e| format!("Invalid AniList URL: {e}"))?;
         let checker = Anilist::new(base_url).with_client_id(clean_id.clone()).with_token(clean_token.clone());
-        let valid = checker
-            .verify_token(clean_token.clone())
+        let viewer = checker
+            .verify_viewer_token()
             .await
             .map_err(|e| format!("Could not verify AniList credentials: {e}"))?;
-        if !valid {
-            return Err("AniList rejected the provided Client ID or Access Token".to_string());
+        if viewer.is_none() {
+            return Err("AniList rejected the provided Access Token".to_string());
         }
     }
 
@@ -862,25 +1042,121 @@ pub async fn connect_myanimelist(
 
     let mobile_flow = cfg!(any(target_os = "android", target_os = "ios")) || use_deeplink;
     if mobile_flow {
-        let redirect_uri = "mangora://oauth/mal".to_string();
-        let pkce = MalPkceChallenge::generate();
-        let auth_url = build_mal_oauth_authorize_url(MAL_OAUTH_AUTHORIZE_URL, &effective_client_id, &redirect_uri, &pkce);
-
-        pending_oauth.insert("myAnimeList", PendingOAuthSession {
+        pending_oauth.cancel_and_remove("myAnimeList");
+        tokio::task::yield_now().await;
+        let client = MyAnimeListClient::new();
+        let prepared = client.prepare_loopback_oauth(&effective_client_id).await?;
+        let authorize_url = prepared.authorize_url.clone();
+        let redirect_uri = prepared.redirect_uri.clone();
+        let state_token = prepared.pkce.state.clone();
+        let session = PendingOAuthSession {
             provider: "myAnimeList".to_string(),
             client_id: effective_client_id,
             client_secret: effective_secret,
             redirect_uri: redirect_uri.clone(),
-            code_verifier: pkce.code_verifier,
-            state: pkce.state,
+            code_verifier: prepared.pkce.code_verifier,
+            state: state_token.clone(),
+        };
+
+        let app_handle = app.clone();
+        let listener = prepared.listener;
+        let expected_state = state_token.clone();
+        let task_handle = tokio::spawn(async move {
+            let (code, responder) = match accept_mal_loopback_code(listener, &expected_state).await {
+                Ok(pair) => pair,
+                Err(err) => {
+                    app_handle
+                        .state::<PendingOAuthStore>()
+                        .remove_matching_state("myAnimeList", &expected_state);
+                    let _ = app_handle.emit(OAUTH_COMPLETED_EVENT, OAuthCompletedEventDto {
+                        provider: "myAnimeList".to_string(),
+                        ok: false,
+                        error: Some(err),
+                        overview: None,
+                    });
+                    return;
+                },
+            };
+
+            let Some(pending_session) = app_handle
+                .state::<PendingOAuthStore>()
+                .take_matching_state("myAnimeList", &expected_state)
+            else {
+                responder.send_success(Some("mangora://oauth/done")).await;
+                return;
+            };
+
+            let client = MyAnimeListClient::new();
+            match client
+                .exchange_code_for_token(
+                    &pending_session.client_id,
+                    pending_session.client_secret.as_deref(),
+                    &code,
+                    &pending_session.code_verifier,
+                    &pending_session.redirect_uri,
+                )
+                .await
+            {
+                Ok(tokens) => {
+                    let profile = client.get_my_profile(&tokens.access_token).await.ok();
+                    let app_state = app_handle.state::<AppState>();
+                    let save_res = (|| -> Result<IntegrationsOverviewDto, String> {
+                        let mal_path = mal_state_path(&app_state)?;
+                        let mut mal_state = MalConnectionState::load_from_path(&mal_path);
+                        mal_state.save_oauth_tokens(
+                            &pending_session.client_id,
+                            pending_session.client_secret.as_deref(),
+                            &tokens.access_token,
+                            tokens.refresh_token.as_deref(),
+                        );
+                        if let Some(p) = profile {
+                            mal_state.user_id = Some(p.id);
+                            mal_state.username = Some(p.name);
+                        }
+                        mal_state.save_to_path(&mal_path)?;
+                        build_integrations_overview(&app_state)
+                    })();
+
+                    match save_res {
+                        Ok(overview) => {
+                            responder.send_success(Some("mangora://oauth/done")).await;
+                            let _ = app_handle.emit(OAUTH_COMPLETED_EVENT, OAuthCompletedEventDto {
+                                provider: "myAnimeList".to_string(),
+                                ok: true,
+                                error: None,
+                                overview: Some(overview),
+                            });
+                        },
+                        Err(err) => {
+                            responder.send_error(&err, Some("mangora://oauth/done")).await;
+                            let _ = app_handle.emit(OAUTH_COMPLETED_EVENT, OAuthCompletedEventDto {
+                                provider: "myAnimeList".to_string(),
+                                ok: false,
+                                error: Some(err),
+                                overview: None,
+                            });
+                        },
+                    }
+                },
+                Err(err) => {
+                    responder.send_error(&err, Some("mangora://oauth/done")).await;
+                    let _ = app_handle.emit(OAUTH_COMPLETED_EVENT, OAuthCompletedEventDto {
+                        provider: "myAnimeList".to_string(),
+                        ok: false,
+                        error: Some(err),
+                        overview: None,
+                    });
+                },
+            }
         });
 
-        let _ = app.opener().open_url(&auth_url, None::<&str>);
+        pending_oauth.insert_with_abort("myAnimeList", session, Some(task_handle.abort_handle()));
+        let _ = app.opener().open_url(&authorize_url, None::<&str>);
         let overview = build_integrations_overview(state)?;
         return Ok(OAuthStartResultDto {
             provider: "myAnimeList".to_string(),
-            mode: "deeplink".to_string(),
-            authorize_url: Some(auth_url),
+            mode: "loopback_async".to_string(),
+            authorize_url: Some(authorize_url),
             redirect_uri: Some(redirect_uri),
             completed: false,
             overview,
@@ -924,16 +1200,20 @@ pub async fn complete_oauth_callback(
     provider: &str,
     callback_input: &str,
 ) -> Result<IntegrationsOverviewDto, String> {
-    let pending = pending_oauth
+    let preview = pending_oauth
         .get(provider)
         .ok_or_else(|| format!("No active OAuth session found for '{provider}'"))?;
 
     let (code, returned_state) = parse_oauth_callback_input(callback_input)?;
     if let Some(st) = returned_state
-        && st != pending.state
+        && st != preview.state
     {
         return Err("OAuth security error: state parameter mismatch".to_string());
     }
+
+    let pending = pending_oauth
+        .take(provider)
+        .ok_or_else(|| format!("No active OAuth session found for '{provider}'"))?;
 
     match provider {
         "googleDrive" => {
@@ -1130,6 +1410,14 @@ pub fn export_library_backup_json(state: &AppState) -> Result<String, String> {
     serde_json::to_string_pretty(&snapshot).map_err(|e| format!("Could not serialize library backup: {e}"))
 }
 
+pub fn export_library_backup_to_path(state: &AppState, target_dir: &Path) -> Result<String, String> {
+    let json = export_library_backup_json(state)?;
+    fs::create_dir_all(target_dir).map_err(|e| format!("Could not create export directory: {e}"))?;
+    let out_path = target_dir.join(manga_core::backend::cloud::CLOUD_LIBRARY_JSON_NAME);
+    fs::write(&out_path, json).map_err(|e| format!("Could not write backup file '{}': {e}", out_path.display()))?;
+    Ok(out_path.display().to_string())
+}
+
 pub fn import_library_backup_json(state: &AppState, json_payload: &str) -> Result<PortableBackupImportResultDto, String> {
     let trimmed = json_payload.trim();
     if trimmed.is_empty() {
@@ -1285,10 +1573,19 @@ mod tests {
     }
 
     #[test]
-    fn parse_oauth_callback_input_supports_deeplink_url_and_raw_code() {
+    fn parse_oauth_callback_input_supports_deeplink_and_loopback_urls_and_raw_code() {
         let (code, state) = parse_oauth_callback_input("mangora://oauth/google?code=abc%2F123&state=st_42").unwrap();
         assert_eq!(code, "abc/123");
         assert_eq!(state.as_deref(), Some("st_42"));
+
+        let (mal_code, mal_state) =
+            parse_oauth_callback_input("http://127.0.0.1:8765/callback?code=mal_code_1&state=mal_st").unwrap();
+        assert_eq!(mal_code, "mal_code_1");
+        assert_eq!(mal_state.as_deref(), Some("mal_st"));
+
+        let (gd_code, gd_state) = parse_oauth_callback_input("http://127.0.0.1:54321/?code=gd_code_1&state=gd_st").unwrap();
+        assert_eq!(gd_code, "gd_code_1");
+        assert_eq!(gd_state.as_deref(), Some("gd_st"));
 
         let (raw_code, raw_state) = parse_oauth_callback_input("  plain-auth-code  ").unwrap();
         assert_eq!(raw_code, "plain-auth-code");
@@ -1296,6 +1593,44 @@ mod tests {
 
         assert!(parse_oauth_callback_input("mangora://oauth/mal?error=access_denied").is_err());
         assert!(parse_oauth_callback_input("   ").is_err());
+    }
+
+    #[test]
+    fn extract_anilist_access_token_handles_raw_bearer_and_redirect_url() {
+        assert_eq!(extract_anilist_access_token("  tok_raw_123  "), "tok_raw_123");
+        assert_eq!(extract_anilist_access_token("Bearer tok_bearer_456"), "tok_bearer_456");
+        assert_eq!(
+            extract_anilist_access_token("https://anilist.co/api/v2/oauth/pin#access_token=jwt.part.sig&token_type=Bearer"),
+            "jwt.part.sig"
+        );
+    }
+
+    #[test]
+    fn pending_oauth_store_matches_state_and_cancels_cleanly() {
+        let store = PendingOAuthStore::new();
+        store.insert("googleDrive", PendingOAuthSession {
+            provider: "googleDrive".to_string(),
+            client_id: "cid".to_string(),
+            client_secret: None,
+            redirect_uri: "http://127.0.0.1:12345".to_string(),
+            code_verifier: "ver".to_string(),
+            state: "st_1".to_string(),
+        });
+        assert!(store.take_matching_state("googleDrive", "wrong").is_none());
+        assert!(store.get("googleDrive").is_some());
+        assert_eq!(store.take_matching_state("googleDrive", "st_1").unwrap().client_id, "cid");
+        assert!(store.get("googleDrive").is_none());
+
+        store.insert("myAnimeList", PendingOAuthSession {
+            provider: "myAnimeList".to_string(),
+            client_id: "mal_cid".to_string(),
+            client_secret: None,
+            redirect_uri: "http://127.0.0.1:8765/callback".to_string(),
+            code_verifier: "ver2".to_string(),
+            state: "st_2".to_string(),
+        });
+        store.cancel_and_remove("myAnimeList");
+        assert!(store.get("myAnimeList").is_none());
     }
 
     #[tokio::test]
@@ -1402,11 +1737,12 @@ mod tests {
         let temp = TempDirGuard::new("anilist_cfg");
         let state = make_state(&temp.path);
 
-        let connected = save_anilist_credentials(&state, "12345".to_string(), "tok_9999".to_string(), false)
+        let connected = save_anilist_credentials(&state, "".to_string(), "tok_9999".to_string(), false)
             .await
             .unwrap();
         assert!(connected.trackers.anilist.connected);
         assert!(connected.trackers.anilist.track_reading_history);
+        assert_eq!(connected.trackers.anilist.client_id_hint.as_deref(), Some("••••8641"));
 
         let disconnected = disconnect_anilist(&state).unwrap();
         assert!(!disconnected.trackers.anilist.connected);
@@ -1441,7 +1777,14 @@ mod tests {
             .unwrap();
 
         let exported_json = export_library_backup_json(&src_state).unwrap();
-        let imported = import_library_backup_json(&dst_state, &exported_json).unwrap();
+        let exported_path = export_library_backup_to_path(&src_state, &dst_temp.path.join("exports")).unwrap();
+        let disk_json = fs::read_to_string(&exported_path).unwrap();
+        let exported_snap: manga_core::backend::cloud::LibrarySyncSnapshot = serde_json::from_str(&exported_json).unwrap();
+        let mut disk_snap: manga_core::backend::cloud::LibrarySyncSnapshot = serde_json::from_str(&disk_json).unwrap();
+        disk_snap.synced_at = exported_snap.synced_at.clone();
+        assert_eq!(disk_snap, exported_snap);
+
+        let imported = import_library_backup_json(&dst_state, &disk_json).unwrap();
         assert_eq!(imported.total_mangas, 1);
         assert_eq!(imported.total_read_chapters, 1);
         assert_eq!(imported.total_favorites, 1);
