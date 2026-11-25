@@ -157,12 +157,6 @@ export interface Translations {
     tabShelf: string;
     tabStats: string;
     lastReadLabel: string;
-    activeProfileTitle: string;
-    activeProviderLabel: string;
-    activeGenresLabel: string;
-    noGenresYet: string;
-    nextMilestoneTitle: string;
-    nextMilestoneDesc: string;
   };
   library: {
     eyebrow: string;
@@ -241,7 +235,6 @@ export interface Translations {
     noSynopsis: string;
     nextUnreadLabel: string;
     nextUnreadAction: string;
-    readerComingSoonToast: string;
     chaptersTitle: string;
     chaptersCount: (total: number) => string;
     readCountLabel: (count: number) => string;
@@ -620,13 +613,6 @@ const ES: Translations = {
     tabShelf: "Biblioteca",
     tabStats: "Estadísticas 100 % locales",
     lastReadLabel: "Última lectura",
-    activeProfileTitle: "Perfil inicial configurado",
-    activeProviderLabel: "Servidor principal",
-    activeGenresLabel: "Tus gustos guardados",
-    noGenresYet: "Sin géneros seleccionados todavía (puedes elegirlos en Ajustes).",
-    nextMilestoneTitle: "Próximo paso en camino (Hito 2)",
-    nextMilestoneDesc:
-      "La biblioteca ya lee y escribe tu SQLite en vivo; en el siguiente bloque conectaremos la Ficha de Serie completa con capítulos, reseñas de AniList y bloque «Para ti».",
   },
   library: {
     eyebrow: "Biblioteca interactiva · SQLite",
@@ -718,8 +704,6 @@ const ES: Translations = {
     noSynopsis: "Esta fuente no incluye sinopsis para esta serie.",
     nextUnreadLabel: "Siguiente capítulo pendiente",
     nextUnreadAction: "Leer / Marcar leído",
-    readerComingSoonToast:
-      "El lector HD integrado llega en el Hito 3. De momento puedes marcar el progreso desde aquí.",
     chaptersTitle: "Capítulos",
     chaptersCount: (total) => (total === 1 ? "1 capítulo" : `${total} capítulos`),
     readCountLabel: (count) => (count === 1 ? "1 leído" : `${count} leídos`),
@@ -1145,13 +1129,6 @@ const EN: Translations = {
     tabShelf: "Library",
     tabStats: "100% local stats",
     lastReadLabel: "Last read",
-    activeProfileTitle: "Starter profile configured",
-    activeProviderLabel: "Default source",
-    activeGenresLabel: "Saved genres",
-    noGenresYet: "No favorite genres selected yet (you can pick them in Settings).",
-    nextMilestoneTitle: "Coming next (Milestone 2)",
-    nextMilestoneDesc:
-      "Your live SQLite shelves are connected; next up are the full Series page with chapters, AniList reviews, and the For You shelf.",
   },
   library: {
     eyebrow: "Interactive library · SQLite",
@@ -1243,8 +1220,6 @@ const EN: Translations = {
     noSynopsis: "This source didn’t include a synopsis for this series.",
     nextUnreadLabel: "Next unread chapter",
     nextUnreadAction: "Read / Mark read",
-    readerComingSoonToast:
-      "The built-in HD reader arrives in Milestone 3. You can track chapter progress from here right now.",
     chaptersTitle: "Chapters",
     chaptersCount: (total) => (total === 1 ? "1 chapter" : `${total} chapters`),
     readCountLabel: (count) => (count === 1 ? "1 read" : `${count} read`),

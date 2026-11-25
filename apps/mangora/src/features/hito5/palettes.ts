@@ -291,7 +291,7 @@ export interface Hito5Labels {
 }
 
 const LABELS_ES: Hito5Labels = {
-  appearanceEyebrow: "Edición Visual · Hito 5",
+  appearanceEyebrow: "Edición Visual",
   appearanceHeadingPrefix: "Personaliza tu lectura,",
   appearanceHeadingAccent: "a tu estilo.",
   appearanceSubtitle:
@@ -351,7 +351,7 @@ const LABELS_ES: Hito5Labels = {
 };
 
 const LABELS_EN: Hito5Labels = {
-  appearanceEyebrow: "Visual Customization · Milestone 5",
+  appearanceEyebrow: "Visual Customization",
   appearanceHeadingPrefix: "Tailor your reading,",
   appearanceHeadingAccent: "in paper & ink.",
   appearanceSubtitle:

@@ -8,7 +8,7 @@ import type {
   SeriesSelection,
   ToggleFavoritePayload,
 } from "../types/mangora";
-import { getGenreLabel, getTranslations } from "../lib/i18n";
+import { getTranslations } from "../lib/i18n";
 
 interface HomeViewProps {
   appState: InitialAppState;
@@ -43,7 +43,6 @@ export function HomeView({
 }: HomeViewProps) {
   const t = getTranslations(appState.uiLanguage);
   const [homeTab, setHomeTab] = useState<"shelf" | "stats">("shelf");
-  const activeProvider = appState.availableProviders.find((p) => p.id === appState.activeProvider);
   const showSupportMilestoneBanner =
     appState.library.chaptersRead >= 5 &&
     !appState.supportBannerDismissed &&
@@ -241,50 +240,6 @@ export function HomeView({
         <p className="max-w-3xl text-sm text-[var(--muted)]">
           {appState.library.hasExistingData ? t.home.detectedBannerDesc : t.home.emptyBannerDesc}
         </p>
-      </section>
-
-      {/* Two-column editorial summary */}
-      <section className="grid gap-6 md:grid-cols-2">
-        <article className="editorial-card-muted p-5">
-          <div className="font-mono-editorial mb-2 text-xs font-bold uppercase text-[var(--red-text)]">
-            [01] {t.home.activeProfileTitle}
-          </div>
-          <div className="mb-4">
-            <div className="font-mono-editorial text-xs text-[var(--muted)]">
-              {t.home.activeProviderLabel}
-            </div>
-            <div className="font-display mt-0.5 text-xl">
-              {activeProvider?.badge ?? appState.activeProvider}
-            </div>
-          </div>
-
-          <div>
-            <div className="font-mono-editorial mb-2 text-xs text-[var(--muted)]">
-              {t.home.activeGenresLabel}
-            </div>
-            {appState.favoriteGenres.length > 0 ? (
-              <div className="flex flex-wrap gap-2">
-                {appState.favoriteGenres.map((genreId) => (
-                  <span
-                    key={genreId}
-                    className="border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1 font-mono-editorial text-xs font-bold"
-                  >
-                    {getGenreLabel(genreId, appState.uiLanguage)}
-                  </span>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-[var(--muted)]">{t.home.noGenresYet}</p>
-            )}
-          </div>
-        </article>
-
-        <article className="editorial-card-muted p-5">
-          <div className="font-mono-editorial mb-2 text-xs font-bold uppercase text-[var(--red-text)]">
-            [02] {t.home.nextMilestoneTitle}
-          </div>
-          <p className="text-sm text-[var(--muted)]">{t.home.nextMilestoneDesc}</p>
-        </article>
       </section>
     </div>
   );
