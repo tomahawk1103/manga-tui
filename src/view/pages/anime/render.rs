@@ -2,7 +2,7 @@ use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout, Rect};
 use ratatui::style::{Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Clear, HighlightSpacing, List, ListItem, ListState, Paragraph, Wrap};
+use ratatui::widgets::{Block, Clear, HighlightSpacing, List, ListItem, ListState, Padding, Paragraph, Wrap};
 
 use super::{AnimePage, Focus, Hitboxes, View};
 use crate::common::render_stateful_image_cleared;
@@ -22,32 +22,40 @@ impl AnimePage {
         self.render_search(header, frame, overlay);
         self.render_toolbar(toolbar, frame);
         let [results, details] = if content.width >= 72 {
-            Layout::horizontal([Constraint::Percentage(39), Constraint::Percentage(61)]).areas(content)
+            Layout::horizontal([Constraint::Fill(2), Constraint::Fill(3)]).spacing(1).areas(content)
         } else {
             Layout::vertical([Constraint::Percentage(43), Constraint::Percentage(57)]).areas(content)
         };
         self.render_results(results, frame);
         self.render_details(details, frame, overlay || self.mirrors.is_some());
         let color = if self.status_is_error { theme().status_warning } else { theme().text_secondary };
-        frame.render_widget(Paragraph::new(self.status.as_str()).style(Style::default().fg(color)), status);
+        let hint = match self.focus {
+            Focus::Query => tr("Enter Buscar", "Enter Search"),
+            Focus::Results => tr("Enter Abrir ficha", "Enter Open details"),
+            Focus::Episodes => tr("Enter Elegir servidor", "Enter Choose server"),
+        };
+        let message = if self.status.is_empty() { hint } else { self.status.as_str() };
+        frame.render_widget(Paragraph::new(message).style(Style::default().fg(color).bg(theme().bar_bg)), status);
         if !overlay {
             self.render_mirrors(area, frame);
         }
     }
 
     fn render_search(&mut self, area: Rect, frame: &mut Frame<'_>, overlay: bool) {
-        let [query, button] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(12)]).areas(area);
+        let [query, button] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(10)]).spacing(1).areas(area);
         let border = section(tr("Buscar anime", "Search anime"), self.focus == Focus::Query);
         let inner = border.inner(query);
         let width = usize::from(inner.width.saturating_sub(1));
         let scroll = self.input.visual_scroll(width);
         let hint = tr("Título del anime", "Anime title");
-        let text = if self.input.value().is_empty() && self.focus != Focus::Query { hint } else { self.input.value() };
+        let show_hint = self.input.value().is_empty() && self.focus != Focus::Query;
+        let text = if show_hint { hint } else { self.input.value() };
+        let color = if show_hint { theme().text_muted } else { theme().text_primary };
         frame.render_widget(
             Paragraph::new(text)
                 .scroll((0, scroll as u16))
                 .block(border)
-                .style(Style::default().fg(theme().text_primary)),
+                .style(Style::default().fg(color)),
             query,
         );
         self.hitboxes.query = query;
@@ -55,8 +63,8 @@ impl AnimePage {
         frame.render_widget(
             Paragraph::new(tr("Buscar", "Search"))
                 .centered()
-                .block(section("", false))
-                .style(Style::default().fg(theme().accent_primary)),
+                .block(section("", true))
+                .style(Style::default().fg(theme().accent_primary).bg(theme().chip_bg).bold()),
             button,
         );
         if self.focus == Focus::Query && self.mirrors.is_none() && !overlay && inner.width > 0 && inner.height > 0 {
@@ -66,17 +74,23 @@ impl AnimePage {
     }
 
     fn render_toolbar(&mut self, area: Rect, frame: &mut Frame<'_>) {
-        let [recent, favorites, provider] =
-            Layout::horizontal([Constraint::Percentage(32), Constraint::Percentage(34), Constraint::Percentage(34)]).areas(area);
+        let compact = area.width < 52;
+        let [recent, favorites, provider] = Layout::horizontal([
+            Constraint::Length(if compact { 9 } else { 14 }),
+            Constraint::Length(if compact { 8 } else { 15 }),
+            Constraint::Fill(1),
+        ])
+        .spacing(1)
+        .areas(area);
         for (space, label, active) in [
-            (recent, tr(" [h] Historial ", " [h] History "), self.mode == View::Recent),
-            (favorites, tr(" [b] Favoritos ", " [b] Favorites "), self.mode == View::Favorites),
+            (recent, if compact { " h Hist. " } else { tr(" h Historial ", " h History ") }, self.mode == View::Recent),
+            (favorites, if compact { " b Fav. " } else { tr(" b Favoritos ", " b Favorites ") }, self.mode == View::Favorites),
             (provider, &format!(" [p] {} ", self.provider), false),
         ] {
             let style = if active {
                 Style::default().fg(theme().accent_primary).bg(theme().row_selected_bg).bold()
             } else {
-                Style::default().fg(theme().text_secondary)
+                Style::default().fg(theme().text_secondary).bg(theme().bar_bg)
             };
             frame.render_widget(Paragraph::new(label).style(style), space);
         }
@@ -94,7 +108,8 @@ impl AnimePage {
         let pagination = self.mode == View::Search && self.total_pages > 1 && area.height >= 4;
         let [list_area, pages] = Layout::vertical([Constraint::Fill(1), Constraint::Length(u16::from(pagination))]).areas(area);
         let items: Vec<ListItem<'_>> = self.results.iter().map(|anime| ListItem::new(single_line(&anime.title))).collect();
-        self.hitboxes.results = draw_list(frame, list_area, title, self.focus == Focus::Results, items, &mut self.results_list);
+        let title = if self.results.is_empty() { title.to_owned() } else { format!("{title} · {}", self.results.len()) };
+        self.hitboxes.results = draw_list(frame, list_area, &title, self.focus == Focus::Results, items, &mut self.results_list);
         if pagination {
             let [prev, label, next] =
                 Layout::horizontal([Constraint::Length(4), Constraint::Fill(1), Constraint::Length(4)]).areas(pages);
@@ -125,7 +140,7 @@ impl AnimePage {
         let summary_height = if area.height >= 9 { (area.height / 2).clamp(4, 13) } else { 0 };
         let [summary, episodes] = Layout::vertical([Constraint::Length(summary_height), Constraint::Fill(1)]).areas(area);
         if summary_height > 0 {
-            let block = section(tr("Ficha", "Details"), false);
+            let block = section(tr("Ficha", "Details"), false).padding(Padding::horizontal(1));
             let inner = block.inner(summary);
             frame.render_widget(block, summary);
             let text_area = if !overlay
@@ -179,7 +194,13 @@ impl AnimePage {
             .iter()
             .map(|episode| {
                 let entry = history.get(episode.number.as_str());
-                let icon = if entry.is_some_and(|entry| entry.is_watched) { "✓" } else { "·" };
+                let (icon, color) = if entry.is_some_and(|entry| entry.is_watched) {
+                    ("✓", theme().status_success)
+                } else if entry.is_some_and(|entry| entry.progress_seconds > 0) {
+                    ("◐", theme().accent_secondary)
+                } else {
+                    ("·", theme().text_muted)
+                };
                 let progress = entry
                     .filter(|entry| entry.progress_seconds > 0)
                     .map(|entry| format!("  {} / {}", timestamp(entry.progress_seconds), timestamp(entry.duration_seconds)))
@@ -189,7 +210,12 @@ impl AnimePage {
                     .as_deref()
                     .map(|title| format!(" · {}", single_line(title)))
                     .unwrap_or_default();
-                ListItem::new(format!("{icon} Ep. {}{progress}{title}", single_line(&episode.number)))
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{icon} "), Style::default().fg(color)),
+                    Span::raw(format!("Ep. {}", single_line(&episode.number))),
+                    Span::styled(progress, Style::default().fg(theme().text_secondary)),
+                    Span::raw(title),
+                ]))
             })
             .collect();
         let title = format!("{} ({})", tr("Episodios", "Episodes"), details.episodes.len());
@@ -219,7 +245,16 @@ impl AnimePage {
 
 fn section(title: &str, selected: bool) -> Block<'_> {
     let border = if selected { theme().border_accent } else { theme().border_muted };
-    Block::bordered().title(title).border_style(Style::default().fg(border))
+    let label = if title.is_empty() { String::new() } else { format!(" {title} ") };
+    theme()
+        .rounded_block()
+        .title(Span::styled(
+            label,
+            Style::default()
+                .fg(if selected { theme().accent_primary } else { theme().text_secondary })
+                .bold(),
+        ))
+        .border_style(Style::default().fg(border))
 }
 
 fn draw_list(

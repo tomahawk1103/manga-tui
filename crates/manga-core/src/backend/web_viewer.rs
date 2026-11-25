@@ -492,7 +492,7 @@ pub fn render_viewer_html(
         String::new()
     } else {
         format!(
-            r#"<select id="chapter-select" class="ctrl-select" onchange="jumpToChapter(this.value)" title="{}">{chapter_options}</select>"#,
+            r#"<select id="chapter-select" class="ctrl-select" onchange="jumpToChapter(this.value)" aria-label="{}">{chapter_options}</select>"#,
             if es { "Cambiar de capítulo" } else { "Switch chapter" }
         )
     };
@@ -581,13 +581,14 @@ pub fn render_viewer_html(
     <title>{manga_title} — {chapter_title} | manga-tui Web Viewer</title>
     <style>
         :root {{
-            --bg-primary: #090b10;
-            --bg-glass: rgba(16, 20, 29, 0.88);
+            color-scheme: dark;
+            --bg-primary: #0d0e16;
+            --bg-glass: rgba(24, 26, 39, 0.96);
             --text-primary: #f3f4f6;
-            --text-muted: #9ca3af;
-            --accent: #38bdf8;
-            --accent-hover: #0ea5e9;
-            --border: rgba(255, 255, 255, 0.1);
+            --text-muted: #b5b7cc;
+            --accent: #c4b5fd;
+            --border: #33364b;
+            --hud-height: 84px;
             --reader-max-width: 100%;
             --page-gap: 0px;
         }}
@@ -619,7 +620,7 @@ pub fn render_viewer_html(
         #progress-bar {{
             height: 100%;
             width: 0%;
-            background: linear-gradient(90deg, #38bdf8, #818cf8);
+            background: linear-gradient(90deg, #818cf8, var(--accent));
             transition: width 0.08s ease-out;
         }}
         header.hud {{
@@ -631,8 +632,12 @@ pub fn render_viewer_html(
             background: var(--bg-glass);
             backdrop-filter: blur(12px);
             -webkit-backdrop-filter: blur(12px);
-            border-bottom: 1px solid var(--border);
-            padding: 10px 18px;
+            border: 1px solid var(--border);
+            border-radius: 0 0 14px 14px;
+            max-width: 1440px;
+            margin-inline: auto;
+            box-shadow: 0 10px 30px #0005;
+            padding: 12px clamp(10px, 2vw, 24px);
             display: flex;
             flex-wrap: wrap;
             align-items: center;
@@ -640,7 +645,7 @@ pub fn render_viewer_html(
             gap: 12px;
             transition: transform 0.25s ease, opacity 0.25s ease;
         }}
-        header.hud.hidden {{
+        header.hud.hidden:not(:has(:focus-visible)) {{
             transform: translateY(-110%);
             opacity: 0;
             pointer-events: none;
@@ -648,13 +653,15 @@ pub fn render_viewer_html(
         .hud-left {{
             display: flex;
             align-items: center;
-            gap: 10px;
+            flex-wrap: wrap;
+            gap: 6px;
             min-width: 0;
+            max-width: 100%;
         }}
         .badge {{
-            background: rgba(56, 189, 248, 0.15);
+            background: #292641;
             color: var(--accent);
-            border: 1px solid rgba(56, 189, 248, 0.35);
+            border: 1px solid #51476f;
             border-radius: 6px;
             padding: 3px 8px;
             font-size: 0.78rem;
@@ -665,9 +672,12 @@ pub fn render_viewer_html(
             display: flex;
             flex-direction: column;
             min-width: 0;
+            border-inline-start: 3px solid var(--accent);
+            padding-inline-start: 10px;
+            margin-inline-end: 6px;
         }}
         .manga-title {{
-            font-size: 0.95rem;
+            font-size: 1.05rem;
             font-weight: 700;
             white-space: nowrap;
             overflow: hidden;
@@ -687,14 +697,30 @@ pub fn render_viewer_html(
             align-items: center;
             gap: 8px;
             flex-wrap: wrap;
+            min-width: 0;
+        }}
+        .control-group {{
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 4px;
+            min-width: 0;
+            max-width: 100%;
+            padding: 4px;
+            background: #10111c;
+            border-radius: 10px;
         }}
         .ctrl-btn, .nav-btn, select.ctrl-select {{
-            background: rgba(255, 255, 255, 0.07);
+            display: inline-flex;
+            align-items: center;
+            min-height: 36px;
+            max-width: 100%;
+            background: #222437;
             color: var(--text-primary);
             border: 1px solid var(--border);
             border-radius: 6px;
             padding: 6px 11px;
-            font-size: 0.82rem;
+            font: 500 0.82rem system-ui, sans-serif;
             font-weight: 500;
             cursor: pointer;
             text-decoration: none;
@@ -706,9 +732,18 @@ pub fn render_viewer_html(
             border-color: rgba(255, 255, 255, 0.25);
         }}
         .ctrl-btn.active, .nav-btn.primary {{
-            background: rgba(56, 189, 248, 0.2);
-            border-color: var(--accent);
-            color: #fff;
+            background: #332b4d;
+            border-color: #615684;
+            color: var(--accent);
+        }}
+        :focus-visible {{
+            outline: 2px solid var(--accent);
+            outline-offset: 2px;
+        }}
+        @media (max-width: 600px) {{
+            .manga-info {{ flex: 0 0 100%; }}
+            .hud-controls {{ gap: 5px; }}
+            .ctrl-btn, .nav-btn, select.ctrl-select {{ min-height: 40px; padding-inline: 7px; }}
         }}
         .nav-btn.disabled {{
             opacity: 0.38;
@@ -724,7 +759,7 @@ pub fn render_viewer_html(
             flex-direction: column;
             align-items: center;
             width: 100%;
-            padding-top: 64px;
+            padding-top: calc(var(--hud-height) + 16px);
             padding-bottom: 60px;
             gap: var(--page-gap);
         }}
@@ -760,7 +795,7 @@ pub fn render_viewer_html(
         }}
         body.mode-single .page-container.active-single-page {{
             display: flex;
-            min-height: calc(100vh - 130px);
+            min-height: calc(100vh - var(--hud-height) - 76px);
         }}
         body.mode-single img.manga-page {{
             max-height: 90vh;
@@ -779,9 +814,11 @@ pub fn render_viewer_html(
             align-items: center;
             justify-content: center;
             position: relative;
+            min-width: 0;
+            scroll-margin-top: calc(var(--hud-height) + 8px);
         }}
         .page-skeleton {{
-            width: min(900px, 92vw);
+            width: min(900px, 92vw, 100%);
             height: 420px;
             background: linear-gradient(90deg, #121620 25%, #1a2030 50%, #121620 75%);
             background-size: 200% 100%;
@@ -829,10 +866,10 @@ pub fn render_viewer_html(
             font-weight: 600;
         }}
         footer.chapter-footer {{
-            max-width: 760px;
+            width: min(760px, calc(100% - 24px));
             margin: 40px auto 60px;
             padding: 28px 24px;
-            background: rgba(255, 255, 255, 0.03);
+            background: var(--bg-glass);
             border: 1px solid var(--border);
             border-radius: 12px;
             text-align: center;
@@ -853,32 +890,43 @@ pub fn render_viewer_html(
             color: var(--text-muted);
             margin-top: 10px;
         }}
+        @media (prefers-reduced-motion: reduce) {{
+            html {{ scroll-behavior: auto; }}
+            header.hud, #progress-bar {{ transition: none; }}
+            .page-skeleton {{ animation: none; }}
+        }}
     </style>
 </head>
 <body>
     <div id="progress-bar-container"><div id="progress-bar"></div></div>
     <header class="hud" id="hud">
         <div class="hud-left">
-            <span class="badge">{provider_badge}</span>
-            {local_badge_html}
-            <span class="badge sync-badge" id="sync-badge">{sync_badge_initial}</span>
             <div class="manga-info">
                 <span class="manga-title" title="{manga_title}">{manga_title}</span>
                 <span class="chapter-subtitle" title="{chapter_title}">{chapter_title}</span>
             </div>
+            <span class="badge">{provider_badge}</span>
+            {local_badge_html}
+            <span class="badge sync-badge" id="sync-badge">{sync_badge_initial}</span>
         </div>
         <div class="hud-controls">
+          <div class="control-group">
             {prev_btn_top}
             {chapter_select_html}
-            <select id="page-select" class="ctrl-select" onchange="jumpToPage(this.value)">
+            {next_btn_top}
+          </div>
+          <div class="control-group">
+            <select id="page-select" class="ctrl-select" aria-label="{page_select_label}" onchange="jumpToPage(this.value)">
                 {page_options}
             </select>
-            <select id="view-mode-select" class="ctrl-select" onchange="setViewMode(this.value)">
+            <select id="view-mode-select" class="ctrl-select" aria-label="{view_mode_label}" onchange="setViewMode(this.value)">
                 <option value="cascade">{mode_cascade_label}</option>
                 <option value="double-rtl">{mode_double_rtl_label}</option>
                 <option value="double-ltr">{mode_double_ltr_label}</option>
                 <option value="single">{mode_single_label}</option>
             </select>
+          </div>
+          <div class="control-group">
             <button class="ctrl-btn active" id="fit-orig" onclick="setFitMode('100%', 'fit-orig')">{fit_orig_label}</button>
             <button class="ctrl-btn" id="fit-wide" onclick="setFitMode('1200px', 'fit-wide')">{fit_wide_label}</button>
             <button class="ctrl-btn" id="fit-std" onclick="setFitMode('900px', 'fit-std')">{fit_std_label}</button>
@@ -886,7 +934,7 @@ pub fn render_viewer_html(
             <button class="ctrl-btn" onclick="adjustZoom(10)" title="Zoom +">+</button>
             <button class="ctrl-btn active" id="gap-btn" onclick="toggleGap()">{gap_label}</button>
             <button class="ctrl-btn" onclick="toggleFullscreen()">{fullscreen_label}</button>
-            {next_btn_top}
+          </div>
         </div>
     </header>
 
@@ -898,7 +946,7 @@ pub fn render_viewer_html(
         <h2>{end_title}</h2>
         <div class="footer-actions">
             {prev_btn_top}
-            <button class="ctrl-btn" onclick="window.scrollTo({{top: 0, behavior: 'smooth'}})">{back_top_label}</button>
+            <button class="ctrl-btn" onclick="window.scrollTo({{top: 0}})">{back_top_label}</button>
             {next_btn_top}
         </div>
         <div class="shortcuts-bar">{shortcuts_hint}</div>
@@ -1014,7 +1062,7 @@ pub fn render_viewer_html(
             scheduleSaveProgress(currentPage);
             const el = document.getElementById('page-' + currentPage);
             if (el) {{
-                el.scrollIntoView({{ behavior: 'smooth', block: 'start' }});
+                el.scrollIntoView({{ block: 'start' }});
             }}
         }}
 
@@ -1057,6 +1105,13 @@ pub fn render_viewer_html(
             }}
         }}
 
+        const hud = document.getElementById('hud');
+        function updateHudHeight() {{
+            document.documentElement.style.setProperty('--hud-height', hud.offsetHeight + 'px');
+        }}
+        updateHudHeight();
+        new ResizeObserver(updateHudHeight).observe(hud);
+
         window.addEventListener('scroll', () => {{
             const scrollTop = window.scrollY || document.documentElement.scrollTop;
             const docHeight = Math.max(1, document.documentElement.scrollHeight - window.innerHeight);
@@ -1064,13 +1119,10 @@ pub fn render_viewer_html(
             const bar = document.getElementById('progress-bar');
             if (bar) bar.style.width = pct + '%';
 
-            const hud = document.getElementById('hud');
-            if (hud) {{
-                if (scrollTop > 120 && scrollTop > lastScrollY + 8) {{
-                    hud.classList.add('hidden');
-                }} else if (scrollTop < lastScrollY - 8 || scrollTop <= 80) {{
-                    hud.classList.remove('hidden');
-                }}
+            if (scrollTop > 120 && scrollTop > lastScrollY + 8) {{
+                hud.classList.add('hidden');
+            }} else if (scrollTop < lastScrollY - 8 || scrollTop <= 80) {{
+                hud.classList.remove('hidden');
             }}
             lastScrollY = scrollTop;
         }}, {{ passive: true }});
@@ -1156,6 +1208,8 @@ pub fn render_viewer_html(
 </body>
 </html>"#,
         lang = if es { "es" } else { "en" },
+        page_select_label = if es { "Página" } else { "Page" },
+        view_mode_label = if es { "Modo de lectura" } else { "Reading mode" },
         is_es_js = if es { "true" } else { "false" }
     )
 }

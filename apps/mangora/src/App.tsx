@@ -239,6 +239,17 @@ export function App() {
 
   useScreenWakeLock(activeDownloadCount > 0);
 
+  const activePaletteSpec = appearancePalettes.find((p) => p.id === appearanceConfig.palette);
+  const effectiveThemeMode: ThemeMode = activePaletteSpec?.is_dark ? "ink" : "paper";
+  const nextTheme: ThemeMode = effectiveThemeMode === "paper" ? "ink" : "paper";
+
+  useEffect(() => {
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) {
+      meta.setAttribute("content", effectiveThemeMode === "ink" ? "#0c0c0b" : "#191918");
+    }
+  }, [effectiveThemeMode]);
+
   useEffect(() => {
     backStateRef.current = {
       feedbackOpen,
@@ -478,16 +489,6 @@ export function App() {
     );
   }
 
-  const activePaletteSpec = appearancePalettes.find((p) => p.id === appearanceConfig.palette);
-  const effectiveThemeMode: ThemeMode = activePaletteSpec?.is_dark ? "ink" : "paper";
-  const nextTheme: ThemeMode = effectiveThemeMode === "paper" ? "ink" : "paper";
-
-  useEffect(() => {
-    const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) {
-      meta.setAttribute("content", effectiveThemeMode === "ink" ? "#0c0c0b" : "#191918");
-    }
-  }, [effectiveThemeMode]);
   const handleSwitchThemeMode = async (mode: ThemeMode) => {
     await Promise.all([
       runMutation(() => setThemeMode(mode), true),
