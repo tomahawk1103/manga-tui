@@ -1,5 +1,7 @@
-import { Compass, RotateCcw, X, Zap } from "lucide-react";
+import { useState } from "react";
+import { BarChart3, BookOpen, Compass, RotateCcw, X, Zap } from "lucide-react";
 import { LibraryShelf } from "../components/LibraryShelf";
+import { ReaderMetricsDashboard } from "../features/hito5";
 import type {
   InitialAppState,
   LibraryOverview,
@@ -38,6 +40,7 @@ export function HomeView({
   onDismissSupportBanner,
 }: HomeViewProps) {
   const t = getTranslations(appState.uiLanguage);
+  const [homeTab, setHomeTab] = useState<"shelf" | "stats">("shelf");
   const activeProvider = appState.availableProviders.find((p) => p.id === appState.activeProvider);
   const showSupportMilestoneBanner =
     appState.library.chaptersRead >= 5 &&
@@ -120,6 +123,25 @@ export function HomeView({
               </div>
             </div>
 
+            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[var(--line)] bg-[var(--paper)] px-4 py-3">
+              <div>
+                <div className="font-mono-editorial text-[11px] uppercase text-[var(--muted)]">
+                  {t.home.statPagesRead}
+                </div>
+                <div className="font-display text-2xl text-[var(--red-text)]">
+                  {appState.library.totalPagesRead.toLocaleString()}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHomeTab("stats")}
+                className="editorial-btn-secondary px-3 py-1.5 text-xs"
+              >
+                <BarChart3 className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>{t.home.tabStats}</span>
+              </button>
+            </div>
+
             {appState.library.lastReadTitle && (
               <div className="border-t-2 border-[var(--ink)] bg-[var(--surface)] px-4 py-2.5 text-xs">
                 <span className="font-mono-editorial uppercase text-[var(--muted)]">
@@ -132,18 +154,53 @@ export function HomeView({
         </div>
       </section>
 
-      {/* Interactive Shared SQLite Library */}
-      <LibraryShelf
-        library={library}
-        language={appState.uiLanguage}
-        isLoading={libraryLoading}
-        isMutating={isSaving}
-        favoriteKeys={favoriteKeys}
-        onRefresh={onRefreshLibrary}
-        onToggleFavorite={onToggleFavorite}
-        onOpenSeries={onOpenSeries}
-        onExplore={onSearch}
-      />
+      {/* Library / Local Stats Switcher (Hito 5) */}
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label={t.home.tabShelf}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={homeTab === "shelf"}
+          onClick={() => setHomeTab("shelf")}
+          className={`inline-flex min-h-[44px] cursor-pointer items-center gap-2 border-2 border-[var(--ink)] px-4 py-2 text-xs font-bold ${
+            homeTab === "shelf"
+              ? "bg-[var(--ink)] text-[var(--paper)] shadow-[3px_3px_0_var(--red)]"
+              : "bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--paper)]"
+          }`}
+        >
+          <BookOpen className="h-4 w-4" aria-hidden="true" />
+          <span>{t.home.tabShelf}</span>
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={homeTab === "stats"}
+          onClick={() => setHomeTab("stats")}
+          className={`inline-flex min-h-[44px] cursor-pointer items-center gap-2 border-2 border-[var(--ink)] px-4 py-2 text-xs font-bold ${
+            homeTab === "stats"
+              ? "bg-[var(--ink)] text-[var(--paper)] shadow-[3px_3px_0_var(--red)]"
+              : "bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--paper)]"
+          }`}
+        >
+          <BarChart3 className="h-4 w-4" aria-hidden="true" />
+          <span>{t.home.tabStats}</span>
+        </button>
+      </div>
+
+      {homeTab === "shelf" ? (
+        <LibraryShelf
+          library={library}
+          language={appState.uiLanguage}
+          isLoading={libraryLoading}
+          isMutating={isSaving}
+          favoriteKeys={favoriteKeys}
+          onRefresh={onRefreshLibrary}
+          onToggleFavorite={onToggleFavorite}
+          onOpenSeries={onOpenSeries}
+          onExplore={onSearch}
+        />
+      ) : (
+        <ReaderMetricsDashboard language={appState.uiLanguage} />
+      )}
 
       {/* Subtle permanently-dismissible reading-milestone support banner */}
       {showSupportMilestoneBanner && (

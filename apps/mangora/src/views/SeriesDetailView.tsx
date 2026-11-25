@@ -20,6 +20,7 @@ import {
   Star,
   WifiOff,
 } from "lucide-react";
+import { defaultHito5Bridge } from "../features/hito5";
 import { getTranslations } from "../lib/i18n";
 import { getAniListCommunity, getSeriesDetail } from "../lib/tauri";
 import type {
@@ -227,6 +228,19 @@ export function SeriesDetailView({
       active = false;
     };
   }, [downloadCompletedTick, selection, selectedChapterLang, chapterOrder, page]);
+
+  useEffect(() => {
+    if (!detail || !detail.genres || detail.genres.length === 0) return;
+    void defaultHito5Bridge
+      .saveMangaGenres({
+        manga_id: detail.id,
+        provider: detail.provider,
+        genres: detail.genres,
+      })
+      .catch(() => {
+        // Best-effort local genre indexing for ReaderMetricsDashboard
+      });
+  }, [detail]);
 
   const communityQueryTitle = detail?.title?.trim() || selection.title.trim();
 

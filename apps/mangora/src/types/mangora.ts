@@ -27,6 +27,7 @@ export interface LibraryDetection {
   hasExistingData: boolean;
   libraryMangas: number;
   chaptersRead: number;
+  totalPagesRead: number;
   favorites: number;
   downloadedChapters: number;
   offlineSeriesCount: number;

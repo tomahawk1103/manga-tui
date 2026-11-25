@@ -206,6 +206,7 @@ pub struct OfflineCatalogMetadata {
 pub struct HomeStats {
     pub library_mangas: u32,
     pub chapters_read: u32,
+    pub total_pages_read: u32,
     pub downloaded_chapters: u32,
     pub favorites: u32,
     pub last_read_title: Option<String>,
@@ -1754,6 +1755,10 @@ impl<'a> Database<'a> {
         let chapters_read: u32 = self
             .connection
             .query_row("SELECT COUNT(*) FROM chapters WHERE is_read = 1", [], |row| row.get(0))?;
+        let total_pages_read: u32 = self
+            .connection
+            .query_row("SELECT COALESCE(SUM(pages_read), 0) FROM reading_sessions", [], |row| row.get(0))
+            .unwrap_or(0);
         let downloaded_chapters: u32 =
             self.connection
                 .query_row("SELECT COUNT(*) FROM chapters WHERE is_downloaded = 1", [], |row| row.get(0))?;
@@ -1776,6 +1781,7 @@ impl<'a> Database<'a> {
         Ok(HomeStats {
             library_mangas,
             chapters_read,
+            total_pages_read,
             downloaded_chapters,
             favorites,
             last_read_title,
@@ -3369,12 +3375,22 @@ mod test {
             provider: MangaProviders::Mangadex,
         })?;
         database.toggle_favorite("berserk", MangaProviders::Mangadex, "Berserk")?;
+        database.record_reading_session(ReadingSessionInput {
+            manga_id: "berserk",
+            provider: MangaProviders::Mangadex,
+            chapter_id: "berserk-1",
+            duration_seconds: 180,
+            pages_read: 42,
+            completed_chapter: true,
+            started_at: None,
+        })?;
         // Ensure deterministic ordering on last_read inside an in-memory fast test.
         connection.execute("UPDATE mangas SET last_read = '2026-11-15 10:00:00' WHERE id = 'vagabond'", [])?;
         connection.execute("UPDATE mangas SET last_read = '2026-11-15 12:00:00' WHERE id = 'berserk'", [])?;
 
         let stats = database.get_home_stats()?;
         assert_eq!(stats.chapters_read, 3);
+        assert_eq!(stats.total_pages_read, 42);
         assert_eq!(stats.downloaded_chapters, 1);
         assert_eq!(stats.favorites, 1);
         assert_eq!(stats.library_mangas, 2);

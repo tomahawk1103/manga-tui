@@ -1059,6 +1059,7 @@ mod tests {
         home.stats = HomeStats {
             library_mangas: 14,
             chapters_read: 1_240,
+            total_pages_read: 24_800,
             downloaded_chapters: 38,
             favorites: 7,
             last_read_title: Some("Berserk: Golden Age Arc Edition".to_string()),

@@ -151,8 +151,11 @@ export interface Translations {
     ctaTour: string;
     statSeries: string;
     statChaptersRead: string;
+    statPagesRead: string;
     statFavorites: string;
     statOfflineSeries: string;
+    tabShelf: string;
+    tabStats: string;
     lastReadLabel: string;
     activeProfileTitle: string;
     activeProviderLabel: string;
@@ -611,8 +614,11 @@ const ES: Translations = {
     ctaTour: "Ver guía rápida",
     statSeries: "Series",
     statChaptersRead: "Capítulos leídos",
+    statPagesRead: "Páginas totales leídas",
     statFavorites: "Favoritos",
     statOfflineSeries: "Series offline",
+    tabShelf: "Biblioteca",
+    tabStats: "Estadísticas 100 % locales",
     lastReadLabel: "Última lectura",
     activeProfileTitle: "Perfil inicial configurado",
     activeProviderLabel: "Servidor principal",
@@ -1133,8 +1139,11 @@ const EN: Translations = {
     ctaTour: "Open quick tour",
     statSeries: "Series",
     statChaptersRead: "Chapters read",
+    statPagesRead: "Total pages read",
     statFavorites: "Favorites",
     statOfflineSeries: "Offline series",
+    tabShelf: "Library",
+    tabStats: "100% local stats",
     lastReadLabel: "Last read",
     activeProfileTitle: "Starter profile configured",
     activeProviderLabel: "Default source",

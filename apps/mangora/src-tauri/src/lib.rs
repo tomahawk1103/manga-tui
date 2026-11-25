@@ -2,6 +2,7 @@ pub mod anilist;
 pub mod commands;
 pub mod downloads;
 pub mod feedback;
+pub mod hito5;
 pub mod integrations;
 pub mod reader;
 pub mod state;
@@ -97,6 +98,13 @@ pub fn run() {
             commands::submit_feedback,
             commands::dismiss_support_banner,
             commands::open_manga_tui_desktop,
+            hito5::mangora_get_appearance_catalog,
+            hito5::mangora_get_appearance_config,
+            hito5::mangora_save_appearance_config,
+            hito5::mangora_record_reading_session,
+            hito5::mangora_save_manga_genres,
+            hito5::mangora_get_extended_reader_metrics,
+            hito5::mangora_export_stats_card_svg,
         ])
         .run(tauri::generate_context!())
         .expect("error while running mangora tauri application");

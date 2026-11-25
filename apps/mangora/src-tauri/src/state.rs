@@ -119,6 +119,7 @@ pub struct LibraryDetection {
     pub has_existing_data: bool,
     pub library_mangas: u32,
     pub chapters_read: u32,
+    pub total_pages_read: u32,
     pub favorites: u32,
     pub downloaded_chapters: u32,
     pub offline_series_count: usize,
@@ -821,6 +822,7 @@ pub fn detect_library_in_paths(db_path: &Path, downloads_dir: &Path) -> LibraryD
 
     let has_existing_data = stats.library_mangas > 0
         || stats.chapters_read > 0
+        || stats.total_pages_read > 0
         || stats.favorites > 0
         || stats.downloaded_chapters > 0
         || offline_series_count > 0;
@@ -829,6 +831,7 @@ pub fn detect_library_in_paths(db_path: &Path, downloads_dir: &Path) -> LibraryD
         has_existing_data,
         library_mangas: stats.library_mangas,
         chapters_read: stats.chapters_read,
+        total_pages_read: stats.total_pages_read,
         favorites: stats.favorites,
         downloaded_chapters: stats.downloaded_chapters,
         offline_series_count,

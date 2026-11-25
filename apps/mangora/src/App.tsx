@@ -4,6 +4,7 @@ import { FeedbackModal } from "./components/FeedbackModal";
 import { OnboardingWizard } from "./components/OnboardingWizard";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
+import { useMangoraAppearance } from "./features/hito5";
 import { getTranslations } from "./lib/i18n";
 import {
   controlDownloadQueue,
@@ -77,6 +78,7 @@ export function App() {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
   const uiLangRef = useRef<"es" | "en">("es");
+  const { config: appearanceConfig, palettes: appearancePalettes, updateAppearance } = useMangoraAppearance();
 
   const loadLibrary = useCallback(async (search?: string) => {
     setLibraryLoading(true);
@@ -203,12 +205,7 @@ export function App() {
   useEffect(() => {
     if (!appState) return;
     uiLangRef.current = appState.uiLanguage;
-    document.documentElement.dataset.theme = appState.themeMode;
     document.documentElement.lang = appState.uiLanguage;
-    const themeColorMeta = document.querySelector('meta[name="theme-color"]');
-    if (themeColorMeta) {
-      themeColorMeta.setAttribute("content", appState.themeMode === "ink" ? "#141413" : "#f8f7f1");
-    }
   }, [appState]);
 
   const activeDownloadCount = useMemo(() => {
@@ -387,7 +384,15 @@ export function App() {
     );
   }
 
-  const nextTheme: ThemeMode = appState.themeMode === "paper" ? "ink" : "paper";
+  const activePaletteSpec = appearancePalettes.find((p) => p.id === appearanceConfig.palette);
+  const effectiveThemeMode: ThemeMode = activePaletteSpec?.is_dark ? "ink" : "paper";
+  const nextTheme: ThemeMode = effectiveThemeMode === "paper" ? "ink" : "paper";
+  const handleSwitchThemeMode = async (mode: ThemeMode) => {
+    await Promise.all([
+      runMutation(() => setThemeMode(mode), true),
+      updateAppearance({ palette: mode === "ink" ? "night_ink" : "classic_paper" }),
+    ]);
+  };
   const resolvedSupportConfig =
     integrationsOverview?.supportConfig ?? defaultBrowserIntegrationsOverview().supportConfig;
 
@@ -410,8 +415,8 @@ export function App() {
       <Sidebar
         activeSection={activeSection}
         onSelectSection={navigate}
-        themeMode={appState.themeMode}
-        onToggleTheme={() => void runMutation(() => setThemeMode(nextTheme), true)}
+        themeMode={effectiveThemeMode}
+        onToggleTheme={() => void handleSwitchThemeMode(nextTheme)}
         onOpenFeedback={() => setFeedbackOpen(true)}
         uiLanguage={appState.uiLanguage}
         appVersion={appState.appVersion}
@@ -422,10 +427,10 @@ export function App() {
         <TopBar
           activeSection={activeSection}
           uiLanguage={appState.uiLanguage}
-          themeMode={appState.themeMode}
+          themeMode={effectiveThemeMode}
           activeProvider={appState.activeProvider}
           availableProviders={appState.availableProviders}
-          onToggleTheme={() => void runMutation(() => setThemeMode(nextTheme), true)}
+          onToggleTheme={() => void handleSwitchThemeMode(nextTheme)}
           onChangeLanguage={(lang) => void runMutation(() => setUiLanguage(lang), true)}
         />
 
@@ -537,7 +542,7 @@ export function App() {
                     focusGenres={navigationTarget === "genres"}
                     isSaving={isSaving}
                     onChangeLanguage={(lang) => runMutation(() => setUiLanguage(lang), true)}
-                    onChangeTheme={(mode) => runMutation(() => setThemeMode(mode), true)}
+                    onChangeTheme={(mode) => handleSwitchThemeMode(mode)}
                     onChangeProvider={(provider) =>
                       runMutation(() => setDefaultProvider(provider), true)
                     }

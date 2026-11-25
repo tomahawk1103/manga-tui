@@ -53,6 +53,15 @@ export function ReaderMetricsDashboard({ language = "es", bridge }: ReaderMetric
     return Math.max(1, ...metrics.daily_activity_last_14_days.map((d) => d.chapters_read));
   }, [metrics]);
 
+  const pagesToday = useMemo(() => {
+    const days = metrics?.daily_activity_last_14_days ?? [];
+    return days.length > 0 ? days[days.length - 1].pages_read : 0;
+  }, [metrics]);
+
+  const pages14d = useMemo(() => {
+    return (metrics?.daily_activity_last_14_days ?? []).reduce((sum, day) => sum + day.pages_read, 0);
+  }, [metrics]);
+
   return (
     <section className="mangora-hito5-root mangora-card" aria-labelledby="mangora-metrics-title">
       <div
@@ -120,14 +129,25 @@ export function ReaderMetricsDashboard({ language = "es", bridge }: ReaderMetric
         </article>
 
         <article className="mangora-surface-card">
+          <div className="mangora-mono-meta">{labels.totalPagesLabel}</div>
+          <div style={{ fontFamily: "var(--display)", fontSize: "2.25rem", fontWeight: 900 }}>
+            {metrics?.total_pages_read ?? 0}
+          </div>
+          <div className="mangora-mono-meta">
+            {language === "en"
+              ? `Today ${pagesToday} · 14d ${pages14d}`
+              : `Hoy ${pagesToday} · 14d ${pages14d}`}
+          </div>
+        </article>
+
+        <article className="mangora-surface-card">
           <div className="mangora-mono-meta">{labels.readingTimeLabel}</div>
           <div style={{ fontFamily: "var(--display)", fontSize: "2.25rem", fontWeight: 900 }}>
             {formatDurationMinutes(metrics?.estimated_total_reading_minutes ?? 0)}
           </div>
           <div className="mangora-mono-meta">
             {(metrics?.average_minutes_per_chapter ?? 0).toFixed(1)}{" "}
-            {language === "en" ? "min/ch" : "min/cap"} · {metrics?.total_pages_read ?? 0}{" "}
-            {language === "en" ? "pages" : "pág."}
+            {language === "en" ? "min/ch" : "min/cap"}
           </div>
         </article>
 

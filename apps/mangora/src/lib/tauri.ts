@@ -156,6 +156,7 @@ function defaultBrowserState(): InitialAppState {
       hasExistingData: false,
       libraryMangas: 0,
       chaptersRead: 0,
+      totalPagesRead: 0,
       favorites: 0,
       downloadedChapters: 0,
       offlineSeriesCount: 0,

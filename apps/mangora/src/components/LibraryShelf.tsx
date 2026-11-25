@@ -1,5 +1,11 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { BookOpen, Bookmark, Compass, HardDrive, Heart, RefreshCw, Search } from "lucide-react";
+import {
+  CollectionDisplayToolbar,
+  type LibrarySortBy,
+  sortLibraryItems,
+  useMangoraAppearance,
+} from "../features/hito5";
 import { getTranslations } from "../lib/i18n";
 import {
   type LibraryEntry,
@@ -36,6 +42,7 @@ export function LibraryShelf({
   onExplore,
 }: LibraryShelfProps) {
   const t = getTranslations(language).library;
+  const { config: appearance, updateAppearance } = useMangoraAppearance();
   const [activeTab, setActiveTab] = useState<LibraryTab>("continue");
   const [filterText, setFilterText] = useState("");
 
@@ -54,9 +61,18 @@ export function LibraryShelf({
         : library.recentHistory;
 
   const needle = filterText.trim().toLowerCase();
-  const visibleItems = needle
-    ? rawItems.filter((item) => item.title.toLowerCase().includes(needle))
-    : rawItems;
+  const visibleItems = useMemo(() => {
+    const filtered = needle
+      ? rawItems.filter((item) => item.title.toLowerCase().includes(needle))
+      : rawItems;
+    const mapped = filtered.map((item) => ({
+      ...item,
+      last_read: item.lastRead,
+      chapters_read: item.totalReadCount,
+      is_favorite: item.isFavorite || favoriteKeys.has(libraryKey(item.id, item.provider)),
+    }));
+    return sortLibraryItems(mapped, appearance.library_sort);
+  }, [rawItems, needle, favoriteKeys, appearance.library_sort]);
 
   const emptyCopy = needle
     ? t.emptyFilter
@@ -135,6 +151,19 @@ export function LibraryShelf({
         </label>
       </div>
 
+      {/* Hito 5 Display Toolbar */}
+      <CollectionDisplayToolbar
+        mode="library"
+        language={language}
+        density={appearance.library_density}
+        onDensityChange={(library_density) => void updateAppearance({ library_density })}
+        viewMode={appearance.library_view_mode}
+        onViewModeChange={(library_view_mode) => void updateAppearance({ library_view_mode })}
+        sortBy={appearance.library_sort}
+        onSortChange={(sort) => void updateAppearance({ library_sort: sort as LibrarySortBy })}
+        itemCount={visibleItems.length}
+      />
+
       {isLoading && !library ? (
         <div className="editorial-card-muted p-6 font-mono-editorial text-xs text-[var(--muted)]">
           {t.loading}
@@ -152,7 +181,13 @@ export function LibraryShelf({
           </button>
         </div>
       ) : (
-        <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
+        <ul
+          className={
+            appearance.library_view_mode === "list"
+              ? "mangora-library-list"
+              : "mangora-library-grid"
+          }
+        >
           {visibleItems.map((entry) => {
             const isFav =
               entry.isFavorite || favoriteKeys.has(libraryKey(entry.id, entry.provider));

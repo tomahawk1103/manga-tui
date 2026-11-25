@@ -488,6 +488,7 @@ mod tests {
         assert!(svg_es.contains("mangora-screentone"));
         assert!(svg_es.contains("Alvaro &lt;Reader&gt;"));
         assert!(svg_es.contains("Berserk &amp; &lt;Friends&gt;"));
+        assert!(svg_es.contains("840 pág."));
         assert!(svg_es.contains("100 % local en dispositivo"));
 
         let svg_night_en = render_editorial_stats_card_svg(&metrics, &EditorialStatsCardOptions {
@@ -499,6 +500,7 @@ mod tests {
         assert!(svg_night_en.contains("#141413"));
         assert!(svg_night_en.contains("#ff8a76"));
         assert!(!svg_night_en.contains("mangora-screentone"));
+        assert!(svg_night_en.contains("840 pages"));
         assert!(svg_night_en.contains("100 % on-device local"));
     }
 

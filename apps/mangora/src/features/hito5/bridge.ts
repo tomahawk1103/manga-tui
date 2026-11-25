@@ -181,7 +181,7 @@ function buildFallbackStatsCardSvg(
     `  <rect x="36" y="36" width="1120" height="44" fill="${spec.reader_bar_bg}"/>`,
     `  <text x="60" y="63" font-family="'Cascadia Mono', Consolas, monospace" font-size="15" font-weight="700" fill="${spec.reader_bar_fg}">${barText}</text>`,
     `  <text x="64" y="160" font-family="'Arial Black', Arial, sans-serif" font-size="38" font-weight="900" fill="${spec.ink}">${title} <tspan fill="${spec.red}">${accent}</tspan></text>`,
-    `  <text x="64" y="245" font-family="'Arial Black', Arial, sans-serif" font-size="32" font-weight="900" fill="${spec.ink}">${metrics.total_chapters_read} ${isEs ? "capítulos" : "chapters"} · ${metrics.estimated_total_reading_minutes} min · ${metrics.current_streak_days}d</text>`,
+    `  <text x="64" y="245" font-family="'Arial Black', Arial, sans-serif" font-size="32" font-weight="900" fill="${spec.ink}">${metrics.total_chapters_read} ${isEs ? "capítulos" : "chapters"} · ${metrics.total_pages_read} ${isEs ? "páginas" : "pages"} · ${metrics.estimated_total_reading_minutes} min</text>`,
     `  <text x="64" y="604" font-family="'Cascadia Mono', Consolas, monospace" font-size="12" font-weight="700" fill="${spec.muted}">${escapeXml(footer)}</text>`,
     `</svg>`,
   ].join("\n");

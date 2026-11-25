@@ -16,7 +16,7 @@ flowchart LR
     H2["Hito 2<br/>Explorar + Biblioteca + Ficha AniList<br/>En validación"]
     H3["Hito 3<br/>Lector HD Nativo + Descargas Offline<br/>En validación"]
     H4["Hito 4<br/>Ajustes + Buzón + Monster 2€ + Escritorio/Android/iOS<br/>En validación"]
-    H5["Hito 5 (v1.1+)<br/>Personalización Visual + Métricas Locales<br/>Integración pendiente"]
+    H5["Hito 5 (v1.1+)<br/>Personalización Visual + Métricas Locales<br/>En validación"]
 
     Base --> H1 --> H2 --> H3 --> H4 --> H5
 ```
@@ -27,7 +27,7 @@ flowchart LR
 | **Hito 2** | En validación | Explorar/Buscar con portadas HD y bloque *"Para ti"*, Biblioteca compartida SQLite y Ficha de serie completa con capítulos, AniList y Discord |
 | **Hito 3** | En validación | Lector HD nativo táctil y de escritorio (online + 100 % offline en CBZ/RAW/EPUB/PDF) y gestor de cola de descargas en tiempo real |
 | **Hito 4** | En validación | Ajustes simples (Drive/Carpeta Nube/AniList/MAL/Updates + acceso a `manga-tui`), Buzón seguro (`feedback.rs`), *"¿Me invitas a un Monster? ⚡ 2 €"* + banner descartable y empaquetado Windows/Android/iOS |
-| **Hito 5 (v1.1+)** | Módulos en `MANGORA`, integración pendiente | Personalización visual avanzada de temas/tarjetas y métricas locales ampliadas del lector |
+| **Hito 5 (v1.1+)** | En validación | Personalización visual avanzada (5 paletas, densidad/vista/ordenación y 7 fondos del lector), contador global de páginas totales leídas y métricas locales con tarjeta SVG/PNG |
 
 ---
 
@@ -43,7 +43,7 @@ El trabajo de Mangora está reunido en `manga-tui/`, rama `MANGORA`. La aplicaci
 | Biblioteca y ficha de serie | Biblioteca visual interactiva conectada a `history/manga-tui-history.db` (`get_library_overview`, `toggle_library_favorite`) con pestañas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente**, **Ficha de serie completa** (`SeriesDetailView`) con capítulos online/offline, selección múltiple de descargas y **Lector HD nativo** (`ReaderView` + protocolo `mangora://`: Cascada, Página única, Doble página, RTL/LTR, zoom/gestos táctiles, marcadores SQLite y lectura local CBZ/RAW/EPUB/PDF). | Validación manual con red real en escritorio y móvil de todos los modos del lector y descargas en vivo. |
 | Descargas y cola | Gestor conectado a `ManagedDownloadQueue` (`downloads.rs`, eventos `mangora://download-queue` y `mangora://download-chapter-finished`), selector de formato (`CBZ`/`PDF`/`EPUB`/`RAW`), controles por tarea/globales y estantería 100 % offline (`list_offline_library`) con apertura directa a ficha/lector. | Validación manual de colas reales y almacenamiento sandbox en Android/iOS. |
 | Ajustes y apoyo | Cambio de idioma, tema, proveedor y géneros; Google Drive (`cloud.rs` loopback/deep-link) + carpeta sincronizada local, trackers AniList y MyAnimeList (`mal.rs`), comprobador de actualizaciones (`mangora-v*`), Buzón de Opiniones seguro (`feedback.rs` sin webhooks embebidos), tarjeta *"¿Me invitas a un Monster? ⚡ 2 €"*, banner descartable en Inicio, Agradecimientos y botón **Abrir manga-tui** en escritorio. | Validación manual con cuentas OAuth reales, empaquetado Windows con NSIS/WiX y ejecución de `mangora-release.yml` con Android NDK y Xcode. |
-| Apariencia y métricas | Módulos, migración y componentes del hito 5 presentes en el repositorio. | Registrar sus comandos Tauri e incorporar sus componentes a las pantallas. |
+| Apariencia y métricas | Integrado en vivo: `MangoraAppearanceProvider` con 5 paletas editoriales (`AppearanceCustomizerPanel` en Ajustes), densidad/vista/ordenación (`CollectionDisplayToolbar` en Biblioteca y Explorar), 7 fondos de lectura + tracker de sesiones (`useReadingSessionTracker`) y géneros (`saveMangaGenres`), contador de **páginas totales leídas** (`HomeStats::total_pages_read`, `HomeView` y KPI propio) y panel `ReaderMetricsDashboard` con tarjeta exportable SVG/PNG 2x (`hito5.rs`). | Validación manual en vivo en `tauri dev` y móvil. |
 
 Para probar la app de escritorio en Windows, ejecutar `npm.cmd install` y `npm.cmd run tauri dev` desde `apps/mangora/`. `npm.cmd run dev` abre la vista previa web en `http://localhost:1420`; la búsqueda del catálogo requiere Tauri. La compilación de Vite, `cargo check --workspace --locked --offline` y las pruebas activas del workspace pasaron. En Chromium se verificaron el tour, el reintento tras un fallo de guardado y la búsqueda con respuestas simuladas. La prueba de red con MangaDex falló por falta de conexión en el entorno de pruebas, y allí la ventana nativa devolvió «Acceso denegado».
 
@@ -277,7 +277,9 @@ Pendiente de validación manual en una sesión nativa con red real, cuentas OAut
 
 ## Hito 5 (v1.1+) · Personalización Visual Avanzada y Métricas del Lector
 
-- **Estado:** Módulos presentes en `MANGORA`. Falta conectar los comandos Tauri y los componentes a las pantallas de la app.
+- **Estado:** `En validación`
+
+Hito 5 está completamente conectado en `apps/mangora/` (`src-tauri/src/hito5.rs` + `src/main.tsx`, `App.tsx`, `HomeView.tsx`, `SettingsView.tsx`, `LibraryShelf.tsx`, `CatalogSearch.tsx`, `SeriesDetailView.tsx`, `ReaderView.tsx`), incluyendo el contador agregado de **páginas totales leídas** en `HomeStats::total_pages_read`, `LibraryDetection::total_pages_read`, el hero de `HomeView`, `ReaderMetricsDashboard` y la tarjeta SVG exportable.
 
 ### Prompt sugerido para nuevo hilo
 
@@ -299,7 +301,7 @@ Pendiente de validación manual en una sesión nativa con red real, cuentas OAut
 
 ### Criterios de aceptación
 
-- [ ] Los temas y ajustes de densidad se aplican en vivo y persisten entre reinicios.
+- [x] Los temas y ajustes de densidad se aplican en vivo y persisten entre reinicios.
 - [x] Las métricas se calculan y almacenan 100 % en local sin telemetría oculta ni envío externo de hábitos de lectura.
 - [x] Cualquier cambio en la base de datos SQLite conserva compatibilidad total con `manga-tui` y pasa las pruebas de migración y `cargo test`.
 

@@ -209,6 +209,7 @@ export function applyAppearanceToDocument(
   if (!el) return;
 
   const spec = getPaletteSpec(config.palette, catalog);
+  el.dataset.theme = spec.is_dark ? "ink" : "paper";
   el.dataset.mangoraPalette = config.palette;
   el.dataset.mangoraLibraryDensity = config.library_density;
   el.dataset.mangoraExploreDensity = config.explore_density;
@@ -218,16 +219,28 @@ export function applyAppearanceToDocument(
 
   el.style.setProperty("--paper", spec.paper);
   el.style.setProperty("--surface", spec.surface);
+  el.style.setProperty("--surface-elevated", spec.is_dark ? spec.surface : "#ffffff");
   el.style.setProperty("--ink", spec.ink);
   el.style.setProperty("--red", spec.red);
   el.style.setProperty("--red-hover", spec.red_hover);
+  el.style.setProperty("--red-text", spec.red);
   el.style.setProperty("--muted", spec.muted);
   el.style.setProperty("--line", spec.line);
   el.style.setProperty("--focus-ring", spec.focus);
   el.style.setProperty("--reader-bar-bg", spec.reader_bar_bg);
   el.style.setProperty("--reader-bar-fg", spec.reader_bar_fg);
+  el.style.setProperty("--bar-bg", spec.reader_bar_bg);
+  el.style.setProperty("--bar-fg", spec.reader_bar_fg);
+  el.style.setProperty("--shadow-color", spec.is_dark ? "#000000" : spec.ink);
   el.style.setProperty("--button-fg", spec.is_dark ? spec.paper : "#ffffff");
   el.style.colorScheme = spec.is_dark ? "dark" : "light";
+
+  if (typeof document !== "undefined") {
+    const metaThemeColor = document.querySelector('meta[name="theme-color"]');
+    if (metaThemeColor) {
+      metaThemeColor.setAttribute("content", spec.paper);
+    }
+  }
 }
 
 export interface Hito5Labels {
@@ -262,6 +275,7 @@ export interface Hito5Labels {
   aliasPlaceholder: string;
   aliasLabel: string;
   chaptersReadLabel: string;
+  totalPagesLabel: string;
   readingTimeLabel: string;
   streakLabel: string;
   librarySummaryLabel: string;
@@ -321,6 +335,7 @@ const LABELS_ES: Hito5Labels = {
   aliasLabel: "Firma / Alias opcional en la tarjeta",
   aliasPlaceholder: "Ej. Lector de domingo",
   chaptersReadLabel: "Capítulos leídos",
+  totalPagesLabel: "Páginas totales leídas",
   readingTimeLabel: "Tiempo estimado",
   streakLabel: "Racha de días",
   librarySummaryLabel: "Series activas",
@@ -380,6 +395,7 @@ const LABELS_EN: Hito5Labels = {
   aliasLabel: "Optional reader alias on card",
   aliasPlaceholder: "e.g. Weekend Reader",
   chaptersReadLabel: "Chapters read",
+  totalPagesLabel: "Total pages read",
   readingTimeLabel: "Estimated time",
   streakLabel: "Reading streak",
   librarySummaryLabel: "Active series",

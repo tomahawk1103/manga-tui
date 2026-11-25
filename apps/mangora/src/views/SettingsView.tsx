@@ -13,6 +13,7 @@ import {
   Terminal,
   Unlink,
 } from "lucide-react";
+import { AppearanceCustomizerPanel } from "../features/hito5";
 import type {
   InitialAppState,
   IntegrationsOverviewDto,
@@ -419,6 +420,9 @@ export function SettingsView({
           </div>
         </div>
       </section>
+
+      {/* Hito 5 Visual Appearance Customizer */}
+      <AppearanceCustomizerPanel language={appState.uiLanguage} />
 
       {/* Provider & Genres */}
       <div className="grid gap-6 lg:grid-cols-2">

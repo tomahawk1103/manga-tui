@@ -1,5 +1,11 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ArrowRight, Heart } from "lucide-react";
+import {
+  CollectionDisplayToolbar,
+  type ExploreSortBy,
+  sortExploreItems,
+  useMangoraAppearance,
+} from "../features/hito5";
 import { getTranslations } from "../lib/i18n";
 import { isTauriRuntime, searchCatalog, type CatalogPage } from "../lib/tauri";
 import {
@@ -39,6 +45,7 @@ export function CatalogSearch({
 }: CatalogSearchProps) {
   const translations = getTranslations(language);
   const t = translations.explore;
+  const { config: appearance, updateAppearance } = useMangoraAppearance();
   const searchInput = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState("");
   const [request, setRequest] = useState<SearchRequest | null>(null);
@@ -70,7 +77,12 @@ export function CatalogSearch({
   const items = result?.items ?? [];
   const genres = [...new Set(items.flatMap(item => item.genres))].sort();
   const languages = [...new Set(items.flatMap(item => item.languages))].sort();
-  const visible = items.filter(item => (!genre || item.genres.includes(genre)) && (!lang || item.languages.includes(lang)));
+  const visible = useMemo(() => {
+    const filtered = items.filter(
+      (item) => (!genre || item.genres.includes(genre)) && (!lang || item.languages.includes(lang)),
+    );
+    return sortExploreItems(filtered, appearance.explore_sort);
+  }, [items, genre, lang, appearance.explore_sort]);
   return (
     <section className="space-y-4" aria-label={t.search}>
       <form className="flex flex-wrap items-end gap-3" onSubmit={event => {
@@ -115,8 +127,17 @@ export function CatalogSearch({
             {genres.map(value => <option key={value}>{value}</option>)}
           </select></label>}
         </div>
+        <CollectionDisplayToolbar
+          mode="explore"
+          language={language}
+          density={appearance.explore_density}
+          onDensityChange={(explore_density) => void updateAppearance({ explore_density })}
+          sortBy={appearance.explore_sort}
+          onSortChange={(sort) => void updateAppearance({ explore_sort: sort as ExploreSortBy })}
+          itemCount={visible.length}
+        />
         {!visible.length && <p role="status">{t.empty}</p>}
-        <ul className="grid grid-cols-2 gap-4 md:grid-cols-4">
+        <ul className="mangora-explore-grid">
           {visible.map((item) => {
             const isFavorite = favoriteKeys?.has(libraryKey(item.id, provider.id)) ?? false;
             const seriesPayload: SeriesSelection = {

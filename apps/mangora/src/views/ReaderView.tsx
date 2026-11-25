@@ -22,6 +22,13 @@ import {
   ZoomIn,
   ZoomOut,
 } from "lucide-react";
+import {
+  getHito5Labels,
+  getReaderBackgroundClass,
+  type ReaderBackground,
+  useMangoraAppearance,
+  useReadingSessionTracker,
+} from "../features/hito5";
 import { getTranslations } from "../lib/i18n";
 import {
   buildReaderPageUrl,
@@ -82,6 +89,8 @@ export function ReaderView({
   onNotify,
 }: ReaderViewProps) {
   const t = getTranslations(language).reader;
+  const hito5Labels = getHito5Labels(language);
+  const { config: appearance, readerBackgrounds, updateAppearance } = useMangoraAppearance();
 
   const [activeRequest, setActiveRequest] = useState<OpenReaderChapterRequest>(request);
   const [session, setSession] = useState<ReaderSessionResponse | null>(null);
@@ -117,6 +126,15 @@ export function ReaderView({
   useEffect(() => {
     latestPageRef.current = currentPage;
   }, [currentPage]);
+
+  useReadingSessionTracker({
+    mangaId: session?.mangaId ?? "",
+    provider: session?.provider ?? "",
+    chapterId: session?.chapterId ?? "",
+    currentPage: session ? currentPage + 1 : 0,
+    totalPages: session?.pageCount ?? 0,
+    enabled: Boolean(session && !isLoading && !loadError),
+  });
 
   const flushProgress = useCallback(
     async (targetSession: ReaderSessionResponse | null, pageIdx: number) => {
@@ -595,9 +613,12 @@ export function ReaderView({
     );
   };
 
-  const canvasBgClass = prefs.darkCanvas
-    ? "bg-[#0e0e0d] text-[#f8f7f1]"
-    : "bg-[var(--paper)] text-[var(--ink)]";
+  const canvasBgClass =
+    appearance.reader_background !== "theme_default"
+      ? getReaderBackgroundClass(appearance.reader_background)
+      : prefs.darkCanvas
+        ? "bg-[#0e0e0d] text-[#f8f7f1]"
+        : "bg-[var(--paper)] text-[var(--ink)]";
 
   const showBars = hudVisible || prefs.pinToolbars || settingsOpen || isLoading || Boolean(loadError);
 
@@ -829,6 +850,23 @@ export function ReaderView({
                     />
                   </label>
                 ) : null}
+
+                <label className="flex min-h-[36px] flex-col gap-1 border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-bold">
+                  <span className="text-[10px] uppercase text-[var(--muted)]">{hito5Labels.readerSection}</span>
+                  <select
+                    value={appearance.reader_background}
+                    onChange={(e) =>
+                      void updateAppearance({ reader_background: e.target.value as ReaderBackground })
+                    }
+                    className="border border-[var(--ink)] bg-[var(--surface)] px-1.5 py-1 text-xs font-bold text-[var(--ink)]"
+                  >
+                    {readerBackgrounds.map((bg) => (
+                      <option key={bg.id} value={bg.id}>
+                        {language === "en" ? bg.name_en : bg.name_es}
+                      </option>
+                    ))}
+                  </select>
+                </label>
               </div>
             </div>
 
