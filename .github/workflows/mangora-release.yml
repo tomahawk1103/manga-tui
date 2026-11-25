@@ -139,10 +139,17 @@ jobs:
 
           KEYSTORE_PATH="$RUNNER_TEMP/mangora-release.jks"
           if [ -n "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > "$KEYSTORE_PATH"
+            printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE_PATH"
+            KS_SIZE=$(wc -c < "$KEYSTORE_PATH")
+            echo "Keystore decodificado desde secret: ${KS_SIZE} bytes"
+            if [ "$KS_SIZE" -lt 1000 ]; then
+              echo "::error::ANDROID_KEYSTORE_BASE64 parece truncado (${KS_SIZE} bytes). Vuelve a copiarlo completo al portapapeles con PowerShell Set-Clipboard." >&2
+              exit 1
+            fi
             KS_PASS="${ANDROID_KEYSTORE_PASSWORD}"
             KS_ALIAS="${ANDROID_KEY_ALIAS:-mangora}"
             KEY_PASS="${ANDROID_KEY_PASSWORD:-$ANDROID_KEYSTORE_PASSWORD}"
+            keytool -list -keystore "$KEYSTORE_PATH" -alias "$KS_ALIAS" -storepass "$KS_PASS" >/dev/null
           else
             echo "::warning::ANDROID_KEYSTORE_BASE64 no configurado; generando keystore temporal de CI (las actualizaciones futuras sobre este APK requeriran desinstalar si cambia la firma)."
             {
