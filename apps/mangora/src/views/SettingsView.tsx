@@ -1152,8 +1152,7 @@ export function SettingsView({
 
               {updateInfo && (() => {
                 const showAndroidApk = Boolean(updateInfo.androidApkUrl && appState.platform === "android");
-                const showIosIpa = Boolean(updateInfo.iosIpaUrl && appState.platform === "ios");
-                const hasDirectMobileDownload = showAndroidApk || showIosIpa;
+                const hasDirectMobileDownload = showAndroidApk;
                 return (
                   <div className="editorial-callout space-y-2 p-4 text-xs">
                     <div className="font-bold">
@@ -1173,16 +1172,6 @@ export function SettingsView({
                         >
                           <Download className="h-3.5 w-3.5" aria-hidden="true" />
                           <span>{t.settings.updatesDownloadApkBtn}</span>
-                        </button>
-                      )}
-                      {showIosIpa && updateInfo.iosIpaUrl && (
-                        <button
-                          type="button"
-                          onClick={() => void onOpenExternal(updateInfo.iosIpaUrl!)}
-                          className="editorial-btn-primary text-xs"
-                        >
-                          <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                          <span>{t.settings.updatesDownloadIpaBtn}</span>
                         </button>
                       )}
                       <button

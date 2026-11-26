@@ -3,8 +3,8 @@
 //! Provides cross-platform synchronization of reading history, bookmarks, favorites,
 //! Plan to Read lists, and downloaded chapters (`.cbz`, `.epub`, `.pdf`) using:
 //!
-//! 1. **Google Drive REST API v3** with OAuth 2.0 + PKCE (compatible with Windows, Linux, macOS, and future Android / iOS builds
-//!    sharing the Rust core).
+//! 1. **Google Drive REST API v3** with OAuth 2.0 + PKCE (compatible with Windows, Linux, macOS, and Android builds sharing the
+//!    Rust core).
 //! 2. **Local Cloud Drive Bridge** (auto-detection of iCloud Drive, Google Drive Desktop, OneDrive, or custom synced folder) using
 //!    the exact same `MangaTUI/` cloud structure:
 //!    - `MangaTUI/library_sync.json` (portable cross-platform JSON snapshot for smart bidirectional merge)
@@ -116,7 +116,7 @@ pub struct SyncMangaGenreRecord {
 }
 
 /// Cross-platform library snapshot stored as `library_sync.json` in the cloud.
-/// Designed so both desktop (`manga-tui`) and future mobile clients (Android / iOS)
+/// Designed so both desktop (`manga-tui`) and mobile clients (Android)
 /// can perform lossless bidirectional merges without SQLite schema coupling.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LibrarySyncSnapshot {

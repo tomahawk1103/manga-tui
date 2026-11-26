@@ -147,13 +147,13 @@ pub fn current_storage_mode() -> StorageMode {
 static CUSTOM_DATA_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 static CUSTOM_CACHE_DIR: std::sync::OnceLock<PathBuf> = std::sync::OnceLock::new();
 
-/// Sets an explicit application data directory provided by the host (e.g. Tauri on desktop or Android/iOS).
+/// Sets an explicit application data directory provided by the host (e.g. Tauri on desktop or Android).
 /// Must be called before `APP_DATA_DIR` is initialized.
 pub fn set_custom_data_dir(dir: PathBuf) -> Result<(), PathBuf> {
     CUSTOM_DATA_DIR.set(dir)
 }
 
-/// Sets an explicit application cache directory provided by the host (e.g. Tauri on Android/iOS).
+/// Sets an explicit application cache directory provided by the host (e.g. Tauri on Android).
 /// Must be called before cache directories are resolved.
 pub fn set_custom_cache_dir(dir: PathBuf) -> Result<(), PathBuf> {
     CUSTOM_CACHE_DIR.set(dir)

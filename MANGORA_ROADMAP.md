@@ -1,9 +1,9 @@
-# Roadmap de Mangora · App Multiplataforma (Escritorio + Android + iOS · Tauri v2)
+# Roadmap de Mangora · App Multiplataforma (Escritorio + Android · Tauri v2 + Web)
 
-**Mangora** es la aplicación nativa multiplataforma (Escritorio en Windows/macOS/Linux + Móvil en **Android e iOS**) pensada para el público general (*normie*) construida sobre el motor Rust existente de `manga-tui` ([`crates/manga-core`](crates/manga-core)). Vive dentro de este mismo workspace en `apps/mangora/` usando **Tauri v2 + React + TypeScript + Vite + Tailwind CSS**. En escritorio comparte exactamente el mismo directorio de datos que `manga-tui` (`config.toml`, `history/manga-tui-history.db`, `mangaDownloads/`, `errorLogs/`) para mantener compatibilidad total entre ambas interfaces; en Android e iOS usa el sandbox privado del sistema (`app_data_dir` / `app_config_dir` / `app_cache_dir`, `StorageMode::AppSandbox`) y se mantiene sincronizado con el escritorio mediante Google Drive.
+**Mangora** es la aplicación nativa multiplataforma (Escritorio en Windows/macOS/Linux + Móvil en **Android**, complementada por **Mangora Web** en navegador tras descartar la app nativa iOS) pensada para el público general (*normie*) construida sobre el motor Rust existente de `manga-tui` ([`crates/manga-core`](crates/manga-core)). Vive dentro de este mismo workspace en `apps/mangora/` usando **Tauri v2 + React + TypeScript + Vite + Tailwind CSS**. En escritorio comparte exactamente el mismo directorio de datos que `manga-tui` (`config.toml`, `history/manga-tui-history.db`, `mangaDownloads/`, `errorLogs/`) para mantener compatibilidad total entre ambas interfaces; en Android usa el sandbox privado del sistema (`app_data_dir` / `app_config_dir` / `app_cache_dir`, `StorageMode::AppSandbox`) y se mantiene sincronizado con el escritorio mediante Google Drive.
 
 > [!IMPORTANT]
-> **Frontera de alcance:** La **Estantería Digitalizada 3D** (con grosor dinámico en escala logarítmica y personalización de baldas/muebles) queda reservada para un **proyecto independiente 100 % legal y publicable en tiendas oficiales**. **Mangora** se centra en ofrecer una interfaz limpia, táctil y sin terminal para escritorio, Android e iOS sobre `crates/manga-core` (con personalización visual de la UI en la v1.1+).
+> **Frontera de alcance:** La **Estantería Digitalizada 3D** (con grosor dinámico en escala logarítmica y personalización de baldas/muebles) queda reservada para un **proyecto independiente 100 % legal y publicable en tiendas oficiales**. **Mangora** se centra en ofrecer una interfaz limpia, táctil y sin terminal para escritorio y Android sobre `crates/manga-core` (y acceso vía **Mangora Web** desde cualquier navegador).
 
 ---
 
@@ -15,7 +15,7 @@ flowchart LR
     H1["Hito 1<br/>Tauri v2 + Diseño Editorial + Onboarding<br/>En validación"]
     H2["Hito 2<br/>Explorar + Biblioteca + Ficha AniList<br/>En validación"]
     H3["Hito 3<br/>Lector HD Nativo + Descargas Offline<br/>En validación"]
-    H4["Hito 4<br/>Ajustes + Buzón + Monster 2€ + Escritorio/Android/iOS<br/>En validación"]
+    H4["Hito 4<br/>Ajustes + Buzón + Monster 2€ + Escritorio/Android<br/>En validación"]
     H5["Hito 5 (v1.1+)<br/>Personalización Visual + Métricas Locales<br/>En validación"]
 
     Base --> H1 --> H2 --> H3 --> H4 --> H5
@@ -26,7 +26,7 @@ flowchart LR
 | **Hito 1** | En validación | Scaffold Tauri v2 multiplataforma en `apps/mangora/`, sistema de diseño editorial (`docs/index.html`), shell móvil (`BottomNav` + *safe areas*) y Onboarding |
 | **Hito 2** | En validación | Explorar/Buscar con portadas HD y bloque *"Para ti"*, Biblioteca compartida SQLite y Ficha de serie completa con capítulos, AniList y Discord |
 | **Hito 3** | En validación | Lector HD nativo táctil y de escritorio (online + 100 % offline en CBZ/RAW/EPUB/PDF) y gestor de cola de descargas en tiempo real |
-| **Hito 4** | En validación | Ajustes simples (Drive/Carpeta Nube/AniList/MAL/Updates + acceso a `manga-tui`), Buzón seguro (`feedback.rs`), *"¿Me invitas a un Monster? ⚡ 2 €"* + banner descartable y empaquetado Windows/Android/iOS |
+| **Hito 4** | En validación | Ajustes simples (Drive/Carpeta Nube/AniList/MAL/Updates + acceso a `manga-tui`), Buzón seguro (`feedback.rs`), *"¿Me invitas a un Monster? ⚡ 2 €"* + banner descartable y empaquetado Windows/Android |
 | **Hito 5 (v1.1+)** | En validación | Personalización visual avanzada (5 paletas, densidad/vista/ordenación y 7 fondos del lector), contador global de páginas totales leídas y métricas locales con tarjeta SVG/PNG |
 
 ---
@@ -37,12 +37,12 @@ El trabajo de Mangora está reunido en `manga-tui/`, rama `MANGORA`. La aplicaci
 
 | Área | Disponible ahora | Pendiente |
 | :--- | :--- | :--- |
-| Base y navegación | Proyecto Tauri v2 multiplataforma (escritorio + base Android/iOS) con React, TypeScript, Vite (`TAURI_DEV_HOST`) y Tailwind; `Sidebar` en escritorio y `BottomNav` táctil en móvil con `viewport-fit=cover`, `safe-area-inset-*`, `h-dvh`, objetivos `>= 44px` y temas Papel/Tinta. | Validar la ventana nativa en Windows y ejecutar `tauri android init` / `tauri ios init` con los SDKs de cada plataforma. |
+| Base y navegación | Proyecto Tauri v2 multiplataforma (escritorio + Android) con React, TypeScript, Vite (`TAURI_DEV_HOST`) y Tailwind; `Sidebar` en escritorio y `BottomNav` táctil en móvil con `viewport-fit=cover`, `safe-area-inset-*`, `h-dvh`, objetivos `>= 44px` y temas Papel/Tinta. | Validar la ventana nativa en Windows y el flujo completo en Android con su SDK. |
 | Primer inicio | Selección de idioma, géneros y proveedor recomendado; detección de biblioteca previa; tour que se puede repetir desde Ajustes. Un fallo al guardar muestra el error y permite reintentar. | Validación manual completa en la app nativa. |
 | Explorar | Búsqueda por título en el proveedor activo (`search_catalog` + `multi_provider`), bloque *«Para ti según tus gustos»* (`get_for_you_recommendations`), portadas HD, paginación, filtros por idioma/género en resultados visibles, favorito en 1 clic (`toggle_library_favorite`) y apertura directa de la Ficha de serie. | Validación en red real contra proveedores activos y filtros aplicados a todo el catálogo remoto. |
 | Biblioteca y ficha de serie | Biblioteca visual interactiva conectada a `history/manga-tui-history.db` (`get_library_overview`, `toggle_library_favorite`) con pestañas **Continuar leyendo**, **Siguiendo / Favoritos** e **Historial reciente**, **Ficha de serie completa** (`SeriesDetailView`) con capítulos online/offline, selección múltiple de descargas y **Lector HD nativo** (`ReaderView` + protocolo `mangora://`: Cascada, Página única, Doble página, RTL/LTR, zoom/gestos táctiles, marcadores SQLite y lectura local CBZ/RAW/EPUB/PDF). | Validación manual con red real en escritorio y móvil de todos los modos del lector y descargas en vivo. |
-| Descargas y cola | Gestor conectado a `ManagedDownloadQueue` (`downloads.rs`, eventos `mangora://download-queue` y `mangora://download-chapter-finished`), selector de formato (`CBZ`/`PDF`/`EPUB`/`RAW`), controles por tarea/globales y estantería 100 % offline (`list_offline_library`) con apertura directa a ficha/lector. | Validación manual de colas reales y almacenamiento sandbox en Android/iOS. |
-| Ajustes y apoyo | Cambio de idioma, tema, proveedor y géneros; Google Drive (`cloud.rs` loopback/deep-link) + carpeta sincronizada local, trackers AniList y MyAnimeList (`mal.rs`), comprobador de actualizaciones (`mangora-v*`), Buzón de Opiniones seguro (`feedback.rs` sin webhooks embebidos), tarjeta *"¿Me invitas a un Monster? ⚡ 2 €"*, banner descartable en Inicio, Agradecimientos y botón **Abrir manga-tui** en escritorio. | Validación manual con cuentas OAuth reales, empaquetado Windows con NSIS/WiX y ejecución de `mangora-release.yml` con Android NDK y Xcode. |
+| Descargas y cola | Gestor conectado a `ManagedDownloadQueue` (`downloads.rs`, eventos `mangora://download-queue` y `mangora://download-chapter-finished`), selector de formato (`CBZ`/`PDF`/`EPUB`/`RAW`), controles por tarea/globales y estantería 100 % offline (`list_offline_library`) con apertura directa a ficha/lector. | Validación manual de colas reales y almacenamiento sandbox en Android. |
+| Ajustes y apoyo | Cambio de idioma, tema, proveedor y géneros; Google Drive (`cloud.rs` loopback/deep-link) + carpeta sincronizada local, trackers AniList y MyAnimeList (`mal.rs`), comprobador de actualizaciones (`mangora-v*`), Buzón de Opiniones seguro (`feedback.rs` sin webhooks embebidos), tarjeta *"¿Me invitas a un Monster? ⚡ 2 €"*, banner descartable en Inicio, Agradecimientos y botón **Abrir manga-tui** en escritorio. | Validación manual con cuentas OAuth reales, empaquetado Windows con NSIS/WiX y ejecución de `mangora-release.yml` con Android NDK. |
 | Apariencia y métricas | Integrado en vivo: `MangoraAppearanceProvider` con 5 paletas editoriales (`AppearanceCustomizerPanel` en Ajustes), densidad/vista/ordenación (`CollectionDisplayToolbar` en Biblioteca y Explorar), 7 fondos de lectura + tracker de sesiones (`useReadingSessionTracker`) y géneros (`saveMangaGenres`), contador de **páginas totales leídas** (`HomeStats::total_pages_read`, `HomeView` y KPI propio) y panel `ReaderMetricsDashboard` con tarjeta exportable SVG/PNG 2x (`hito5.rs`). | Validación manual en vivo en `tauri dev` y móvil. |
 
 Para probar la app de escritorio en Windows, ejecutar `npm.cmd install` y `npm.cmd run tauri dev` desde `apps/mangora/`. `npm.cmd run dev` abre la vista previa web en `http://localhost:1420`; la búsqueda del catálogo requiere Tauri. La compilación de Vite, `cargo check --workspace --locked --offline` y las pruebas activas del workspace pasaron. En Chromium se verificaron el tour, el reintento tras un fallo de guardado y la búsqueda con respuestas simuladas. La prueba de red con MangaDex falló por falta de conexión en el entorno de pruebas, y allí la ventana nativa devolvió «Acceso denegado».
@@ -100,9 +100,9 @@ Toda la interfaz gráfica de **Mangora** debe seguir fielmente la estética de p
 - `apps/mangora/src-tauri/`: crate Rust de Tauri v2 conectado al workspace (`Cargo.toml`) que expone comandos `#[tauri::command]` y eventos en tiempo real sobre `manga-core`.
 - `apps/mangora/src/`: frontend en **React + TypeScript + Vite + Tailwind CSS**.
 
-### Almacenamiento compartido (`AppDirectories`) y soporte móvil (Android + iOS)
+### Almacenamiento compartido (`AppDirectories`) y soporte móvil (Android)
 
-Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.rs) y [`crates/manga-core/src/config.rs`](crates/manga-core/src/config.rs), respetando la precedencia en escritorio (`MANGA_TUI_DATA_DIR` > modo portable `data/` > directorio estándar del sistema) y el sandbox de app en Android/iOS (`StorageMode::AppSandbox` vía `set_custom_data_dir`, `set_custom_config_dir` y `set_custom_cache_dir`):
+Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.rs) y [`crates/manga-core/src/config.rs`](crates/manga-core/src/config.rs), respetando la precedencia en escritorio (`MANGA_TUI_DATA_DIR` > modo portable `data/` > directorio estándar del sistema) y el sandbox de app en Android (`StorageMode::AppSandbox` vía `set_custom_data_dir`, `set_custom_config_dir` y `set_custom_cache_dir`):
 
 - `config.toml` — preferencias y estado general
 - `history/manga-tui-history.db` — biblioteca, favoritos, progreso de lectura e historial SQLite
@@ -111,10 +111,10 @@ Definido en [`crates/manga-core/src/backend.rs`](crates/manga-core/src/backend.r
 
 **Base técnica móvil integrada:**
 - Entry point `#[cfg_attr(mobile, tauri::mobile_entry_point)]` en [`apps/mangora/src-tauri/src/lib.rs`](apps/mangora/src-tauri/src/lib.rs) con inyección de `app_data_dir`, `app_config_dir` y `app_cache_dir` (incluyendo caché de MangaDex).
-- `tauri-plugin-opener` (`OpenerExt`) para abrir enlaces HTTPS en desktop/Android/iOS y carpetas en desktop (`capabilities/default.json` cross-platform + `capabilities/desktop.json` para permisos de ventana).
-- En `crates/manga-core`: `reqwest` usa `rustls-tls-native-roots` en escritorio y `rustls-tls-webpki-roots` en Android/iOS; `keyring` usa `windows-native` (Windows), `apple-native` (macOS + iOS Keychain), `sync-secret-service` (Linux) y fallback en sandbox para Android.
+- `tauri-plugin-opener` (`OpenerExt`) para abrir enlaces HTTPS en desktop/Android y carpetas en desktop (`capabilities/default.json` cross-platform + `capabilities/desktop.json` para permisos de ventana).
+- En `crates/manga-core`: `reqwest` usa `rustls-tls-native-roots` en escritorio y `rustls-tls-webpki-roots` en Android; `keyring` usa `windows-native` (Windows), `apple-native` (macOS), `sync-secret-service` (Linux) y fallback en sandbox para Android.
 - `InitialAppState` expone `platform`, `isMobile` y `canOpenDataFolder` para adaptar botones de sistema de archivos en móvil.
-- `vite.config.ts` preparado con `TAURI_DEV_HOST` y `envPrefix` para depuración en emulador o dispositivo físico (`tauri android dev` / `tauri ios dev`).
+- `vite.config.ts` preparado con `TAURI_DEV_HOST` y `envPrefix` para depuración en emulador o dispositivo físico (`tauri android dev`).
 
 ---
 
@@ -240,17 +240,17 @@ Hito 4 está integrado en backend y UI (`apps/mangora/src-tauri/src/integrations
 - **Buzón seguro y Apoyo:** `FeedbackModal` con validación `10–2000` chars, diagnóstico opcional no personal, rechazo estricto de URLs de webhook de Discord en `validate_proxy_url` y fallback automático a GitHub Issues pre-rellenado; pantalla de apoyo *"¿Me invitas a un Monster? ⚡ 2 €"* (Ko-fi vía `MANGORA_KOFI_URL` + GitHub Sponsors), Discord, tarjeta de Agradecimientos y banner sutil descartable permanentemente tras leer 5 capítulos (`supportBannerDismissed`).
 - **Empaquetado y acceso dual:** configuración NSIS/MSI/Android en `tauri.conf.json`, script local Windows y workflow independiente `.github/workflows/mangora-release.yml`, además del botón **Abrir manga-tui en terminal** en Ajustes cuando `manga-tui` está instalado.
 
-Pendiente de validación manual en una sesión nativa con red real, cuentas OAuth de prueba y generación de paquetes Android/iOS con sus SDKs.
+Pendiente de validación manual en una sesión nativa con red real, cuentas OAuth de prueba y generación de paquetes Android con su SDK.
 
 ### Prompt sugerido para nuevo hilo
 
-> Lee `MANGORA_ROADMAP.md` y el estado actual de `apps/mangora/`. Vamos a ejecutar el **Hito 4**: implementa Ajustes simplificados (Drive, AniList/MAL con soporte OAuth en escritorio y móvil), el Buzón de opiniones seguro, la sección de apoyo *"¿Me invitas a un Monster? ⚡ 2 €"* + Discord y el empaquetado Windows, Android e iOS de Mangora.
+> Lee `MANGORA_ROADMAP.md` y el estado actual de `apps/mangora/`. Vamos a ejecutar el **Hito 4**: implementa Ajustes simplificados (Drive, AniList/MAL con soporte OAuth en escritorio y móvil), el Buzón de opiniones seguro, la sección de apoyo *"¿Me invitas a un Monster? ⚡ 2 €"* + Discord y el empaquetado Windows y Android de Mangora.
 
 ### Alcance técnico y entregables
 
 1. **Ajustes Sencillos para *normies*:**
    - Cambiar idioma, tema Papel / Tinta, proveedor recomendado y relanzar el Onboarding/Tour cuando el usuario quiera.
-   - Integración guiada en 1 clic de **Google Drive Cloud Sync** (`cloud.rs`), **AniList / MyAnimeList** (`tracker`) con soporte OAuth mediante callback local en escritorio y *deep links* / URL schemes en Android e iOS, más carpeta local personalizada con botón para abrir ubicación en el Explorador en escritorio.
+   - Integración guiada en 1 clic de **Google Drive Cloud Sync** (`cloud.rs`), **AniList / MyAnimeList** (`tracker`) con soporte OAuth mediante callback local en escritorio y *deep links* / URL schemes en Android, más carpeta local personalizada con botón para abrir ubicación en el Explorador en escritorio.
    - Comprobador de actualizaciones no intrusivo (`updater.rs` / `release_notifier.rs`) adaptado a las releases de Mangora.
 2. **Buzón de Opiniones y Reporte de Fallos nativo:**
    - Modal o pestaña accesible desde Ajustes y barra principal con 3 campos claros: **Categoría** (*Sugerencia*, *Fallo técnico*, *Proveedor roto*), **Mensaje** y casilla opcional (*"Adjuntar versión de app y sistema operativo"*).
@@ -260,18 +260,18 @@ Pendiente de validación manual en una sesión nativa con red real, cuentas OAut
    - Botón editorial amigable en la barra lateral y en Ajustes: **"¿Me invitas a un Monster? ⚡ 2 €"** + opción de cantidad libre apuntando a **Ko-fi** (no exige cuenta para donar), acompañado de enlace secundario a **GitHub Sponsors** y enlace al servidor de **Discord**.
    - Banner/recordatorio sutil, opcional y descartable de forma permanente tras alcanzar ciertos hitos de lectura (nunca bloqueando capítulos, funciones ni descargas).
    - Tarjeta de **Agradecimientos (*Supporters*)** dentro de la pantalla de Apoyo.
-4. **Empaquetado y Distribución Multiplataforma (Windows + Android + iOS):**
+4. **Empaquetado y Distribución Multiplataforma (Windows + Android):**
    - **Windows:** configurar `tauri.conf.json` con icono `.ico`, metadatos Win32, identificador único y generación de instalador Windows (NSIS / Inno Setup / MSI) + ejecutable portable si aplica.
    - **Android:** inicializar `tauri android init` (requiere Android NDK y targets Rust `aarch64-linux-android` / `armv7-linux-androideabi` / `x86_64-linux-android`) y generar APK / AAB firmado.
-   - **iOS:** inicializar `tauri ios init` desde macOS + Xcode (targets `aarch64-apple-ios` / `aarch64-apple-ios-sim`) y generar IPA / archive.
+   - *(iOS nativo descartado; cubierto mediante Mangora Web desde el navegador).*
    - Añadir/ajustar script de build o workflow en `.github/workflows/` para compilar Mangora sin romper los workflows ni el instalador actuales de `manga-tui`.
 
 ### Criterios de aceptación
 
-- [x] Ajustes permite cambiar tema, idioma, proveedor recomendado y gestionar Google Drive Sync y AniList/MAL sin usar comandos de terminal tanto en escritorio como en Android/iOS (*deep links*).
+- [x] Ajustes permite cambiar tema, idioma, proveedor recomendado y gestionar Google Drive Sync y AniList/MAL sin usar comandos de terminal tanto en escritorio como en Android (*deep links*).
 - [x] El Buzón de Opiniones valida campos, muestra confirmación/error comprensible y no expone credenciales ni webhooks privados en el código fuente o binario.
 - [x] La sección de apoyo muestra la opción *"¿Me invitas a un Monster? ⚡ 2 €"* (Ko-fi), GitHub Sponsors y Discord de forma totalmente voluntaria y sin muros de pago.
-- [ ] Los paquetes de instalación de Mangora (Windows, Android APK/AAB e iOS IPA en macOS) se generan correctamente y conviven sin conflictos con el instalador de `manga-tui`.
+- [ ] Los paquetes de instalación de Mangora (Windows y Android APK/AAB) se generan correctamente y conviven sin conflictos con el instalador de `manga-tui`.
 
 ---
 

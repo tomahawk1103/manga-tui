@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       publish_release:
-        description: 'Publicar GitHub Release con Windows, APK Android e IPA iOS (SideStore)'
+        description: 'Publicar GitHub Release con Windows y APK Android'
         type: boolean
         required: false
         default: false
@@ -209,112 +209,6 @@ jobs:
           path: dist-android/*
           if-no-files-found: error
 
-  build-ios:
-    runs-on: macos-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-          cache: 'npm'
-          cache-dependency-path: apps/mangora/package-lock.json
-
-      - name: Install Apple iOS Rust targets on active toolchain
-        run: rustup target add aarch64-apple-ios aarch64-apple-ios-sim
-
-      - name: Install Mangora frontend dependencies
-        working-directory: apps/mangora
-        run: npm ci
-
-      - name: Initialize Tauri iOS & configure Info.plist
-        working-directory: apps/mangora
-        run: |
-          set -euo pipefail
-          npm run build
-          npx tauri ios init --ci
-          npx tauri icon src-tauri/icons/icon.png
-          node ../../scripts/configure-mangora-ios.mjs --apple-dir src-tauri/gen/apple
-
-      - name: Build unsigned iOS xcarchive & package IPA
-        working-directory: apps/mangora
-        env:
-          MANGA_TUI_GDRIVE_CLIENT_ID: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_ID }}
-          MANGA_TUI_GDRIVE_CLIENT_SECRET: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_SECRET }}
-          MANGA_TUI_MAL_CLIENT_ID: ${{ secrets.MANGA_TUI_MAL_CLIENT_ID }}
-          MANGA_TUI_MAL_CLIENT_SECRET: ${{ secrets.MANGA_TUI_MAL_CLIENT_SECRET }}
-          MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_ID: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_ID }}
-          MANGA_TUI_EMBEDDED_GDRIVE_CLIENT_SECRET: ${{ secrets.MANGA_TUI_GDRIVE_CLIENT_SECRET }}
-          MANGA_TUI_EMBEDDED_MAL_CLIENT_ID: ${{ secrets.MANGA_TUI_MAL_CLIENT_ID }}
-          MANGA_TUI_EMBEDDED_MAL_CLIENT_SECRET: ${{ secrets.MANGA_TUI_MAL_CLIENT_SECRET }}
-          MANGORA_KOFI_URL: ${{ vars.MANGORA_KOFI_URL }}
-          MANGORA_SPONSORS_URL: ${{ vars.MANGORA_SPONSORS_URL }}
-          MANGORA_FEEDBACK_PROXY_URL: ${{ vars.MANGORA_FEEDBACK_PROXY_URL }}
-        run: |
-          set -euo pipefail
-          export PATH="$HOME/.cargo/bin:$PATH"
-          VERSION=$(node -p "require('./src-tauri/tauri.conf.json').version")
-
-          npx tauri ios build --ci --target aarch64 || true
-
-          APP_BUNDLE=$(find src-tauri/gen/apple/build -path "*.xcarchive/Products/Applications/*.app" -type d 2>/dev/null | head -n 1 || true)
-          if [ -z "${APP_BUNDLE:-}" ]; then
-            APP_BUNDLE=$(find src-tauri/gen/apple/build -type d \( -path "*Release-iphoneos/*.app" -o -path "*iphoneos/*.app" \) 2>/dev/null | head -n 1 || true)
-          fi
-          if [ -z "${APP_BUNDLE:-}" ]; then
-            echo "No se encontro ningun bundle .app generado tras tauri ios build." >&2
-            find src-tauri/gen/apple/build -maxdepth 5 2>/dev/null || true
-            exit 1
-          fi
-          echo "Located iOS app bundle: $APP_BUNDLE"
-
-          rm -rf "$APP_BUNDLE/_CodeSignature"
-
-          PLIST="$APP_BUNDLE/Info.plist"
-          BUNDLE_ID=$(/usr/libexec/PlistBuddy -c "Print :CFBundleIdentifier" "$PLIST")
-          SHORT_VER=$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" "$PLIST")
-          EXEC_NAME=$(/usr/libexec/PlistBuddy -c "Print :CFBundleExecutable" "$PLIST")
-          echo "Verified Info.plist: CFBundleIdentifier=$BUNDLE_ID CFBundleShortVersionString=$SHORT_VER CFBundleExecutable=$EXEC_NAME"
-          if [ "$BUNDLE_ID" != "io.github.tomahawk1103.mangora" ]; then
-            echo "CFBundleIdentifier inesperado: $BUNDLE_ID" >&2
-            exit 1
-          fi
-          if [ ! -f "$APP_BUNDLE/$EXEC_NAME" ]; then
-            echo "No se encontro el binario Mach-O: $APP_BUNDLE/$EXEC_NAME" >&2
-            exit 1
-          fi
-          file "$APP_BUNDLE/$EXEC_NAME"
-
-          STAGE_DIR="$RUNNER_TEMP/ipa-stage"
-          rm -rf "$STAGE_DIR"
-          mkdir -p "$STAGE_DIR/Payload"
-          cp -R "$APP_BUNDLE" "$STAGE_DIR/Payload/"
-
-          DIST_IOS_DIR="$(cd ../.. && pwd)/dist-ios"
-          mkdir -p "$DIST_IOS_DIR"
-          IPA_NAME="Mangora-${VERSION}-ios-unsigned.ipa"
-          IPA_PATH="${DIST_IOS_DIR}/${IPA_NAME}"
-          (cd "$STAGE_DIR" && zip -r -q "$IPA_PATH" Payload)
-
-          unzip -t "$IPA_PATH" >/dev/null
-          unzip -l "$IPA_PATH" | grep -E "Payload/[^/]+\.app/Info\.plist" >/dev/null
-
-          (
-            cd "$DIST_IOS_DIR"
-            shasum -a 256 "$IPA_NAME" > "${IPA_NAME}.sha256"
-            shasum -a 256 "$IPA_NAME" > SHA256SUMS-ios.txt
-          )
-          ls -lh "$DIST_IOS_DIR/"
-
-      - name: Upload Mangora iOS IPA
-        uses: actions/upload-artifact@v5
-        with:
-          name: mangora-ios-ipa
-          path: dist-ios/*
-          if-no-files-found: error
-
   publish-release:
     if: >-
       always() &&
@@ -324,43 +218,13 @@ jobs:
     permissions:
       contents: write
     runs-on: ubuntu-latest
-    needs: [build-windows, build-android, build-ios]
+    needs: [build-windows, build-android]
     steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-        with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
       - name: Download build artifacts
         uses: actions/download-artifact@v6
         with:
           path: release-assets
           merge-multiple: true
-
-      - name: Update SideStore source JSON
-        shell: bash
-        run: |
-          set -euo pipefail
-          TAG="${{ startsWith(github.ref, 'refs/tags/mangora-v') && github.ref_name || inputs.release_tag }}"
-          VERSION=$(node -p "require('./apps/mangora/src-tauri/tauri.conf.json').version")
-          IPA_FILE=$(find release-assets -type f -name "Mangora-*-ios-unsigned.ipa" | head -n 1 || true)
-          if [ -z "${IPA_FILE:-}" ]; then
-            echo "::warning::No se encontro ningun IPA iOS en release-assets; se omite la actualizacion de docs/sidestore.json para no bloquear Windows y Android."
-            exit 0
-          fi
-          node scripts/update-sidestore-source.mjs \
-            --source docs/sidestore.json \
-            --version "$VERSION" \
-            --tag "$TAG" \
-            --ipa "$IPA_FILE" \
-            --notes "Mangora $TAG para iOS (SideStore / AltStore)"
-          cp docs/sidestore.json release-assets/sidestore.json
-          echo "SIDESTORE_TAG=$TAG" >> "$GITHUB_ENV"
 
       - name: Create Mangora GitHub Release
         uses: softprops/action-gh-release@v2
@@ -368,45 +232,3 @@ jobs:
           tag_name: ${{ startsWith(github.ref, 'refs/tags/mangora-v') && github.ref_name || inputs.release_tag }}
           files: release-assets/*
           generate_release_notes: true
-
-      - name: Commit updated docs/sidestore.json for GitHub Pages
-        continue-on-error: true
-        shell: bash
-        run: |
-          set -euo pipefail
-          if git diff --quiet -- docs/sidestore.json; then
-            echo "docs/sidestore.json sin cambios."
-          else
-            TARGET_BRANCH=""
-            if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ -n "${{ github.ref_name }}" ]; then
-              TARGET_BRANCH="${{ github.ref_name }}"
-            else
-              git fetch origin --prune
-              for candidate in main MANGORA; do
-                if git show-ref --verify --quiet "refs/remotes/origin/$candidate" && git merge-base --is-ancestor HEAD "refs/remotes/origin/$candidate"; then
-                  TARGET_BRANCH="$candidate"
-                  break
-                fi
-              done
-            fi
-
-            if [ -n "$TARGET_BRANCH" ]; then
-              git config user.name "github-actions[bot]"
-              git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-              git stash push -m "sidestore-update" -- docs/sidestore.json
-              git checkout "$TARGET_BRANCH"
-              git pull --ff-only origin "$TARGET_BRANCH" || true
-              git stash pop
-              git add docs/sidestore.json
-              git commit -m "chore(ios): update SideStore source for ${SIDESTORE_TAG}"
-              git push origin "HEAD:${TARGET_BRANCH}"
-            else
-              echo "::warning::No se pudo determinar una rama destino para publicar docs/sidestore.json automáticamente."
-            fi
-          fi
-
-          {
-            echo "### SideStore / AltStore (iOS)"
-            echo "- Fuente JSON: https://tomahawk1103.github.io/manga-tui/sidestore.json"
-            echo "- Enlace directo 1 toque: \`sidestore://source?url=https%3A%2F%2Ftomahawk1103.github.io%2Fmanga-tui%2Fsidestore.json\`"
-          } >> "$GITHUB_STEP_SUMMARY"

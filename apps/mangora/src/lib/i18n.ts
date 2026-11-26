@@ -438,7 +438,6 @@ export interface Translations {
     updatesAvailableLabel: (ver: string) => string;
     updatesOpenReleaseBtn: string;
     updatesDownloadApkBtn: string;
-    updatesDownloadIpaBtn: string;
     portableBackupTitle: string;
     portableBackupDesc: string;
     exportBackupBtn: string;
@@ -894,7 +893,7 @@ const ES: Translations = {
     downloadsDirLabel: "Descargas",
     openFolderBtn: "Abrir carpeta de datos",
     mobileStorageNote:
-      "En Android e iOS los datos viven en el sandbox privado de la app; usa Google Drive para sincronizarlos entre dispositivos.",
+      "En Android los datos viven en el sandbox privado de la app; usa Google Drive para sincronizarlos entre dispositivos.",
     tourTitle: "Asistente de primeros pasos",
     tourDesc: "Puedes repetir la bienvenida en cualquier momento para repasar las secciones o reconfigurar todo.",
     relaunchTourBtn: "Volver a lanzar el tour",
@@ -956,7 +955,6 @@ const ES: Translations = {
     updatesAvailableLabel: (ver) => `Nueva versión disponible: ${ver}`,
     updatesOpenReleaseBtn: "Abrir página de descarga ↗",
     updatesDownloadApkBtn: "Descargar APK actualizado ↓",
-    updatesDownloadIpaBtn: "Descargar IPA para SideStore ↓",
     portableBackupTitle: "Copia portátil PC ↔ Móvil (library_sync.json)",
     portableBackupDesc:
       "Exporta o importa tu biblioteca manualmente mediante un archivo JSON compatible con manga-tui y Mangora, sin depender de Google OAuth.",
@@ -1037,7 +1035,7 @@ const ES: Translations = {
       "Gracias a todas las personas de la comunidad que mantienen viva esta app:",
     supportersList: [
       "Colaboradores de Rust, React y CSS que aportan PRs y mejoras.",
-      "Testers de Windows, Android e iOS en el Discord oficial.",
+      "Testers de Windows y Android en el Discord oficial.",
       "Supporters voluntarios que invitan a un Monster ⚡ para impulsar nuevos hitos.",
     ],
     privacyTitle: "Privacidad local garantizada",
@@ -1433,7 +1431,7 @@ const EN: Translations = {
     downloadsDirLabel: "Downloads",
     openFolderBtn: "Open data folder",
     mobileStorageNote:
-      "On Android and iOS, data lives in the app's private sandbox; use Google Drive to sync across devices.",
+      "On Android, data lives in the app's private sandbox; use Google Drive to sync across devices.",
     tourTitle: "First-steps guide",
     tourDesc: "You can relaunch the onboarding assistant anytime to review sections or update your setup.",
     relaunchTourBtn: "Relaunch onboarding tour",
@@ -1495,7 +1493,6 @@ const EN: Translations = {
     updatesAvailableLabel: (ver) => `Update available: ${ver}`,
     updatesOpenReleaseBtn: "Open release page ↗",
     updatesDownloadApkBtn: "Download updated APK ↓",
-    updatesDownloadIpaBtn: "Download IPA for SideStore ↓",
     portableBackupTitle: "Portable PC ↔ Mobile backup (library_sync.json)",
     portableBackupDesc:
       "Manually export or merge your library using a JSON file fully compatible with manga-tui and Mangora, even without Google OAuth.",
@@ -1576,7 +1573,7 @@ const EN: Translations = {
       "Thank you to everyone in the community helping keep this project alive:",
     supportersList: [
       "Rust, React, and CSS contributors sending pull requests and fixes.",
-      "Windows, Android, and iOS community testers in our Discord server.",
+      "Windows and Android community testers in our Discord server.",
       "Voluntary supporters buying a Monster ⚡ to keep new milestones moving.",
     ],
     privacyTitle: "Local-first privacy",

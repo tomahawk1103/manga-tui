@@ -1,8 +1,8 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Cross-platform capability for Mangora across desktop, Android, and iOS",
-  "platforms": ["linux", "macOS", "windows", "android", "iOS"],
+  "description": "Cross-platform capability for Mangora across desktop and Android",
+  "platforms": ["linux", "macOS", "windows", "android"],
   "windows": ["main"],
   "permissions": [
     "core:default",

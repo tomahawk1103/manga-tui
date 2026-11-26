@@ -708,7 +708,6 @@ pub fn platform_capabilities(os: &str) -> (&'static str, bool, bool) {
         "macos" => ("macos", false, true),
         "linux" => ("linux", false, true),
         "android" => ("android", true, false),
-        "ios" => ("ios", true, false),
         _ => ("unknown", false, false),
     }
 }
@@ -1099,7 +1098,6 @@ mod tests {
         assert_eq!(platform_capabilities("macos"), ("macos", false, true));
         assert_eq!(platform_capabilities("linux"), ("linux", false, true));
         assert_eq!(platform_capabilities("android"), ("android", true, false));
-        assert_eq!(platform_capabilities("ios"), ("ios", true, false));
         assert_eq!(platform_capabilities("freebsd"), ("unknown", false, false));
         assert_eq!(storage_mode_id(StorageMode::AppSandbox), "sandbox");
     }

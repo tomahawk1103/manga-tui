@@ -7,7 +7,7 @@
   <title>Mangora · Lector de manga multiplataforma</title>
   <link rel="icon" type="image/png" href="./images/mangora-icon.png">
   <link rel="apple-touch-icon" href="./images/mangora-icon.png">
-  <meta name="description" content="Busca, descarga y lee manga con Mangora en Windows, Android e iOS. Lector HD en cascada o doble página, descargas offline y sincronización opcional.">
+  <meta name="description" content="Busca, descarga y lee manga con Mangora en Windows, Android y Web. Lector HD en cascada o doble página, descargas offline y sincronización opcional.">
   <style>
     :root {
       --paper: #f8f7f1;
@@ -179,7 +179,7 @@
       <div>
         <p class="eyebrow" id="eyebrow-version">Mangora · Lector multiplataforma · v0.1.1</p>
         <h1 id="portada">Tu manga,<em>en papel y tinta.</em></h1>
-        <p class="intro">Encuentra tu próxima serie en español o inglés, lee en cascada o doble página HD, descarga capítulos sin conexión y sincroniza tu progreso entre Windows, Android e iOS.</p>
+        <p class="intro">Encuentra tu próxima serie en español o inglés, lee en cascada o doble página HD, descarga capítulos sin conexión y sincroniza tu progreso entre Windows, Android y Web.</p>
         <div class="actions">
           <a class="button" id="download-btn" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora_0.1.1_x64-setup.exe">
             <span aria-hidden="true">↓</span>
@@ -199,7 +199,7 @@
         <p class="platforms">
           <span><a href="#descargas">Windows (.exe / .msi / PowerShell)</a></span>
           <span><a href="#descargas">Android (.apk ARM64)</a></span>
-          <span><a href="#descargas">iOS (SideStore / .ipa)</a></span>
+          <span><a href="./mangora-web/">Web (Navegador)</a></span>
           <span><a href="https://github.com/tomahawk1103/manga-tui">Código abierto (MIT)</a></span>
         </p>
       </div>
@@ -233,7 +233,7 @@
     </section>
     <section id="descargas" class="wrap downloads" aria-labelledby="descargas-titulo">
       <h2 id="descargas-titulo">Descarga Mangora.</h2>
-      <p class="release-meta" id="release-meta">Versión mangora-v0.1.1 · Instaladores oficiales para Windows, Android e iOS.</p>
+      <p class="release-meta" id="release-meta">Versión mangora-v0.1.1 · Instaladores oficiales para Windows y Android.</p>
       <div class="install-banner">
         <div class="install-banner-head">
           <strong>Recomendado en Windows · PowerShell</strong>
@@ -267,29 +267,15 @@
           <p class="dl-hint">Instalación directa firmada (Android 7.0+ · ARM64). Compatible con Obtainium.</p>
         </article>
         <article>
-          <span class="glyph" aria-hidden="true">[IPA]</span>
-          <h3>iOS (SideStore)</h3>
-          <p>App táctil Mangora para iPhone e iPad (iOS 15+) con lector HD, descargas offline y sincronización con PC.</p>
+          <span class="glyph" aria-hidden="true">[WEB]</span>
+          <h3>Mangora Web</h3>
+          <p>Lector directo desde el navegador sin instalar nada. Ideal para leer al instante desde iPhone, iPad, macOS, Linux o cualquier equipo.</p>
           <div class="dl-actions">
-            <a class="button" id="dl-ios-sidestore" href="sidestore://source?url=https%3A%2F%2Ftomahawk1103.github.io%2Fmanga-tui%2Fsidestore.json">+ Añadir a SideStore</a>
-            <a class="dl-link" id="dl-ios-ipa" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora-0.1.1-ios-unsigned.ipa">↓ Descargar .ipa (sin firmar)</a>
-            <a class="dl-link" href="./sidestore.json">Fuente SideStore (.json) ↗</a>
-            <button class="copy-btn" type="button" data-copy="https://tomahawk1103.github.io/manga-tui/sidestore.json">Copiar URL de fuente</button>
+            <a class="button" href="./mangora-web/">Abrir Mangora Web →</a>
           </div>
-          <p class="dl-hint">iOS 15+ · Instala y actualiza sin PC mediante SideStore o AltStore.</p>
+          <p class="dl-hint">Funciona en cualquier navegador moderno · Sin cuentas ni instalación.</p>
         </article>
       </div>
-      <details class="smartscreen-note">
-        <summary>¿Cómo instalar Mangora en iPhone o iPad con SideStore (sin App Store)?</summary>
-        <div class="note-body">
-          <ol>
-            <li>Instala <strong>SideStore</strong> (o AltStore) en tu iPhone/iPad siguiendo su guía inicial con tu Apple ID gratuito.</li>
-            <li>Desde Safari en el iPhone, pulsa <strong>«+ Añadir a SideStore»</strong> arriba (o copia la URL <code>https://tomahawk1103.github.io/manga-tui/sidestore.json</code> en la pestaña <em>Sources</em> de SideStore).</li>
-            <li>Instala <strong>Mangora</strong> desde la fuente añadida: SideStore firmará el <code>.ipa</code> con tu propio perfil en segundos.</li>
-            <li>Activa el refresco automático en segundo plano (o refresca cada 7 días desde SideStore por Wi-Fi sin necesitar PC). También puedes bajar el <code>.ipa</code> suelto para Sideloadly.</li>
-          </ol>
-        </div>
-      </details>
       <details class="smartscreen-note">
         <summary>¿Edge muestra «no se descarga habitualmente» o «no seguro» al bajar el .exe de Mangora?</summary>
         <div class="note-body">
@@ -475,8 +461,8 @@
 
     if (isIOS) {
       if (heroCmd) heroCmd.hidden = true;
-      heroBtn.href = 'sidestore://source?url=https%3A%2F%2Ftomahawk1103.github.io%2Fmanga-tui%2Fsidestore.json';
-      heroLabel.textContent = 'Añadir Mangora a SideStore (iOS)';
+      heroBtn.href = './mangora-web/';
+      heroLabel.textContent = 'Abrir Mangora Web';
     } else if (isAndroid) {
       if (heroCmd) heroCmd.hidden = true;
       heroBtn.href = '#descargas';
@@ -513,7 +499,6 @@
         const dlWinExe = document.querySelector('#dl-win-installer');
         const dlWinMsi = document.querySelector('#dl-win-msi');
         const dlAndroidApk = document.querySelector('#dl-android-apk');
-        const dlIosIpa = document.querySelector('#dl-ios-ipa');
         const eyebrow = document.querySelector('#eyebrow-version');
         const meta = document.querySelector('#release-meta');
         const allLink = document.querySelector('#all-releases-link');
@@ -528,14 +513,6 @@
         if (isAndroid && androidApk) {
           heroBtn.href = androidApk.browser_download_url;
           heroLabel.textContent = 'Descargar Mangora APK' + fmtSize(androidApk);
-        }
-
-        const ipaRelease = releases.find((r) => isMangoraRelease(r) && findAsset(r, (n) => n.endsWith('.ipa')));
-        const iosIpa = findAsset(ipaRelease, (n) => n.endsWith('-ios-unsigned.ipa')) || findAsset(ipaRelease, (n) => n.endsWith('.ipa'));
-
-        if (dlIosIpa && iosIpa) {
-          dlIosIpa.href = iosIpa.browser_download_url;
-          dlIosIpa.textContent = '↓ Mangora IPA (' + cleanVer(ipaRelease.tag_name) + fmtSize(iosIpa) + ')';
         }
 
         if (dlWinExe && winExe) {
@@ -555,7 +532,7 @@
           eyebrow.textContent = 'Mangora · Lector multiplataforma · ' + cleanVer(active.tag_name);
         }
         if (meta) {
-          meta.textContent = 'Versión ' + active.tag_name + ' · Instaladores oficiales para Windows, Android e iOS.';
+          meta.textContent = 'Versión ' + active.tag_name + ' · Instaladores oficiales para Windows y Android.';
         }
         if (allLink && active.html_url) {
           allLink.href = active.html_url;

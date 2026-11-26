@@ -47,7 +47,7 @@ export interface InitialAppState {
   appVersion: string;
   uiLanguage: UiLanguage;
   themeMode: ThemeMode;
-  platform: "windows" | "macos" | "linux" | "android" | "ios" | "unknown";
+  platform: "windows" | "macos" | "linux" | "android" | "unknown";
   isMobile: boolean;
   canOpenDataFolder: boolean;
   storageMode: "env" | "portable" | "system" | "sandbox";
@@ -520,7 +520,6 @@ export interface UpdateCheckResultDto {
   updateAvailable: boolean;
   releaseUrl: string;
   androidApkUrl?: string | null;
-  iosIpaUrl?: string | null;
   releaseNotes: string;
   publishedAt: string | null;
   checkedAt: string;
