@@ -16,6 +16,7 @@ import {
   getInitialState,
   getIntegrationsOverview,
   getLibraryOverview,
+  isTauriRuntime,
   listOfflineLibrary,
   openDataFolder,
   openDownloadsFolder,
@@ -59,6 +60,126 @@ import { SeriesDetailView } from "./views/SeriesDetailView";
 import { SettingsView } from "./views/SettingsView";
 import { SupportView } from "./views/SupportView";
 
+type WebRoute =
+  | { kind: "section"; section: NavSection; focusSearch?: boolean }
+  | { kind: "series"; series: SeriesSelection }
+  | { kind: "reader"; request: OpenReaderChapterRequest };
+
+function normalizeWebMangaId(raw: string): string {
+  const decoded = decodeURIComponent(raw);
+  return decoded === "mangaoni-dandadan" ? "manga/dandadan" : decoded;
+}
+
+function parseWebHash(rawHash: string): WebRoute {
+  const clean = rawHash.replace(/^#/, "");
+  if (!clean) return { kind: "section", section: "home" };
+  if (clean === "explorar") return { kind: "section", section: "explore" };
+  if (clean === "buscar") return { kind: "section", section: "explore", focusSearch: true };
+  if (clean === "descargas") return { kind: "section", section: "downloads" };
+  if (clean === "ajustes") return { kind: "section", section: "settings" };
+  if (clean === "apoyar") return { kind: "section", section: "support" };
+  if (clean === "leer/sample-1") {
+    return {
+      kind: "reader",
+      request: {
+        mangaId: "mangora-sample",
+        provider: "mangaoni",
+        mangaTitle: "Manga de muestra",
+        chapterId: "sample-1",
+        chapterTitle: "Capítulo 1",
+        chapterNumber: "1",
+        language: "es",
+      },
+    };
+  }
+
+  const parts = clean.split("/").filter(Boolean);
+  if (parts[0] === "serie") {
+    if (parts.length >= 3) {
+      const provider = decodeURIComponent(parts[1]);
+      const mangaId = normalizeWebMangaId(parts[2]);
+      return {
+        kind: "series",
+        series: { mangaId, provider, title: mangaId.split("/").pop() || mangaId },
+      };
+    }
+    if (parts.length === 2) {
+      const mangaId = normalizeWebMangaId(parts[1]);
+      return {
+        kind: "series",
+        series: { mangaId, provider: "mangaoni", title: mangaId.split("/").pop() || mangaId },
+      };
+    }
+  }
+
+  if (parts[0] === "leer") {
+    if (parts.length >= 4) {
+      const provider = decodeURIComponent(parts[1]);
+      const mangaId = normalizeWebMangaId(parts[2]);
+      const rawChap = decodeURIComponent(parts[3]);
+      const chapterId =
+        provider === "mangaoni" && mangaId !== "mangora-sample" && !rawChap.includes("|")
+          ? `${mangaId}|${rawChap}`
+          : rawChap;
+      return {
+        kind: "reader",
+        request: {
+          mangaId,
+          provider,
+          mangaTitle: mangaId.split("/").pop() || mangaId,
+          chapterId,
+        },
+      };
+    }
+    if (parts.length === 3) {
+      const mangaId = normalizeWebMangaId(parts[1]);
+      const rawChap = decodeURIComponent(parts[2]);
+      const chapterId =
+        mangaId !== "mangora-sample" && !rawChap.includes("|")
+          ? `${mangaId}|${rawChap}`
+          : rawChap;
+      return {
+        kind: "reader",
+        request: {
+          mangaId,
+          provider: "mangaoni",
+          mangaTitle: mangaId.split("/").pop() || mangaId,
+          chapterId,
+        },
+      };
+    }
+  }
+
+  return { kind: "section", section: "home" };
+}
+
+function buildWebHash(params: {
+  activeSection: NavSection;
+  selectedSeries: SeriesSelection | null;
+  readerTarget: OpenReaderChapterRequest | null;
+}): string {
+  if (params.readerTarget) {
+    const r = params.readerTarget;
+    return `#leer/${encodeURIComponent(r.provider)}/${encodeURIComponent(r.mangaId)}/${encodeURIComponent(r.chapterId)}`;
+  }
+  if (params.selectedSeries) {
+    const s = params.selectedSeries;
+    return `#serie/${encodeURIComponent(s.provider)}/${encodeURIComponent(s.mangaId)}`;
+  }
+  switch (params.activeSection) {
+    case "explore":
+      return "#explorar";
+    case "downloads":
+      return "#descargas";
+    case "settings":
+      return "#ajustes";
+    case "support":
+      return "#apoyar";
+    default:
+      return "#";
+  }
+}
+
 export function App() {
   const [appState, setAppState] = useState<InitialAppState | null>(null);
   const [libraryOverview, setLibraryOverview] = useState<LibraryOverview | null>(null);
@@ -90,6 +211,7 @@ export function App() {
   const { config: appearanceConfig, palettes: appearancePalettes, updateAppearance } = useMangoraAppearance();
 
   const pushBackGuard = useCallback(() => {
+    if (!isTauriRuntime()) return;
     try {
       window.history.pushState({ mangoraBackGuard: true }, "");
     } catch {
@@ -261,6 +383,26 @@ export function App() {
   }, [feedbackOpen, readerTarget, selectedSeries, replayOnboarding, activeSection]);
 
   useEffect(() => {
+    if (!isTauriRuntime()) {
+      const applyHash = () => {
+        const parsed = parseWebHash(window.location.hash);
+        if (parsed.kind === "reader") {
+          setReaderTarget(parsed.request);
+        } else if (parsed.kind === "series") {
+          setReaderTarget(null);
+          setSelectedSeries(parsed.series);
+        } else {
+          setReaderTarget(null);
+          setSelectedSeries(null);
+          setActiveSection(parsed.section);
+          setNavigationTarget(parsed.focusSearch ? "search" : null);
+        }
+      };
+      applyHash();
+      window.addEventListener("hashchange", applyHash);
+      return () => window.removeEventListener("hashchange", applyHash);
+    }
+
     const onPopState = () => {
       const current = backStateRef.current;
       if (current.feedbackOpen) {
@@ -296,6 +438,19 @@ export function App() {
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, [pushBackGuard]);
+
+  useEffect(() => {
+    if (isTauriRuntime() || !appState) return;
+    const targetHash = buildWebHash({ activeSection, selectedSeries, readerTarget });
+    const currentHash = window.location.hash || "#";
+    if (currentHash !== targetHash) {
+      try {
+        window.history.replaceState(null, "", targetHash);
+      } catch {
+        // Ignore history restrictions
+      }
+    }
+  }, [appState, activeSection, selectedSeries, readerTarget]);
 
   const activeDownloadChapterIds = useMemo(() => {
     const ids = new Set<string>();

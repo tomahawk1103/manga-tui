@@ -11,6 +11,7 @@ import type {
   ToggleFavoritePayload,
 } from "../types/mangora";
 import { getTranslations } from "../lib/i18n";
+import { isTauriRuntime } from "../lib/tauri";
 
 interface HomeViewProps {
   appState: InitialAppState;
@@ -46,6 +47,7 @@ export function HomeView({
   onDismissSupportBanner,
 }: HomeViewProps) {
   const t = getTranslations(appState.uiLanguage);
+  const tauriRuntime = isTauriRuntime();
   const [homeTab, setHomeTab] = useState<"shelf" | "stats">("shelf");
   const showSupportMilestoneBanner =
     appState.library.chaptersRead >= 5 &&
@@ -101,7 +103,7 @@ export function HomeView({
           />
           <div className="editorial-card overflow-hidden">
             <div className="ink-bar flex items-center justify-between border-b-2 border-[var(--ink)] px-4 py-2 text-xs">
-              <span>&gt;_ SQLite · manga-tui-history.db</span>
+              <span>{tauriRuntime ? ">_ SQLite · manga-tui-history.db" : ">_ IndexedDB · mangora_web_db"}</span>
               <span className="ink-dots" aria-hidden="true">
                 <i />
                 <i />
@@ -250,7 +252,13 @@ export function HomeView({
           {appState.library.hasExistingData ? t.home.detectedBannerTitle : t.home.emptyBannerTitle}
         </h2>
         <p className="max-w-3xl text-sm text-[var(--muted)]">
-          {appState.library.hasExistingData ? t.home.detectedBannerDesc : t.home.emptyBannerDesc}
+          {tauriRuntime
+            ? appState.library.hasExistingData
+              ? t.home.detectedBannerDesc
+              : t.home.emptyBannerDesc
+            : appState.library.hasExistingData
+              ? t.home.webDetectedBannerDesc
+              : t.home.webEmptyBannerDesc}
         </p>
       </section>
     </div>

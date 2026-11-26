@@ -1,4 +1,5 @@
 import { useEffect, useState, type MouseEvent } from "react";
+import { isTauriRuntime } from "../lib/tauri";
 import { loadUpdates, type ChapterUpdate } from "../web/catalog";
 
 interface Props {
@@ -30,7 +31,7 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
     event.preventDefault();
     action(item);
   }
-  const base = onSeries ? "https://tomahawk1103.github.io/manga-tui/mangora-web/" : "";
+  const base = onSeries && isTauriRuntime() ? "https://tomahawk1103.github.io/manga-tui/mangora-web/" : "";
   const dateFormat = new Intl.DateTimeFormat(language, { day: "numeric", month: "long", timeZone: "UTC" });
   return (
     <section aria-labelledby="updates-title" className="space-y-5">
@@ -45,8 +46,8 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
       </div>}
       {status === "ready" && <ul className="grid gap-4 sm:grid-cols-2">
         {items.slice(0, visibleCount).map(item => {
-          const series = base + "#serie/" + encodeURIComponent(item.id);
-          const chapter = base + "#leer/" + encodeURIComponent(item.id) + "/" + encodeURIComponent(item.chapterId);
+          const series = base + "#serie/mangaoni/" + encodeURIComponent(item.id);
+          const chapter = base + "#leer/mangaoni/" + encodeURIComponent(item.id) + "/" + encodeURIComponent(item.chapterId);
           return (
             <li key={chapter} className="editorial-card flex overflow-hidden bg-[var(--paper)]">
               {item.cover && <a href={chapter} tabIndex={-1} aria-hidden="true" onClick={event => follow(event, onChapter, item)} className="w-24 shrink-0 sm:w-28">

@@ -8,7 +8,7 @@ import type {
   ToggleFavoritePayload,
 } from "../types/mangora";
 import { getGenreLabel, getTranslations } from "../lib/i18n";
-import { getForYouRecommendations } from "../lib/tauri";
+import { getForYouRecommendations, isTauriRuntime, openExternalUrl } from "../lib/tauri";
 
 interface ExploreViewProps {
   appState: InitialAppState;
@@ -255,6 +255,21 @@ export function ExploreView({
         </div>
       </section>
 
+      {!isTauriRuntime() && (
+        <section className="editorial-callout flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <h2 className="font-display text-xl">{t.explore.webSourcesTitle}</h2>
+            <p className="text-xs text-[var(--muted)]">{t.explore.webSourcesDesc}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void openExternalUrl("https://tomahawk1103.github.io/manga-tui/#descargas")}
+            className="editorial-btn-primary shrink-0 text-xs"
+          >
+            {t.explore.webDownloadAppBtn}
+          </button>
+        </section>
+      )}
     </div>
   );
 }

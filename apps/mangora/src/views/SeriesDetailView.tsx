@@ -22,7 +22,7 @@ import {
 } from "lucide-react";
 import { defaultHito5Bridge } from "../features/hito5";
 import { getTranslations } from "../lib/i18n";
-import { getAniListCommunity, getSeriesDetail } from "../lib/tauri";
+import { getAniListCommunity, getSeriesDetail, isTauriRuntime } from "../lib/tauri";
 import type {
   AniListCommunityInfo,
   EnqueueChaptersRequest,
@@ -381,12 +381,15 @@ export function SeriesDetailView({
     }
   };
 
+  const tauriRuntime = isTauriRuntime();
   const downloadableVisibleChapters = useMemo(
     () =>
-      visibleChapters.filter(
-        (ch) => ch.isAvailableOnline && !ch.isDownloaded && !activeDownloadChapterIds?.has(ch.id),
-      ),
-    [visibleChapters, activeDownloadChapterIds],
+      tauriRuntime
+        ? visibleChapters.filter(
+            (ch) => ch.isAvailableOnline && !ch.isDownloaded && !activeDownloadChapterIds?.has(ch.id),
+          )
+        : [],
+    [tauriRuntime, visibleChapters, activeDownloadChapterIds],
   );
 
   const selectedDownloadChapters = useMemo(
@@ -743,7 +746,8 @@ export function SeriesDetailView({
               {visibleChapters.map((chapter) => {
                 const isBusy = togglingChapterId === chapter.id;
                 const isQueued = activeDownloadChapterIds?.has(chapter.id) ?? false;
-                const canDownload = chapter.isAvailableOnline && !chapter.isDownloaded && !detail.id.startsWith("offline::");
+                const canDownload =
+                  tauriRuntime && chapter.isAvailableOnline && !chapter.isDownloaded && !detail.id.startsWith("offline::");
                 const isChecked = selectedChapterIds.has(chapter.id);
                 const headingText = chapter.volumeNumber
                   ? `Vol. ${chapter.volumeNumber} · ${s.chapterPrefix} ${chapter.chapterNumber}`

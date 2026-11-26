@@ -7,7 +7,7 @@ import {
   useMangoraAppearance,
 } from "../features/hito5";
 import { getTranslations } from "../lib/i18n";
-import { isTauriRuntime, searchCatalog, type CatalogPage } from "../lib/tauri";
+import { searchCatalog, type CatalogPage } from "../lib/tauri";
 import {
   type ProviderOption,
   type SeriesSelection,
@@ -53,12 +53,11 @@ export function CatalogSearch({
   const [failed, setFailed] = useState(false);
   const [genre, setGenre] = useState("");
   const [lang, setLang] = useState("");
-  const desktop = isTauriRuntime();
   const page = request?.provider === provider.id ? request.page : 1;
 
   useEffect(() => {
-    if (focusSearch && desktop) searchInput.current?.focus();
-  }, [focusSearch, desktop]);
+    if (focusSearch) searchInput.current?.focus();
+  }, [focusSearch]);
 
   useEffect(() => {
     if (!request) return;
@@ -87,13 +86,13 @@ export function CatalogSearch({
     <section className="space-y-4" aria-label={t.search}>
       <form className="flex flex-wrap items-end gap-3" onSubmit={event => {
         event.preventDefault();
-        if (desktop && input.trim()) setRequest({ provider: provider.id, query: input.trim(), page: 1 });
+        if (input.trim()) setRequest({ provider: provider.id, query: input.trim(), page: 1 });
       }}>
         <label className="min-w-48 flex-1 font-bold">{t.searchTitle}
           <input ref={searchInput} type="search" value={input} onChange={event => setInput(event.target.value)}
             className="mt-1 block min-h-[44px] w-full border-2 border-[var(--ink)] bg-[var(--paper)] px-3 py-2" />
         </label>
-        <button type="submit" className="editorial-btn-primary w-full sm:w-auto" disabled={!desktop || !input.trim()}>{t.search}</button>
+        <button type="submit" className="editorial-btn-primary w-full sm:w-auto" disabled={!input.trim()}>{t.search}</button>
       </form>
       <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm">
         <p className="text-[var(--muted)]">
@@ -105,7 +104,6 @@ export function CatalogSearch({
           </button>
         )}
       </div>
-      {!desktop && <p>{t.desktopOnly}</p>}
       {request && !result && <p role="status">{failed ? t.unavailable : t.loading}</p>}
       {request && failed && (
         <button

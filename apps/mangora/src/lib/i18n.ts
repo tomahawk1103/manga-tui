@@ -145,8 +145,10 @@ export interface Translations {
     subtitle: string;
     detectedBannerTitle: string;
     detectedBannerDesc: string;
+    webDetectedBannerDesc: string;
     emptyBannerTitle: string;
     emptyBannerDesc: string;
+    webEmptyBannerDesc: string;
     ctaExplore: string;
     ctaTour: string;
     statSeries: string;
@@ -219,6 +221,9 @@ export interface Translations {
     language: string;
     genre: string;
     all: string;
+    webSourcesTitle: string;
+    webSourcesDesc: string;
+    webDownloadAppBtn: string;
   };
   series: {
     backBtn: string;
@@ -353,6 +358,9 @@ export interface Translations {
     offlineChaptersRead: (read: number, total: number) => string;
     openOfflineSeriesBtn: string;
     finishedToast: (title: string, ch: string) => string;
+    webBannerTitle: string;
+    webBannerDesc: string;
+    webDownloadAppBtn: string;
   };
   settings: {
     sectionPicker: string;
@@ -620,9 +628,13 @@ const ES: Translations = {
     detectedBannerTitle: "Biblioteca compartida activa",
     detectedBannerDesc:
       "Mangora está leyendo directamente tu SQLite y carpeta de descargas existentes. Cualquier cambio aquí o en manga-tui se refleja al instante.",
+    webDetectedBannerDesc:
+      "Tu biblioteca web se guarda localmente en el navegador (IndexedDB). Puedes exportarla o fusionarla con PC y Android desde Ajustes → Almacenamiento (library_sync.json).",
     emptyBannerTitle: "Listo para tu primera serie",
     emptyBannerDesc:
       "Tu biblioteca local todavía no tiene lecturas registradas. Pasa por Explorar para añadir tus primeros mangas o abre tus archivos offline.",
+    webEmptyBannerDesc:
+      "Todavía no tienes series guardadas en este navegador. Explora el catálogo arriba o importa tu library_sync.json desde Ajustes → Almacenamiento.",
     ctaExplore: "Buscar manga",
     ctaTour: "Ver guía rápida",
     statSeries: "Series",
@@ -701,6 +713,10 @@ const ES: Translations = {
     language: "Idioma en esta página",
     genre: "Género en esta página",
     all: "Todos",
+    webSourcesTitle: "Más fuentes y descargas offline en la app nativa",
+    webSourcesDesc:
+      "Mangora Web usa el proxy público con MangaOni y MangaDex. Si quieres los 7 proveedores directos sin límites y descargas CBZ/EPUB/PDF/RAW, usa Mangora para Windows o Android.",
+    webDownloadAppBtn: "Descargar Mangora (Windows / Android) ↗",
   },
   series: {
     backBtn: "Volver",
@@ -863,6 +879,10 @@ const ES: Translations = {
     offlineChaptersRead: (read, total) => `${read} / ${total} leídos`,
     openOfflineSeriesBtn: "Abrir serie",
     finishedToast: (title, ch) => `Descarga lista: ${title} · Cap. ${ch}`,
+    webBannerTitle: "Descargas offline disponibles en la app nativa",
+    webBannerDesc:
+      "En el navegador lees en streaming directo. Las descargas sin conexión en CBZ, EPUB, PDF y RAW están disponibles en Mangora para Windows y Android. Puedes llevar tu progreso mediante library_sync.json en Ajustes.",
+    webDownloadAppBtn: "Descargar app Windows / Android ↗",
   },
   settings: {
     sectionPicker: "Sección de ajustes",
@@ -1158,9 +1178,13 @@ const EN: Translations = {
     detectedBannerTitle: "Shared library active",
     detectedBannerDesc:
       "Mangora reads directly from your existing SQLite history and downloads folder. Any update works across both apps.",
+    webDetectedBannerDesc:
+      "Your web library is stored locally in your browser (IndexedDB). You can export or merge it with Windows & Android under Settings → Storage (library_sync.json).",
     emptyBannerTitle: "Ready for your first series",
     emptyBannerDesc:
       "No reading history is recorded yet. Head to Explore to browse sources or open your local offline downloads folder.",
+    webEmptyBannerDesc:
+      "No series saved in this browser yet. Browse Explore to start reading or import your library_sync.json under Settings → Storage.",
     ctaExplore: "Find manga",
     ctaTour: "Open quick tour",
     statSeries: "Series",
@@ -1239,6 +1263,10 @@ const EN: Translations = {
     language: "Language on this page",
     genre: "Genre on this page",
     all: "All",
+    webSourcesTitle: "More sources & offline downloads in the native app",
+    webSourcesDesc:
+      "Mangora Web uses the public proxy for MangaOni and MangaDex. For all 7 direct Rust sources without proxy limits and CBZ/EPUB/PDF/RAW offline downloads, get Mangora for Windows or Android.",
+    webDownloadAppBtn: "Get Mangora App (Windows / Android) ↗",
   },
   series: {
     backBtn: "Back",
@@ -1401,6 +1429,10 @@ const EN: Translations = {
     offlineChaptersRead: (read, total) => `${read} / ${total} read`,
     openOfflineSeriesBtn: "Open series",
     finishedToast: (title, ch) => `Download ready: ${title} · Ch. ${ch}`,
+    webBannerTitle: "Offline downloads live in the native app",
+    webBannerDesc:
+      "In the browser you read directly online. Full offline CBZ, EPUB, PDF, and RAW downloads are available in Mangora for Windows and Android, and you can carry your progress via library_sync.json in Settings.",
+    webDownloadAppBtn: "Get Windows / Android app ↗",
   },
   settings: {
     sectionPicker: "Settings section",

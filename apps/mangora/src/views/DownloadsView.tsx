@@ -10,7 +10,7 @@ import {
   X,
 } from "lucide-react";
 import { getTranslations } from "../lib/i18n";
-import { isTauriRuntime } from "../lib/tauri";
+import { isTauriRuntime, openExternalUrl } from "../lib/tauri";
 import type {
   DownloadFormat,
   DownloadQueueAction,
@@ -74,6 +74,22 @@ export function DownloadsView({
         <h1 className="font-display mb-2 text-4xl sm:text-5xl">{d.title}</h1>
         <p className="max-w-2xl text-base text-[var(--muted)]">{d.subtitle}</p>
       </div>
+
+      {!desktop && (
+        <section className="editorial-callout flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0 space-y-1">
+            <h2 className="font-display text-xl">{d.webBannerTitle}</h2>
+            <p className="text-xs text-[var(--muted)]">{d.webBannerDesc}</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => void openExternalUrl("https://tomahawk1103.github.io/manga-tui/#descargas")}
+            className="editorial-btn-primary shrink-0 text-xs"
+          >
+            {d.webDownloadAppBtn}
+          </button>
+        </section>
+      )}
 
       {/* Format ribbon + Format selector */}
       <section className="editorial-card overflow-hidden">

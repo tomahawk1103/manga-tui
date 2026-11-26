@@ -8,8 +8,15 @@ const host = (
 ).process?.env?.TAURI_DEV_HOST;
 
 export default defineConfig(({ mode }) => ({
-  ...((mode === "web" || mode === "mangaoni") && { root: "web", base: "./" }),
-  plugins: [react(), tailwindcss(), mode === "mangaoni" && mangaOniPreview()],
+  ...((mode === "web" || mode === "mangaoni") && {
+    root: "web",
+    base: "./",
+    build: {
+      outDir: "../../../docs/mangora-web",
+      emptyOutDir: true,
+    },
+  }),
+  plugins: [react(), tailwindcss(), (mode === "web" || mode === "mangaoni") && mangaOniPreview()],
   clearScreen: false,
   envPrefix: ["VITE_", "TAURI_ENV_*"],
   server: {
