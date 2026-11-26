@@ -52,6 +52,7 @@ import {
   type ToggleFavoritePayload,
   libraryKey,
 } from "./types/mangora";
+import { detectWorkerCapabilities } from "./web/catalog";
 import { DownloadsView } from "./views/DownloadsView";
 import { ExploreView } from "./views/ExploreView";
 import { HomeView } from "./views/HomeView";
@@ -266,6 +267,21 @@ export function App() {
   useEffect(() => {
     void loadInitial();
   }, [loadInitial]);
+
+  useEffect(() => {
+    if (isTauriRuntime()) return;
+    let active = true;
+    void detectWorkerCapabilities().then((caps) => {
+      if (active && caps.v1Supported) {
+        void getInitialState().then((next) => {
+          if (active) setAppState(next);
+        }).catch(() => {});
+      }
+    });
+    return () => {
+      active = false;
+    };
+  }, []);
 
   useEffect(() => {
     if (appState?.onboardingCompleted && activeSection === "home") {

@@ -88,6 +88,7 @@ let sessionSeq = 0;
 
 const anilistCache = new Map<string, AniListCommunityInfo>();
 let capabilitiesPromise: Promise<WorkerCapabilities> | null = null;
+let capabilitiesCache: WorkerCapabilities | null = null;
 
 function baseHref(): string {
   return typeof document !== "undefined" ? document.baseURI : "https://localhost/";
@@ -127,22 +128,36 @@ async function fetchJson<T>(url: URL | string, init?: RequestInit, timeoutMs = 1
 }
 
 export async function detectWorkerCapabilities(): Promise<WorkerCapabilities> {
+  if (capabilitiesCache) return capabilitiesCache;
   if (capabilitiesPromise) return capabilitiesPromise;
   capabilitiesPromise = (async () => {
     try {
       const data = await fetchJson<{ providers?: string[] }>(apiUrl("v1/providers"), undefined, 3500);
       if (Array.isArray(data.providers) && data.providers.length > 0) {
-        return {
+        capabilitiesCache = {
           v1Supported: true,
           providers: data.providers.map((p) => p.toLowerCase()),
         };
+        return capabilitiesCache;
       }
     } catch {
       // Legacy worker without v1 routes or offline
     }
-    return { v1Supported: false, providers: ["mangaoni"] };
+    capabilitiesCache = { v1Supported: false, providers: ["mangaoni"] };
+    return capabilitiesCache;
   })();
   return capabilitiesPromise;
+}
+
+export function getCachedWebProviders(allProviders: ProviderOption[]): ProviderOption[] {
+  if (!capabilitiesCache) {
+    void detectWorkerCapabilities();
+    const initialIds = import.meta.env.MODE === "mangaoni" ? new Set(["mangaoni", "mangadex"]) : new Set(["mangaoni"]);
+    return allProviders.filter((p) => initialIds.has(p.id));
+  }
+  const supported = new Set(capabilitiesCache.providers);
+  const filtered = allProviders.filter((p) => supported.has(p.id));
+  return filtered.length > 0 ? filtered : allProviders.filter((p) => p.id === "mangaoni");
 }
 
 export async function resolveWebProviders(allProviders: ProviderOption[]): Promise<ProviderOption[]> {

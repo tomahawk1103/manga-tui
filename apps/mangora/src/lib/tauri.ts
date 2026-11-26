@@ -2,7 +2,7 @@ import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import {
-  resolveWebProviders,
+  getCachedWebProviders,
   webBuildReaderPageUrl,
   webCheckMangoraUpdates,
   webFetchAniListCommunity,
@@ -143,15 +143,15 @@ export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
-async function getWebProviders(): Promise<ProviderOption[]> {
-  return resolveWebProviders(FALLBACK_PROVIDERS);
+function getWebProviders(): ProviderOption[] {
+  return getCachedWebProviders(FALLBACK_PROVIDERS);
 }
 
 export async function getInitialState(): Promise<InitialAppState> {
   if (isTauriRuntime()) {
     return invoke<InitialAppState>("get_initial_state");
   }
-  return getWebAppState(await getWebProviders());
+  return getWebAppState(getWebProviders());
 }
 
 export async function saveOnboardingPreferences(
@@ -160,7 +160,7 @@ export async function saveOnboardingPreferences(
   if (isTauriRuntime()) {
     return invoke<InitialAppState>("save_onboarding_preferences", { payload });
   }
-  const providers = await getWebProviders();
+  const providers = getWebProviders();
   return patchWebAppState(
     {
       uiLanguage: payload.uiLanguage,
@@ -177,35 +177,35 @@ export async function setUiLanguage(language: UiLanguage): Promise<InitialAppSta
   if (isTauriRuntime()) {
     return invoke<InitialAppState>("set_ui_language", { language });
   }
-  return patchWebAppState({ uiLanguage: language }, await getWebProviders());
+  return patchWebAppState({ uiLanguage: language }, getWebProviders());
 }
 
 export async function setThemeMode(themeMode: ThemeMode): Promise<InitialAppState> {
   if (isTauriRuntime()) {
     return invoke<InitialAppState>("set_theme_mode", { themeMode });
   }
-  return patchWebAppState({ themeMode }, await getWebProviders());
+  return patchWebAppState({ themeMode }, getWebProviders());
 }
 
 export async function setDefaultProvider(provider: string): Promise<InitialAppState> {
   if (isTauriRuntime()) {
     return invoke<InitialAppState>("set_default_provider", { provider });
   }
-  return patchWebAppState({ activeProvider: provider }, await getWebProviders());
+  return patchWebAppState({ activeProvider: provider }, getWebProviders());
 }
 
 export async function setFavoriteGenres(genres: string[]): Promise<InitialAppState> {
   if (isTauriRuntime()) {
     return invoke<InitialAppState>("set_favorite_genres", { genres });
   }
-  return patchWebAppState({ favoriteGenres: genres }, await getWebProviders());
+  return patchWebAppState({ favoriteGenres: genres }, getWebProviders());
 }
 
 export async function setOnboardingCompleted(completed: boolean): Promise<InitialAppState> {
   if (isTauriRuntime()) {
     return invoke<InitialAppState>("set_onboarding_completed", { completed });
   }
-  return patchWebAppState({ onboardingCompleted: completed }, await getWebProviders());
+  return patchWebAppState({ onboardingCompleted: completed }, getWebProviders());
 }
 
 export async function openExternalUrl(url: string): Promise<void> {

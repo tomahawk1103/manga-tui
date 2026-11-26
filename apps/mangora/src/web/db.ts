@@ -235,6 +235,14 @@ function openDb(): Promise<IDBDatabase | null> {
   if (dbPromise) return dbPromise;
 
   dbPromise = new Promise((resolve) => {
+    let settled = false;
+    const finish = (db: IDBDatabase | null) => {
+      if (settled) return;
+      settled = true;
+      if (!db) loadMemoryFallbackFromStorage();
+      resolve(db);
+    };
+    const timer = window.setTimeout(() => finish(null), 1500);
     try {
       const request = window.indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
@@ -253,14 +261,21 @@ function openDb(): Promise<IDBDatabase | null> {
           db.createObjectStore("sessions", { keyPath: "id", autoIncrement: true });
         }
       };
-      request.onsuccess = () => resolve(request.result);
+      request.onsuccess = () => {
+        window.clearTimeout(timer);
+        finish(request.result);
+      };
       request.onerror = () => {
-        loadMemoryFallbackFromStorage();
-        resolve(null);
+        window.clearTimeout(timer);
+        finish(null);
+      };
+      request.onblocked = () => {
+        window.clearTimeout(timer);
+        finish(null);
       };
     } catch {
-      loadMemoryFallbackFromStorage();
-      resolve(null);
+      window.clearTimeout(timer);
+      finish(null);
     }
   });
   return dbPromise;
@@ -286,7 +301,6 @@ async function kvGet<T>(key: string): Promise<T | undefined> {
   if (!db) return memoryStore.kv.get(key) as T | undefined;
   const tx = db.transaction("kv", "readonly");
   const entry = (await reqPromise(tx.objectStore("kv").get(key))) as StoredKvEntry | undefined;
-  await txDone(tx);
   return entry?.value as T | undefined;
 }
 
@@ -298,26 +312,23 @@ async function kvSet(key: string, value: unknown): Promise<void> {
     return;
   }
   const tx = db.transaction("kv", "readwrite");
+  const done = txDone(tx);
   tx.objectStore("kv").put({ key, value } satisfies StoredKvEntry);
-  await txDone(tx);
+  await done;
 }
 
 async function getAllMangas(): Promise<WebMangaRecord[]> {
   const db = await openDb();
   if (!db) return Array.from(memoryStore.mangas.values());
   const tx = db.transaction("mangas", "readonly");
-  const items = (await reqPromise(tx.objectStore("mangas").getAll())) as WebMangaRecord[];
-  await txDone(tx);
-  return items;
+  return (await reqPromise(tx.objectStore("mangas").getAll())) as WebMangaRecord[];
 }
 
 async function getManga(key: string): Promise<WebMangaRecord | undefined> {
   const db = await openDb();
   if (!db) return memoryStore.mangas.get(key);
   const tx = db.transaction("mangas", "readonly");
-  const item = (await reqPromise(tx.objectStore("mangas").get(key))) as WebMangaRecord | undefined;
-  await txDone(tx);
-  return item;
+  return (await reqPromise(tx.objectStore("mangas").get(key))) as WebMangaRecord | undefined;
 }
 
 async function putManga(record: WebMangaRecord): Promise<void> {
@@ -328,17 +339,16 @@ async function putManga(record: WebMangaRecord): Promise<void> {
     return;
   }
   const tx = db.transaction("mangas", "readwrite");
+  const done = txDone(tx);
   tx.objectStore("mangas").put(record);
-  await txDone(tx);
+  await done;
 }
 
 async function getAllChapters(): Promise<WebChapterRecord[]> {
   const db = await openDb();
   if (!db) return Array.from(memoryStore.chapters.values());
   const tx = db.transaction("chapters", "readonly");
-  const items = (await reqPromise(tx.objectStore("chapters").getAll())) as WebChapterRecord[];
-  await txDone(tx);
-  return items;
+  return (await reqPromise(tx.objectStore("chapters").getAll())) as WebChapterRecord[];
 }
 
 async function getChaptersByMangaKey(mKey: string): Promise<WebChapterRecord[]> {
@@ -348,18 +358,14 @@ async function getChaptersByMangaKey(mKey: string): Promise<WebChapterRecord[]> 
   }
   const tx = db.transaction("chapters", "readonly");
   const index = tx.objectStore("chapters").index("byManga");
-  const items = (await reqPromise(index.getAll(mKey))) as WebChapterRecord[];
-  await txDone(tx);
-  return items;
+  return (await reqPromise(index.getAll(mKey))) as WebChapterRecord[];
 }
 
 async function getChapter(key: string): Promise<WebChapterRecord | undefined> {
   const db = await openDb();
   if (!db) return memoryStore.chapters.get(key);
   const tx = db.transaction("chapters", "readonly");
-  const item = (await reqPromise(tx.objectStore("chapters").get(key))) as WebChapterRecord | undefined;
-  await txDone(tx);
-  return item;
+  return (await reqPromise(tx.objectStore("chapters").get(key))) as WebChapterRecord | undefined;
 }
 
 async function putChapter(record: WebChapterRecord): Promise<void> {
@@ -370,17 +376,16 @@ async function putChapter(record: WebChapterRecord): Promise<void> {
     return;
   }
   const tx = db.transaction("chapters", "readwrite");
+  const done = txDone(tx);
   tx.objectStore("chapters").put(record);
-  await txDone(tx);
+  await done;
 }
 
 async function getAllSessions(): Promise<RecordReadingSessionRequest[]> {
   const db = await openDb();
   if (!db) return memoryStore.sessions;
   const tx = db.transaction("sessions", "readonly");
-  const items = (await reqPromise(tx.objectStore("sessions").getAll())) as RecordReadingSessionRequest[];
-  await txDone(tx);
-  return items;
+  return (await reqPromise(tx.objectStore("sessions").getAll())) as RecordReadingSessionRequest[];
 }
 
 async function addSessionRecord(session: RecordReadingSessionRequest): Promise<number> {
@@ -392,11 +397,12 @@ async function addSessionRecord(session: RecordReadingSessionRequest): Promise<n
     return memoryStore.sessions.length;
   }
   const tx = db.transaction("sessions", "readwrite");
+  const done = txDone(tx);
   tx.objectStore("sessions").add({
     ...session,
     started_at: session.started_at ?? new Date().toISOString(),
   });
-  await txDone(tx);
+  await done;
   const all = await getAllSessions();
   return all.length;
 }
