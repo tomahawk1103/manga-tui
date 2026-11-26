@@ -8,11 +8,13 @@ import { useMangoraAppearance } from "./features/hito5";
 import { getTranslations } from "./lib/i18n";
 import { useScreenWakeLock } from "./lib/mobilePlatform";
 import {
+  WEB_BUILD_STAMP,
   controlDownloadQueue,
   defaultBrowserIntegrationsOverview,
   dismissSupportBanner,
   enqueueChaptersDownload,
   getDownloadQueueSnapshot,
+  getEmergencyWebInitialState,
   getInitialState,
   getIntegrationsOverview,
   getLibraryOverview,
@@ -22,6 +24,7 @@ import {
   openDownloadsFolder,
   openExternalUrl,
   openMangaTuiDesktop,
+  resetWebLocalDatabase,
   saveOnboardingPreferences,
   saveReaderPrefs,
   setDefaultProvider,
@@ -198,6 +201,7 @@ export function App() {
   const [replayOnboarding, setReplayOnboarding] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [bootSlow, setBootSlow] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const mainRef = useRef<HTMLElement>(null);
   const uiLangRef = useRef<"es" | "en">("es");
@@ -246,8 +250,79 @@ export function App() {
 
   const initialHomeLoadedRef = useRef(false);
 
+  useEffect(() => {
+    if (appState || errorMessage || isTauriRuntime()) {
+      setBootSlow(false);
+      return;
+    }
+    const timer = window.setTimeout(() => {
+      setBootSlow(true);
+    }, 1800);
+    return () => window.clearTimeout(timer);
+  }, [appState, errorMessage]);
+
   const loadInitial = useCallback(async () => {
     setErrorMessage(null);
+    if (!isTauriRuntime()) {
+      const statePromise = getInitialState();
+      const overviewPromise = getLibraryOverview().catch(() => null);
+      let watchdogTimer: number | undefined;
+      const watchdogPromise = new Promise<"timeout">((resolve) => {
+        watchdogTimer = window.setTimeout(() => resolve("timeout"), 2500);
+      });
+
+      try {
+        const raced = await Promise.race([
+          Promise.all([statePromise, overviewPromise]),
+          watchdogPromise,
+        ]);
+        if (watchdogTimer !== undefined) window.clearTimeout(watchdogTimer);
+
+        if (raced === "timeout") {
+          console.warn("[Mangora Web] Storage init exceeded 2.5s; booting with fallback state.");
+          const fallback = getEmergencyWebInitialState();
+          setAppState(fallback);
+          uiLangRef.current = fallback.uiLanguage;
+          const msg = "Almacenamiento lento en este navegador: iniciado en modo memoria segura.";
+          setToastMessage(msg);
+          window.setTimeout(() => {
+            setToastMessage((prev) => (prev === msg ? null : prev));
+          }, 3500);
+
+          void statePromise
+            .then((lateState) => {
+              setAppState(lateState);
+              uiLangRef.current = lateState.uiLanguage;
+            })
+            .catch(() => {});
+          void overviewPromise.then((lateOverview) => {
+            if (lateOverview) setLibraryOverview(lateOverview);
+          });
+          return;
+        }
+
+        const [next, overview] = raced;
+        setAppState(next);
+        uiLangRef.current = next.uiLanguage;
+        if (overview) {
+          setLibraryOverview(overview);
+          initialHomeLoadedRef.current = true;
+        }
+      } catch (err) {
+        if (watchdogTimer !== undefined) window.clearTimeout(watchdogTimer);
+        console.warn("[Mangora Web] Storage init failed; booting with fallback state:", err);
+        const fallback = getEmergencyWebInitialState();
+        setAppState(fallback);
+        uiLangRef.current = fallback.uiLanguage;
+        const msg = "Almacenamiento bloqueado en este navegador: iniciado en modo memoria segura.";
+        setToastMessage(msg);
+        window.setTimeout(() => {
+          setToastMessage((prev) => (prev === msg ? null : prev));
+        }, 3500);
+      }
+      return;
+    }
+
     try {
       const [next, overview] = await Promise.all([
         getInitialState(),
@@ -626,9 +701,41 @@ export function App() {
               </button>
             </div>
           ) : (
-            <p className="font-mono-editorial text-xs text-[var(--muted)]">
-              &gt;_ Inicializando almacenamiento compartido...
-            </p>
+            <div className="space-y-3">
+              <p className="font-mono-editorial text-xs text-[var(--muted)]">
+                &gt;_ Inicializando almacenamiento compartido...
+              </p>
+              {!isTauriRuntime() && (
+                <p className="font-mono-editorial text-[11px] text-[var(--muted)]">
+                  mangora-web · {WEB_BUILD_STAMP}
+                </p>
+              )}
+              {!isTauriRuntime() && bootSlow && (
+                <div className="space-y-3 border-t border-[var(--ink)] pt-3">
+                  <p className="text-xs font-medium">
+                    El almacenamiento local del navegador está tardando más de lo normal.
+                  </p>
+                  <div className="flex flex-wrap gap-2">
+                    <button
+                      type="button"
+                      onClick={() => setAppState(getEmergencyWebInitialState())}
+                      className="editorial-btn-primary text-xs"
+                    >
+                      Abrir Mangora ahora (modo memoria)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        void resetWebLocalDatabase().finally(() => window.location.reload());
+                      }}
+                      className="editorial-btn-secondary text-xs"
+                    >
+                      Restablecer base local y recargar
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
           )}
         </div>
       </div>

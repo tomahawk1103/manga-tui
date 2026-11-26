@@ -12,15 +12,19 @@ import {
   webSearchCatalog,
 } from "../web/catalog";
 import {
+  WEB_BUILD_STAMP,
+  buildEmergencyWebAppState,
   exportWebLibraryBackupJson,
   getWebAppState,
   getWebLibraryOverview,
   importWebLibraryBackupJson,
   patchWebAppState,
+  resetWebLocalDatabase,
   saveWebReaderProgress,
   toggleWebChapterRead,
   toggleWebFavorite,
 } from "../web/db";
+export { WEB_BUILD_STAMP, resetWebLocalDatabase };
 import type {
   AniListCommunityInfo,
   CloudSyncActionResultDto,
@@ -147,6 +151,10 @@ function getWebProviders(): ProviderOption[] {
   return getCachedWebProviders(FALLBACK_PROVIDERS);
 }
 
+export function getEmergencyWebInitialState(): InitialAppState {
+  return buildEmergencyWebAppState(getWebProviders());
+}
+
 export async function getInitialState(): Promise<InitialAppState> {
   if (isTauriRuntime()) {
     return invoke<InitialAppState>("get_initial_state");
@@ -234,7 +242,7 @@ export async function getLibraryOverview(search?: string): Promise<LibraryOvervi
       search: search?.trim() || null,
     });
   }
-  return getWebLibraryOverview(search, await getWebProviders());
+  return getWebLibraryOverview(search, getWebProviders());
 }
 
 export async function toggleLibraryFavorite(
@@ -243,7 +251,7 @@ export async function toggleLibraryFavorite(
   if (isTauriRuntime()) {
     return invoke<ToggleFavoriteResult>("toggle_library_favorite", { payload });
   }
-  return toggleWebFavorite(payload, await getWebProviders());
+  return toggleWebFavorite(payload, getWebProviders());
 }
 
 export async function toggleChapterRead(
@@ -252,7 +260,7 @@ export async function toggleChapterRead(
   if (isTauriRuntime()) {
     return invoke<ToggleChapterReadResult>("toggle_chapter_read", { payload });
   }
-  return toggleWebChapterRead(payload, await getWebProviders());
+  return toggleWebChapterRead(payload, getWebProviders());
 }
 
 export async function getSeriesDetail(

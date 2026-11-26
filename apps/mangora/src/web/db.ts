@@ -160,6 +160,8 @@ interface MemoryStore {
   nextSessionId: number;
 }
 
+export const WEB_BUILD_STAMP = "2026.11.26-r3";
+
 const memoryStore: MemoryStore = {
   kv: new Map(),
   mangas: new Map(),
@@ -169,11 +171,47 @@ const memoryStore: MemoryStore = {
 };
 
 let memoryLoaded = false;
+let forceMemoryFallback = false;
 let dbPromise: Promise<IDBDatabase | null> | null = null;
 let migrationPromise: Promise<void> | null = null;
 
 function hasIndexedDb(): boolean {
   return typeof window !== "undefined" && typeof window.indexedDB !== "undefined";
+}
+
+function getTimerApi(): {
+  setTimeoutFn: typeof globalThis.setTimeout;
+  clearTimeoutFn: typeof globalThis.clearTimeout;
+} {
+  if (typeof window !== "undefined" && typeof window.setTimeout === "function") {
+    return {
+      setTimeoutFn: window.setTimeout.bind(window),
+      clearTimeoutFn: window.clearTimeout.bind(window),
+    };
+  }
+  return {
+    setTimeoutFn: globalThis.setTimeout.bind(globalThis),
+    clearTimeoutFn: globalThis.clearTimeout.bind(globalThis),
+  };
+}
+
+function withIdbTimeout<T>(promise: Promise<T>, ms = 1800): Promise<T> {
+  const { setTimeoutFn, clearTimeoutFn } = getTimerApi();
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeoutFn(() => {
+      reject(new Error(`IndexedDB operation timed out after ${ms}ms`));
+    }, ms);
+    promise.then(
+      (val) => {
+        clearTimeoutFn(timer);
+        resolve(val);
+      },
+      (err) => {
+        clearTimeoutFn(timer);
+        reject(err);
+      },
+    );
+  });
 }
 
 function loadMemoryFallbackFromStorage(): void {
@@ -228,21 +266,25 @@ function persistMemoryFallbackToStorage(): void {
 }
 
 function openDb(): Promise<IDBDatabase | null> {
-  if (!hasIndexedDb()) {
+  if (forceMemoryFallback || !hasIndexedDb()) {
     loadMemoryFallbackFromStorage();
     return Promise.resolve(null);
   }
   if (dbPromise) return dbPromise;
 
   dbPromise = new Promise((resolve) => {
+    const { setTimeoutFn, clearTimeoutFn } = getTimerApi();
     let settled = false;
     const finish = (db: IDBDatabase | null) => {
       if (settled) return;
       settled = true;
-      if (!db) loadMemoryFallbackFromStorage();
+      if (!db) {
+        forceMemoryFallback = true;
+        loadMemoryFallbackFromStorage();
+      }
       resolve(db);
     };
-    const timer = window.setTimeout(() => finish(null), 1500);
+    const timer = setTimeoutFn(() => finish(null), 1500);
     try {
       const request = window.indexedDB.open(DB_NAME, DB_VERSION);
       request.onupgradeneeded = () => {
@@ -262,19 +304,24 @@ function openDb(): Promise<IDBDatabase | null> {
         }
       };
       request.onsuccess = () => {
-        window.clearTimeout(timer);
-        finish(request.result);
+        clearTimeoutFn(timer);
+        const db = request.result;
+        db.onversionchange = () => {
+          db.close();
+          dbPromise = null;
+        };
+        finish(db);
       };
       request.onerror = () => {
-        window.clearTimeout(timer);
+        clearTimeoutFn(timer);
         finish(null);
       };
       request.onblocked = () => {
-        window.clearTimeout(timer);
+        clearTimeoutFn(timer);
         finish(null);
       };
     } catch {
-      window.clearTimeout(timer);
+      clearTimeoutFn(timer);
       finish(null);
     }
   });
@@ -296,115 +343,159 @@ function txDone(tx: IDBTransaction): Promise<void> {
   });
 }
 
-async function kvGet<T>(key: string): Promise<T | undefined> {
+async function runWithIdbFallback<T>(
+  idbOp: (db: IDBDatabase) => Promise<T>,
+  memOp: () => T,
+): Promise<T> {
   const db = await openDb();
-  if (!db) return memoryStore.kv.get(key) as T | undefined;
-  const tx = db.transaction("kv", "readonly");
-  const entry = (await reqPromise(tx.objectStore("kv").get(key))) as StoredKvEntry | undefined;
-  return entry?.value as T | undefined;
+  if (!db) return memOp();
+  try {
+    return await withIdbTimeout(idbOp(db));
+  } catch (err) {
+    console.warn("[Mangora Web] IndexedDB fallback to memory store:", err);
+    forceMemoryFallback = true;
+    loadMemoryFallbackFromStorage();
+    return memOp();
+  }
+}
+
+async function kvGet<T>(key: string): Promise<T | undefined> {
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("kv", "readonly");
+      const entry = (await reqPromise(tx.objectStore("kv").get(key))) as StoredKvEntry | undefined;
+      return entry?.value as T | undefined;
+    },
+    () => memoryStore.kv.get(key) as T | undefined,
+  );
 }
 
 async function kvSet(key: string, value: unknown): Promise<void> {
-  const db = await openDb();
-  if (!db) {
-    memoryStore.kv.set(key, value);
-    persistMemoryFallbackToStorage();
-    return;
-  }
-  const tx = db.transaction("kv", "readwrite");
-  const done = txDone(tx);
-  tx.objectStore("kv").put({ key, value } satisfies StoredKvEntry);
-  await done;
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("kv", "readwrite");
+      const done = txDone(tx);
+      tx.objectStore("kv").put({ key, value } satisfies StoredKvEntry);
+      await done;
+    },
+    () => {
+      memoryStore.kv.set(key, value);
+      persistMemoryFallbackToStorage();
+    },
+  );
 }
 
 async function getAllMangas(): Promise<WebMangaRecord[]> {
-  const db = await openDb();
-  if (!db) return Array.from(memoryStore.mangas.values());
-  const tx = db.transaction("mangas", "readonly");
-  return (await reqPromise(tx.objectStore("mangas").getAll())) as WebMangaRecord[];
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("mangas", "readonly");
+      return (await reqPromise(tx.objectStore("mangas").getAll())) as WebMangaRecord[];
+    },
+    () => Array.from(memoryStore.mangas.values()),
+  );
 }
 
 async function getManga(key: string): Promise<WebMangaRecord | undefined> {
-  const db = await openDb();
-  if (!db) return memoryStore.mangas.get(key);
-  const tx = db.transaction("mangas", "readonly");
-  return (await reqPromise(tx.objectStore("mangas").get(key))) as WebMangaRecord | undefined;
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("mangas", "readonly");
+      return (await reqPromise(tx.objectStore("mangas").get(key))) as WebMangaRecord | undefined;
+    },
+    () => memoryStore.mangas.get(key),
+  );
 }
 
 async function putManga(record: WebMangaRecord): Promise<void> {
-  const db = await openDb();
-  if (!db) {
-    memoryStore.mangas.set(record.key, record);
-    persistMemoryFallbackToStorage();
-    return;
-  }
-  const tx = db.transaction("mangas", "readwrite");
-  const done = txDone(tx);
-  tx.objectStore("mangas").put(record);
-  await done;
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("mangas", "readwrite");
+      const done = txDone(tx);
+      tx.objectStore("mangas").put(record);
+      await done;
+    },
+    () => {
+      memoryStore.mangas.set(record.key, record);
+      persistMemoryFallbackToStorage();
+    },
+  );
 }
 
 async function getAllChapters(): Promise<WebChapterRecord[]> {
-  const db = await openDb();
-  if (!db) return Array.from(memoryStore.chapters.values());
-  const tx = db.transaction("chapters", "readonly");
-  return (await reqPromise(tx.objectStore("chapters").getAll())) as WebChapterRecord[];
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("chapters", "readonly");
+      return (await reqPromise(tx.objectStore("chapters").getAll())) as WebChapterRecord[];
+    },
+    () => Array.from(memoryStore.chapters.values()),
+  );
 }
 
 async function getChaptersByMangaKey(mKey: string): Promise<WebChapterRecord[]> {
-  const db = await openDb();
-  if (!db) {
-    return Array.from(memoryStore.chapters.values()).filter((ch) => ch.mangaKey === mKey);
-  }
-  const tx = db.transaction("chapters", "readonly");
-  const index = tx.objectStore("chapters").index("byManga");
-  return (await reqPromise(index.getAll(mKey))) as WebChapterRecord[];
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("chapters", "readonly");
+      const index = tx.objectStore("chapters").index("byManga");
+      return (await reqPromise(index.getAll(mKey))) as WebChapterRecord[];
+    },
+    () => Array.from(memoryStore.chapters.values()).filter((ch) => ch.mangaKey === mKey),
+  );
 }
 
 async function getChapter(key: string): Promise<WebChapterRecord | undefined> {
-  const db = await openDb();
-  if (!db) return memoryStore.chapters.get(key);
-  const tx = db.transaction("chapters", "readonly");
-  return (await reqPromise(tx.objectStore("chapters").get(key))) as WebChapterRecord | undefined;
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("chapters", "readonly");
+      return (await reqPromise(tx.objectStore("chapters").get(key))) as WebChapterRecord | undefined;
+    },
+    () => memoryStore.chapters.get(key),
+  );
 }
 
 async function putChapter(record: WebChapterRecord): Promise<void> {
-  const db = await openDb();
-  if (!db) {
-    memoryStore.chapters.set(record.key, record);
-    persistMemoryFallbackToStorage();
-    return;
-  }
-  const tx = db.transaction("chapters", "readwrite");
-  const done = txDone(tx);
-  tx.objectStore("chapters").put(record);
-  await done;
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("chapters", "readwrite");
+      const done = txDone(tx);
+      tx.objectStore("chapters").put(record);
+      await done;
+    },
+    () => {
+      memoryStore.chapters.set(record.key, record);
+      persistMemoryFallbackToStorage();
+    },
+  );
 }
 
 async function getAllSessions(): Promise<RecordReadingSessionRequest[]> {
-  const db = await openDb();
-  if (!db) return memoryStore.sessions;
-  const tx = db.transaction("sessions", "readonly");
-  return (await reqPromise(tx.objectStore("sessions").getAll())) as RecordReadingSessionRequest[];
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("sessions", "readonly");
+      return (await reqPromise(tx.objectStore("sessions").getAll())) as RecordReadingSessionRequest[];
+    },
+    () => memoryStore.sessions,
+  );
 }
 
 async function addSessionRecord(session: RecordReadingSessionRequest): Promise<number> {
-  const db = await openDb();
-  if (!db) {
-    const id = memoryStore.nextSessionId++;
-    memoryStore.sessions.push({ ...session, id });
-    persistMemoryFallbackToStorage();
-    return memoryStore.sessions.length;
-  }
-  const tx = db.transaction("sessions", "readwrite");
-  const done = txDone(tx);
-  tx.objectStore("sessions").add({
-    ...session,
-    started_at: session.started_at ?? new Date().toISOString(),
-  });
-  await done;
-  const all = await getAllSessions();
-  return all.length;
+  return runWithIdbFallback(
+    async (db) => {
+      const tx = db.transaction("sessions", "readwrite");
+      const done = txDone(tx);
+      tx.objectStore("sessions").add({
+        ...session,
+        started_at: session.started_at ?? new Date().toISOString(),
+      });
+      await done;
+      const all = await getAllSessions();
+      return all.length;
+    },
+    () => {
+      const id = memoryStore.nextSessionId++;
+      memoryStore.sessions.push({ ...session, id });
+      persistMemoryFallbackToStorage();
+      return memoryStore.sessions.length;
+    },
+  );
 }
 
 export function normalizeProviderId(raw: string): string {
@@ -469,167 +560,192 @@ function defaultWebPrefs(availableProviders: ProviderOption[]): StoredAppPrefs {
   };
 }
 
-export async function ensureMigrated(): Promise<void> {
+export function ensureMigrated(): Promise<void> {
   if (migrationPromise) return migrationPromise;
-  migrationPromise = (async () => {
-    const done = await kvGet<boolean>("migrated_v1");
-    if (done) return;
-    if (typeof window === "undefined") {
+  const run = (async () => {
+    try {
+      const done = await kvGet<boolean>("migrated_v1");
+      if (done) return;
+      if (typeof window === "undefined") {
+        await kvSet("migrated_v1", true);
+        return;
+      }
+
+      const nowIso = new Date().toISOString();
+
+      // 1. Legacy app prefs
+      try {
+        const rawState = window.localStorage.getItem(LEGACY_STATE_KEY);
+        if (rawState) {
+          const parsed = JSON.parse(rawState) as Partial<InitialAppState>;
+          const prefs: StoredAppPrefs = {
+            uiLanguage: parsed.uiLanguage === "en" ? "en" : "es",
+            themeMode: parsed.themeMode === "ink" ? "ink" : "paper",
+            activeProvider: parsed.activeProvider ?? "mangaoni",
+            favoriteGenres: Array.isArray(parsed.favoriteGenres) ? parsed.favoriteGenres : [],
+            onboardingCompleted: true,
+            downloadFormat: parsed.downloadFormat ?? "cbz",
+            supportBannerDismissed: Boolean(parsed.supportBannerDismissed),
+            readerPrefs: parsed.readerPrefs ?? defaultWebPrefs([]).readerPrefs,
+          };
+          await kvSet("app_state", prefs);
+        }
+      } catch {
+        // Ignore malformed legacy state
+      }
+
+      // 2. Legacy favorites
+      try {
+        const rawFavs = window.localStorage.getItem(LEGACY_FAVORITES_KEY);
+        if (rawFavs) {
+          const favs = JSON.parse(rawFavs) as LibraryEntry[];
+          if (Array.isArray(favs)) {
+            for (const fav of favs) {
+              if (!fav?.id || !fav?.provider) continue;
+              const mKey = mangaKey(fav.provider, fav.id);
+              await putManga({
+                key: mKey,
+                id: fav.id,
+                provider: normalizeProviderId(fav.provider),
+                providerLabel: fav.providerLabel || providerLabelFor(fav.provider),
+                title: fav.title || fav.id,
+                coverUrl: fav.coverUrl ?? null,
+                description: null,
+                genres: [],
+                createdAt: nowIso,
+                updatedAt: nowIso,
+                lastRead: fav.lastRead ?? null,
+                lastReadChapter: fav.lastReadChapter ?? null,
+                inReadingHistory: Boolean(fav.lastRead),
+                inPlanToRead: Boolean(fav.isPlanToRead),
+                isFavorite: true,
+                favoriteCreatedAt: nowIso,
+                shelfName: fav.shelfName ?? null,
+              });
+            }
+          }
+        }
+      } catch {
+        // Ignore malformed legacy favorites
+      }
+
+      // 3. Legacy Hito 5 appearance, genres, sessions
+      try {
+        const rawAppearance = window.localStorage.getItem(LEGACY_APPEARANCE_KEY);
+        if (rawAppearance) {
+          await kvSet("appearance", {
+            ...DEFAULT_APPEARANCE_CONFIG,
+            ...(JSON.parse(rawAppearance) as Partial<MangoraAppearanceConfig>),
+          });
+        }
+      } catch {
+        // Ignore
+      }
+
+      try {
+        const rawGenres = window.localStorage.getItem(LEGACY_GENRES_KEY);
+        if (rawGenres) {
+          const map = JSON.parse(rawGenres) as Record<string, string[]>;
+          for (const [compoundKey, genres] of Object.entries(map)) {
+            const idx = compoundKey.indexOf(":");
+            if (idx <= 0 || !Array.isArray(genres)) continue;
+            const provider = compoundKey.slice(0, idx);
+            const mangaId = compoundKey.slice(idx + 1);
+            const mKey = mangaKey(provider, mangaId);
+            const existing = await getManga(mKey);
+            if (existing) {
+              existing.genres = Array.from(new Set([...existing.genres, ...genres]));
+              await putManga(existing);
+            }
+          }
+        }
+      } catch {
+        // Ignore
+      }
+
+      try {
+        const rawSessions = window.localStorage.getItem(LEGACY_SESSIONS_KEY);
+        if (rawSessions) {
+          const list = JSON.parse(rawSessions) as RecordReadingSessionRequest[];
+          if (Array.isArray(list)) {
+            for (const item of list) {
+              await addSessionRecord(item);
+            }
+          }
+        }
+      } catch {
+        // Ignore
+      }
+
+      // 4. Legacy mangora-web chapter progress (use internal writer to avoid awaiting ensureMigrated recursively)
+      const localKeys: string[] = [];
+      try {
+        for (let i = 0; i < window.localStorage.length; i += 1) {
+          const k = window.localStorage.key(i);
+          if (k) localKeys.push(k);
+        }
+      } catch {
+        // Ignore storage iteration error
+      }
+
+      for (const k of localKeys) {
+        try {
+          if (k === LEGACY_SAMPLE_PROGRESS_KEY) {
+            const val = Number.parseInt(window.localStorage.getItem(k) ?? "", 10);
+            if (Number.isFinite(val)) {
+              await saveWebReaderProgressInternal({
+                mangaId: "mangora-sample",
+                provider: "mangaoni",
+                mangaTitle: "Manga de muestra",
+                coverUrl: null,
+                chapterId: "sample-1",
+                chapterTitle: "Capítulo 1",
+                language: "es",
+                pageIndex: val,
+                totalPages: 3,
+              });
+            }
+          } else if (k.startsWith(LEGACY_PROGRESS_PREFIX)) {
+            const tupleRaw = k.slice(LEGACY_PROGRESS_PREFIX.length);
+            const [seriesId, chapId] = JSON.parse(tupleRaw) as [string, string];
+            const val = Number.parseInt(window.localStorage.getItem(k) ?? "", 10);
+            if (seriesId && chapId && Number.isFinite(val)) {
+              const fullChapterId = chapId.includes("|") ? chapId : `${seriesId}|${chapId}`;
+              await saveWebReaderProgressInternal({
+                mangaId: seriesId,
+                provider: "mangaoni",
+                mangaTitle: seriesId.split("/").pop() ?? seriesId,
+                coverUrl: null,
+                chapterId: fullChapterId,
+                chapterTitle: `Cap. ${chapId}`,
+                language: "es",
+                pageIndex: val,
+              });
+            }
+          }
+        } catch {
+          // Ignore malformed legacy progress entry
+        }
+      }
+
       await kvSet("migrated_v1", true);
-      return;
+    } catch (err) {
+      console.warn("[Mangora Web] Legacy migration skipped due to error:", err);
     }
-
-    const nowIso = new Date().toISOString();
-
-    // 1. Legacy app prefs
-    try {
-      const rawState = window.localStorage.getItem(LEGACY_STATE_KEY);
-      if (rawState) {
-        const parsed = JSON.parse(rawState) as Partial<InitialAppState>;
-        const prefs: StoredAppPrefs = {
-          uiLanguage: parsed.uiLanguage === "en" ? "en" : "es",
-          themeMode: parsed.themeMode === "ink" ? "ink" : "paper",
-          activeProvider: parsed.activeProvider ?? "mangaoni",
-          favoriteGenres: Array.isArray(parsed.favoriteGenres) ? parsed.favoriteGenres : [],
-          onboardingCompleted: true,
-          downloadFormat: parsed.downloadFormat ?? "cbz",
-          supportBannerDismissed: Boolean(parsed.supportBannerDismissed),
-          readerPrefs: parsed.readerPrefs ?? defaultWebPrefs([]).readerPrefs,
-        };
-        await kvSet("app_state", prefs);
-      }
-    } catch {
-      // Ignore malformed legacy state
-    }
-
-    // 2. Legacy favorites
-    try {
-      const rawFavs = window.localStorage.getItem(LEGACY_FAVORITES_KEY);
-      if (rawFavs) {
-        const favs = JSON.parse(rawFavs) as LibraryEntry[];
-        if (Array.isArray(favs)) {
-          for (const fav of favs) {
-            if (!fav?.id || !fav?.provider) continue;
-            const mKey = mangaKey(fav.provider, fav.id);
-            await putManga({
-              key: mKey,
-              id: fav.id,
-              provider: normalizeProviderId(fav.provider),
-              providerLabel: fav.providerLabel || providerLabelFor(fav.provider),
-              title: fav.title || fav.id,
-              coverUrl: fav.coverUrl ?? null,
-              description: null,
-              genres: [],
-              createdAt: nowIso,
-              updatedAt: nowIso,
-              lastRead: fav.lastRead ?? null,
-              lastReadChapter: fav.lastReadChapter ?? null,
-              inReadingHistory: Boolean(fav.lastRead),
-              inPlanToRead: Boolean(fav.isPlanToRead),
-              isFavorite: true,
-              favoriteCreatedAt: nowIso,
-              shelfName: fav.shelfName ?? null,
-            });
-          }
-        }
-      }
-    } catch {
-      // Ignore malformed legacy favorites
-    }
-
-    // 3. Legacy Hito 5 appearance, genres, sessions
-    try {
-      const rawAppearance = window.localStorage.getItem(LEGACY_APPEARANCE_KEY);
-      if (rawAppearance) {
-        await kvSet("appearance", {
-          ...DEFAULT_APPEARANCE_CONFIG,
-          ...(JSON.parse(rawAppearance) as Partial<MangoraAppearanceConfig>),
-        });
-      }
-    } catch {
-      // Ignore
-    }
-
-    try {
-      const rawGenres = window.localStorage.getItem(LEGACY_GENRES_KEY);
-      if (rawGenres) {
-        const map = JSON.parse(rawGenres) as Record<string, string[]>;
-        for (const [compoundKey, genres] of Object.entries(map)) {
-          const idx = compoundKey.indexOf(":");
-          if (idx <= 0 || !Array.isArray(genres)) continue;
-          const provider = compoundKey.slice(0, idx);
-          const mangaId = compoundKey.slice(idx + 1);
-          const mKey = mangaKey(provider, mangaId);
-          const existing = await getManga(mKey);
-          if (existing) {
-            existing.genres = Array.from(new Set([...existing.genres, ...genres]));
-            await putManga(existing);
-          }
-        }
-      }
-    } catch {
-      // Ignore
-    }
-
-    try {
-      const rawSessions = window.localStorage.getItem(LEGACY_SESSIONS_KEY);
-      if (rawSessions) {
-        const list = JSON.parse(rawSessions) as RecordReadingSessionRequest[];
-        if (Array.isArray(list)) {
-          for (const item of list) {
-            await addSessionRecord(item);
-          }
-        }
-      }
-    } catch {
-      // Ignore
-    }
-
-    // 4. Legacy mangora-web chapter progress
-    try {
-      for (let i = 0; i < window.localStorage.length; i += 1) {
-        const k = window.localStorage.key(i);
-        if (!k) continue;
-        if (k === LEGACY_SAMPLE_PROGRESS_KEY) {
-          const val = Number.parseInt(window.localStorage.getItem(k) ?? "", 10);
-          if (Number.isFinite(val)) {
-            await saveWebReaderProgress({
-              mangaId: "mangora-sample",
-              provider: "mangaoni",
-              mangaTitle: "Manga de muestra",
-              coverUrl: null,
-              chapterId: "sample-1",
-              chapterTitle: "Capítulo 1",
-              language: "es",
-              pageIndex: val,
-              totalPages: 3,
-            });
-          }
-        } else if (k.startsWith(LEGACY_PROGRESS_PREFIX)) {
-          const tupleRaw = k.slice(LEGACY_PROGRESS_PREFIX.length);
-          const [seriesId, chapId] = JSON.parse(tupleRaw) as [string, string];
-          const val = Number.parseInt(window.localStorage.getItem(k) ?? "", 10);
-          if (seriesId && chapId && Number.isFinite(val)) {
-            const fullChapterId = chapId.includes("|") ? chapId : `${seriesId}|${chapId}`;
-            await saveWebReaderProgress({
-              mangaId: seriesId,
-              provider: "mangaoni",
-              mangaTitle: seriesId.split("/").pop() ?? seriesId,
-              coverUrl: null,
-              chapterId: fullChapterId,
-              chapterTitle: `Cap. ${chapId}`,
-              language: "es",
-              pageIndex: val,
-            });
-          }
-        }
-      }
-    } catch {
-      // Ignore legacy progress parsing errors
-    }
-
-    await kvSet("migrated_v1", true);
   })();
+
+  migrationPromise = new Promise<void>((resolve) => {
+    const { setTimeoutFn, clearTimeoutFn } = getTimerApi();
+    const timer = setTimeoutFn(() => {
+      console.warn("[Mangora Web] Migration timed out after 2200ms; continuing startup.");
+      resolve();
+    }, 2200);
+    void run.finally(() => {
+      clearTimeoutFn(timer);
+      resolve();
+    });
+  });
+
   return migrationPromise;
 }
 
@@ -641,10 +757,16 @@ function validateProvider(candidate: string, availableProviders: ProviderOption[
   return availableProviders[0].id;
 }
 
-export async function getWebAppState(availableProviders: ProviderOption[]): Promise<InitialAppState> {
-  await ensureMigrated();
+function buildInitialAppStateFromData(params: {
+  availableProviders: ProviderOption[];
+  stored: Partial<StoredAppPrefs>;
+  mangas: WebMangaRecord[];
+  chapters: WebChapterRecord[];
+  sessions: RecordReadingSessionRequest[];
+  storageModeLabel?: string;
+}): InitialAppState {
+  const { availableProviders, stored, mangas, chapters, sessions, storageModeLabel } = params;
   const base = defaultWebPrefs(availableProviders);
-  const stored = (await kvGet<Partial<StoredAppPrefs>>("app_state")) ?? {};
   const uiLanguage: UiLanguage = stored.uiLanguage === "en" ? "en" : stored.uiLanguage === "es" ? "es" : base.uiLanguage;
   const hasMangadex = availableProviders.some((p) => p.id === "mangadex");
   const recommendedProvider = uiLanguage === "en" && hasMangadex ? "mangadex" : "mangaoni";
@@ -654,7 +776,6 @@ export async function getWebAppState(availableProviders: ProviderOption[]): Prom
     recommendedProvider,
   );
 
-  const [mangas, chapters, sessions] = await Promise.all([getAllMangas(), getAllChapters(), getAllSessions()]);
   const readChapters = chapters.filter((c) => c.isRead);
   const favoritesCount = mangas.filter((m) => m.isFavorite).length;
   const libraryMangas = mangas.filter((m) => m.isFavorite || m.inReadingHistory || m.inPlanToRead).length;
@@ -675,7 +796,8 @@ export async function getWebAppState(availableProviders: ProviderOption[]): Prom
     isMobile: detectIsMobile(),
     canOpenDataFolder: false,
     storageMode: "sandbox",
-    storageModeLabel: uiLanguage === "en" ? "IndexedDB (Browser)" : "IndexedDB (Navegador)",
+    storageModeLabel:
+      storageModeLabel ?? (uiLanguage === "en" ? "IndexedDB (Browser)" : "IndexedDB (Navegador)"),
     dataDir: "IndexedDB · mangora_web_db",
     configDir: "IndexedDB · app_state",
     downloadsDir: uiLanguage === "en" ? "Native app (Windows / Android)" : "App nativa (Windows / Android)",
@@ -701,6 +823,88 @@ export async function getWebAppState(availableProviders: ProviderOption[]): Prom
       lastReadTitle: sortedByRead[0]?.title ?? null,
     },
   };
+}
+
+export function buildEmergencyWebAppState(availableProviders: ProviderOption[]): InitialAppState {
+  loadMemoryFallbackFromStorage();
+  const stored = (memoryStore.kv.get("app_state") as Partial<StoredAppPrefs> | undefined) ?? {};
+  return buildInitialAppStateFromData({
+    availableProviders,
+    stored,
+    mangas: Array.from(memoryStore.mangas.values()),
+    chapters: Array.from(memoryStore.chapters.values()),
+    sessions: memoryStore.sessions,
+    storageModeLabel: detectDefaultLanguage() === "en" ? "Memory fallback (Browser)" : "Memoria local (Navegador)",
+  });
+}
+
+export async function resetWebLocalDatabase(): Promise<void> {
+  forceMemoryFallback = true;
+  if (dbPromise) {
+    try {
+      const db = await withIdbTimeout(dbPromise, 500);
+      db?.close();
+    } catch {
+      // Ignore close error
+    }
+    dbPromise = null;
+  }
+  migrationPromise = null;
+  memoryStore.kv.clear();
+  memoryStore.mangas.clear();
+  memoryStore.chapters.clear();
+  memoryStore.sessions = [];
+  memoryStore.nextSessionId = 1;
+  memoryLoaded = false;
+
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.removeItem(LOCAL_FALLBACK_DUMP_KEY);
+    } catch {
+      // Ignore storage error
+    }
+    if (hasIndexedDb()) {
+      await new Promise<void>((resolve) => {
+        const { setTimeoutFn, clearTimeoutFn } = getTimerApi();
+        const timer = setTimeoutFn(resolve, 1000);
+        try {
+          const req = window.indexedDB.deleteDatabase(DB_NAME);
+          req.onsuccess = () => {
+            clearTimeoutFn(timer);
+            resolve();
+          };
+          req.onerror = () => {
+            clearTimeoutFn(timer);
+            resolve();
+          };
+          req.onblocked = () => {
+            clearTimeoutFn(timer);
+            resolve();
+          };
+        } catch {
+          clearTimeoutFn(timer);
+          resolve();
+        }
+      });
+    }
+  }
+}
+
+export async function getWebAppState(availableProviders: ProviderOption[]): Promise<InitialAppState> {
+  await ensureMigrated();
+  const [stored, mangas, chapters, sessions] = await Promise.all([
+    kvGet<Partial<StoredAppPrefs>>("app_state"),
+    getAllMangas(),
+    getAllChapters(),
+    getAllSessions(),
+  ]);
+  return buildInitialAppStateFromData({
+    availableProviders,
+    stored: stored ?? {},
+    mangas,
+    chapters,
+    sessions,
+  });
 }
 
 export async function patchWebAppState(
@@ -916,10 +1120,9 @@ export async function toggleWebChapterRead(
   return { isRead: nextRead, appState, library };
 }
 
-export async function saveWebReaderProgress(
+async function saveWebReaderProgressInternal(
   payload: SaveReaderProgressPayload,
 ): Promise<SaveReaderProgressResult> {
-  await ensureMigrated();
   const nowIso = new Date().toISOString();
   const mKey = mangaKey(payload.provider, payload.mangaId);
   const cKey = chapterKey(payload.provider, payload.mangaId, payload.chapterId);
@@ -953,6 +1156,13 @@ export async function saveWebReaderProgress(
   });
 
   return { pageIndex: payload.pageIndex, isRead };
+}
+
+export async function saveWebReaderProgress(
+  payload: SaveReaderProgressPayload,
+): Promise<SaveReaderProgressResult> {
+  await ensureMigrated();
+  return saveWebReaderProgressInternal(payload);
 }
 
 export async function recordWebChapterOpen(
