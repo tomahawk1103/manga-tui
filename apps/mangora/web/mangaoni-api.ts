@@ -40,6 +40,28 @@ function plainText(html: string) {
     .replace(/&quot;/g, '"').replace(/&nbsp;/g, " ").trim();
 }
 
+async function updates() {
+  const html = await (await upstream("/")).text();
+  const entries = [];
+  const seen = new Set<string>();
+  for (const row of html.split(/<div\s+class="NRoaY">/i).slice(1)) {
+    const series = row.match(/<a\s+href="(?:https:\/\/manga-oni\.com)?\/([^"]+)\/"[^>]*data-test="latest-update-name"[^>]*>([\s\S]*?)<\/a>/i);
+    if (!series || !seriesId.test(series[1])) continue;
+    const id = series[1];
+    const slug = id.split("/")[1];
+    const cover = row.match(/data-src="(https:\/\/oni\.ntr-files\.online\/[^"]+)"/)?.[1];
+    const published = row.match(/datetime="(\d{4}-\d{2}-\d{2})[ T]/)?.[1];
+    for (const link of row.matchAll(/<a\s+href="(?:https:\/\/manga-oni\.com)?\/lector\/([^/"]+)\/(\d+)\/(?:cascada\/)?"[^>]*>([^<]+)<\/a>/gi)) {
+      const [, pathSlug, cid, label] = link;
+      if (slug !== pathSlug || seen.has(id + "|" + cid)) continue;
+      seen.add(id + "|" + cid);
+      entries.push({ id, title: plainText(series[2]), cover, published, chapterId: cid, chapterTitle: plainText(label) });
+    }
+  }
+  if (!entries.length) throw new Error("La portada de MangaOni no contiene novedades reconocibles");
+  return entries;
+}
+
 async function detail(id: string) {
   const html = await (await upstream("/" + id + "/")).text();
   const slug = id.split("/")[1];
@@ -83,6 +105,9 @@ export async function mangaOniApi(request: Request): Promise<Response> {
   const headers = { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" };
   if (request.method !== "GET") return new Response(null, { status: 405, headers });
   try {
+    if (endpoint === "updates") return Response.json(await updates(), {
+      headers: { ...headers, "Cache-Control": "public, max-age=120" },
+    });
     if (endpoint === "search" && query && query.length <= 120) return Response.json(await search(query), {headers});
     if (endpoint === "series" && seriesId.test(id)) return Response.json(await detail(id), {headers});
     if (endpoint === "chapter" && seriesId.test(id) && chapterId.test(chapter)) return Response.json(await pages(id, chapter), {headers});

@@ -1,9 +1,11 @@
 import { useState } from "react";
 import { BarChart3, BookOpen, Compass, RotateCcw, X, Zap } from "lucide-react";
 import { LibraryShelf } from "../components/LibraryShelf";
+import { ChapterUpdates } from "../components/ChapterUpdates";
 import { ReaderMetricsDashboard } from "../features/hito5";
 import type {
   InitialAppState,
+  OpenReaderChapterRequest,
   LibraryOverview,
   SeriesSelection,
   ToggleFavoritePayload,
@@ -20,6 +22,7 @@ interface HomeViewProps {
   onRefreshLibrary: (search?: string) => Promise<void>;
   onToggleFavorite: (payload: ToggleFavoritePayload) => Promise<void>;
   onOpenSeries: (series: SeriesSelection) => void;
+  onOpenReader: (request: OpenReaderChapterRequest) => void;
   onSearch: () => void;
   onRelaunchTour: () => void;
   onOpenSupport?: () => void;
@@ -36,6 +39,7 @@ export function HomeView({
   onRefreshLibrary,
   onToggleFavorite,
   onOpenSeries,
+  onOpenReader,
   onSearch,
   onRelaunchTour,
   onOpenSupport,
@@ -51,6 +55,14 @@ export function HomeView({
 
   return (
     <div className="space-y-8">
+      <ChapterUpdates language={appState.uiLanguage}
+        onSeries={item => onOpenSeries({ mangaId: item.id, provider: "mangaoni", title: item.title, coverUrl: item.cover })}
+        onChapter={item => onOpenReader({
+          mangaId: item.id, provider: "mangaoni", mangaTitle: item.title, coverUrl: item.cover,
+          chapterId: item.id + "|" + item.chapterId, chapterTitle: item.chapterTitle,
+          chapterNumber: item.chapterTitle.match(/\d+(?:\.\d+)?/)?.[0], language: "es",
+        })}
+      />
       {/* Hero section inspired by docs/index.html */}
       <section className="grid items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
         <div>

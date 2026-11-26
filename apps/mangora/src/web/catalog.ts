@@ -32,6 +32,21 @@ function apiUrl(endpoint: string) {
   return new URL(endpoint, new URL(apiBase.replace(/\/?$/, "/"), document.baseURI));
 }
 
+export interface ChapterUpdate {
+  id: string;
+  title: string;
+  cover?: string;
+  published?: string;
+  chapterId: string;
+  chapterTitle: string;
+}
+
+export async function loadUpdates(signal: AbortSignal): Promise<ChapterUpdate[]> {
+  const response = await fetch(apiUrl("updates"), { signal });
+  if (!response.ok) throw new Error(String(response.status));
+  return response.json();
+}
+
 export async function searchMangaOni(title: string, signal: AbortSignal) {
   const url = apiUrl("search");
   url.searchParams.set("q", title);

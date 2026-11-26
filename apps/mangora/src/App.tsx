@@ -579,6 +579,7 @@ export function App() {
               <>
                 {activeSection === "home" && (
                   <HomeView
+                    onOpenReader={openReader}
                     appState={appState}
                     library={libraryOverview}
                     libraryLoading={libraryLoading}

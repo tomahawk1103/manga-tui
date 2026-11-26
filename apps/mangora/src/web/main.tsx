@@ -4,6 +4,7 @@ import { MangoraAppearanceProvider } from "../features/hito5";
 import { getInitialState, saveReaderPrefs } from "../lib/tauri";
 import type { ReaderPrefs } from "../types/mangora";
 import { ReaderView } from "../views/ReaderView";
+import { ChapterUpdates } from "../components/ChapterUpdates";
 import { chapterRequest, liveMangaOni, loadCatalog, makeReaderSource, openMangaOniSeries, savedPage, searchMangaOni, type Series } from "./catalog";
 import "../styles/editorial.css";
 
@@ -78,6 +79,7 @@ function WebApp({ initialPrefs }: { initialPrefs: ReaderPrefs }) {
           key={route}
           request={request}
           source={source}
+          onNavigateChapter={id => { window.location.hash = chapterRoute(request.mangaId, id); }}
           language="es"
           initialPrefs={readerPrefs}
           onUpdatePrefs={async (prefs) => {
@@ -97,12 +99,16 @@ function WebApp({ initialPrefs }: { initialPrefs: ReaderPrefs }) {
 
   return (
     <main className="mx-auto min-h-dvh max-w-4xl px-4 py-8 text-[var(--ink)] sm:px-8">
-      <header className="mb-8 flex items-center gap-3 border-b border-[var(--ink)] pb-4">
+      <header className="mb-8 flex flex-wrap items-center justify-between gap-3 border-b border-[var(--ink)] pb-4">
         <a href="#" className="flex items-center gap-3 font-display text-2xl font-black">
           <span className="mark" aria-hidden="true">M!</span> Mangora
         </a>
+        <nav aria-label="Principal" className="flex gap-4 text-sm font-bold">
+          <a href="#" aria-current={!section || section === "#" ? "page" : undefined}>Novedades</a>
+          <a href="#buscar" aria-current={section === "#buscar" ? "page" : undefined}>Buscar</a>
+        </nav>
       </header>
-      {(liveId ? detailError : error) ? (
+      {(!route || route === "#") ? <ChapterUpdates language="es" /> : (liveId ? detailError : error) ? (
         <div className="space-y-4">
           <p role="alert">{liveId ? detailError : error}</p>
           <button type="button" className="editorial-btn-primary" onClick={() => {
@@ -117,7 +123,7 @@ function WebApp({ initialPrefs }: { initialPrefs: ReaderPrefs }) {
       ) : isChapter || (section === "#serie" && !series) ? (
         <p role="status">Esta serie o capítulo ya no está disponible. <a href="#">Volver al catálogo</a></p>
       ) : section === "#serie" && series ? (
-        <section aria-labelledby="series-title" className="editorial-card grid gap-5 p-5 sm:grid-cols-[11rem_1fr]">
+        <section aria-labelledby="series-title" className={`editorial-card grid gap-5 p-5 ${series.cover ? "sm:grid-cols-[11rem_1fr]" : ""}`}>
           {series.cover && <img src={series.cover} alt="" className="w-32 self-start sm:w-full" />}
           <div className="space-y-4">
             <h1 id="series-title" className="font-display text-3xl">{series.title}</h1>

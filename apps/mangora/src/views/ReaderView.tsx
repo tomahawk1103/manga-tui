@@ -57,6 +57,7 @@ export interface ReaderViewProps {
   onNotify: (message: string) => void;
   onRegisterBackHandler?: (handler: (() => Promise<boolean>) | null) => void;
   source?: ReaderSource;
+  onNavigateChapter?: (chapterId: string) => void;
 }
 
 export interface ReaderSource {
@@ -105,6 +106,7 @@ export function ReaderView({
   onNotify,
   onRegisterBackHandler,
   source = nativeSource,
+  onNavigateChapter,
 }: ReaderViewProps) {
   const t = getTranslations(language).reader;
   const hito5Labels = getHito5Labels(language);
@@ -305,6 +307,10 @@ export function ReaderView({
         flushProgress(latestSessionRef.current, latestPageRef.current),
         flushSession(),
       ]);
+      if (onNavigateChapter) {
+        onNavigateChapter(neighbor.id);
+        return;
+      }
       setActiveRequest((prev) => ({
         ...prev,
         chapterId: neighbor.id,
@@ -314,7 +320,7 @@ export function ReaderView({
         language: neighbor.language,
       }));
     },
-    [flushProgress, flushSession],
+    [flushProgress, flushSession, onNavigateChapter],
   );
 
   const handleClose = useCallback(async () => {
