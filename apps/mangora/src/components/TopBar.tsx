@@ -10,6 +10,7 @@ interface TopBarProps {
   availableProviders: ProviderOption[];
   onToggleTheme: () => void;
   onChangeLanguage: (lang: UiLanguage) => void;
+  onGoHome?: () => void;
 }
 
 const SECTION_PATH: Record<NavSection, string> = {
@@ -28,6 +29,7 @@ export function TopBar({
   availableProviders,
   onToggleTheme,
   onChangeLanguage,
+  onGoHome,
 }: TopBarProps) {
   const t = getTranslations(uiLanguage);
   const currentProvider = availableProviders.find((p) => p.id === activeProvider);
@@ -35,14 +37,27 @@ export function TopBar({
   return (
     <header className="ink-bar safe-top-bar flex shrink-0 items-center justify-between gap-2 border-b-2 border-[var(--ink)] px-3 pb-2.5 text-xs sm:gap-4 sm:px-6">
       <div className="flex min-w-0 items-center gap-2 sm:gap-3">
-        <span className="ink-dots shrink-0" aria-hidden="true">
-          <i />
-          <i />
-          <i />
-        </span>
-        <span className="truncate font-bold tracking-tight">
-          &gt;_ mangora / {SECTION_PATH[activeSection]}
-        </span>
+        <button
+          type="button"
+          onClick={onGoHome}
+          aria-label={`Mangora — ${t.nav.home}`}
+          className="flex min-w-0 cursor-pointer touch-manipulation items-center gap-2 text-left transition-opacity hover:opacity-85"
+        >
+          <span
+            className="grid h-6 w-6 shrink-0 place-items-center border border-[#f8f7f1] bg-[var(--red)] font-mono-editorial text-[11px] font-bold tracking-tighter text-white md:hidden"
+            aria-hidden="true"
+          >
+            M!
+          </span>
+          <span className="ink-dots hidden shrink-0 md:flex" aria-hidden="true">
+            <i />
+            <i />
+            <i />
+          </span>
+          <span className="truncate font-bold tracking-tight">
+            &gt;_ mangora / {SECTION_PATH[activeSection]}
+          </span>
+        </button>
         <span className="hidden border border-[#55554f] px-2 py-0.5 text-[11px] text-[#ff8a76] sm:inline-block">
           {t.topBar.providerPrefix}: {currentProvider?.badge ?? activeProvider}
         </span>

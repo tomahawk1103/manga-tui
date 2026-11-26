@@ -80,7 +80,7 @@ export function SupportView({
       </section>
 
       {/* Community & Mailbox grid */}
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className="grid gap-6 md:grid-cols-3">
         <article className="editorial-card-muted flex flex-col justify-between p-6">
           <div>
             <div className="font-mono-editorial mb-2 text-xs font-bold uppercase text-[var(--red-text)]">
@@ -96,24 +96,6 @@ export function SupportView({
           >
             <Globe className="h-3.5 w-3.5" aria-hidden="true" />
             <span>{t.support.websiteBtn}</span>
-            <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
-          </button>
-        </article>
-
-        <article className="editorial-card-muted flex flex-col justify-between p-6">
-          <div>
-            <div className="font-mono-editorial mb-2 text-xs font-bold uppercase text-[var(--red-text)]">
-              [DISCORD]
-            </div>
-            <h2 className="font-display mb-2 text-2xl">{t.support.discordTitle}</h2>
-            <p className="mb-5 text-sm text-[var(--muted)]">{t.support.discordDesc}</p>
-          </div>
-          <button
-            type="button"
-            onClick={() => void onOpenExternal(supportConfig.discordUrl)}
-            className="editorial-btn-primary text-xs"
-          >
-            <span>{t.support.discordBtn}</span>
             <ExternalLink className="h-3.5 w-3.5" aria-hidden="true" />
           </button>
         </article>

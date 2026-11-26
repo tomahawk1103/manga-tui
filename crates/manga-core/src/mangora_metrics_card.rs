@@ -92,10 +92,15 @@ pub fn render_editorial_stats_card_svg(metrics: &ExtendedReaderMetrics, options:
     };
 
     let kpi_1_label = if is_es { "CAPÍTULOS LEÍDOS" } else { "CHAPTERS READ" };
-    let kpi_1_sub = if is_es {
-        format!("Hoy {} · Últ. 7d {}", metrics.chapters_read_today, metrics.chapters_read_last_7_days)
+    let chapters_14d = if metrics.chapters_read_last_14_days > 0 {
+        metrics.chapters_read_last_14_days
     } else {
-        format!("Today {} · Last 7d {}", metrics.chapters_read_today, metrics.chapters_read_last_7_days)
+        metrics.daily_activity_last_14_days.iter().map(|d| d.chapters_read).sum()
+    };
+    let kpi_1_sub = if is_es {
+        format!("Hoy {} · Últimos 14d: {}", metrics.chapters_read_today, chapters_14d)
+    } else {
+        format!("Today {} · Last 14d: {}", metrics.chapters_read_today, chapters_14d)
     };
 
     let kpi_2_label = if is_es { "TIEMPO DE LECTURA" } else { "READING TIME" };
@@ -419,8 +424,10 @@ mod tests {
             total_chapters_read: 42,
             chapters_read_today: 3,
             chapters_read_last_7_days: 14,
+            chapters_read_last_14_days: 28,
             chapters_read_last_30_days: 38,
             total_pages_read: 840,
+            pages_read_last_14_days: 560,
             recorded_reading_seconds: 15_120,
             estimated_total_reading_minutes: 252,
             average_minutes_per_chapter: 6.0,

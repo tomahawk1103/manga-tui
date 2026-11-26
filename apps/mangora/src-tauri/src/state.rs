@@ -67,12 +67,18 @@ pub enum PageFitMode {
     Original,
 }
 
+fn default_paged_fit_mode() -> PageFitMode {
+    PageFitMode::FitHeight
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct ReaderPrefs {
     pub view_mode: ReaderViewMode,
     pub direction: ReadingDirection,
     pub fit_mode: PageFitMode,
+    #[serde(default = "default_paged_fit_mode")]
+    pub paged_fit_mode: PageFitMode,
     pub zoom_percent: u16,
     pub cascade_gap_px: u16,
     pub first_page_single: bool,
@@ -86,6 +92,7 @@ impl Default for ReaderPrefs {
             view_mode: ReaderViewMode::Cascade,
             direction: ReadingDirection::Rtl,
             fit_mode: PageFitMode::FitWidth,
+            paged_fit_mode: PageFitMode::FitHeight,
             zoom_percent: 100,
             cascade_gap_px: 8,
             first_page_single: true,
@@ -1071,6 +1078,7 @@ mod tests {
                 view_mode: ReaderViewMode::Double,
                 direction: ReadingDirection::Ltr,
                 fit_mode: PageFitMode::FitHeight,
+                paged_fit_mode: PageFitMode::FitHeight,
                 zoom_percent: 999,
                 cascade_gap_px: 200,
                 first_page_single: false,

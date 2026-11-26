@@ -58,12 +58,27 @@ export function HomeView({
   return (
     <div className="space-y-8">
       <ChapterUpdates language={appState.uiLanguage}
-        onSeries={item => onOpenSeries({ mangaId: item.id, provider: "mangaoni", title: item.title, coverUrl: item.cover })}
-        onChapter={item => onOpenReader({
-          mangaId: item.id, provider: "mangaoni", mangaTitle: item.title, coverUrl: item.cover,
-          chapterId: item.id + "|" + item.chapterId, chapterTitle: item.chapterTitle,
-          chapterNumber: item.chapterTitle.match(/\d+(?:\.\d+)?/)?.[0], language: "es",
-        })}
+        onSeries={(item) => {
+          const provider = item.provider ?? "mangaoni";
+          onOpenSeries({ mangaId: item.id, provider, title: item.title, coverUrl: item.cover });
+        }}
+        onChapter={(item) => {
+          const provider = item.provider ?? "mangaoni";
+          const chapterId =
+            provider === "mangaoni" && !item.chapterId.includes("|")
+              ? `${item.id}|${item.chapterId}`
+              : item.chapterId;
+          onOpenReader({
+            mangaId: item.id,
+            provider,
+            mangaTitle: item.title,
+            coverUrl: item.cover,
+            chapterId,
+            chapterTitle: item.chapterTitle,
+            chapterNumber: item.chapterTitle.match(/\d+(?:\.\d+)?/)?.[0],
+            language: appState.uiLanguage,
+          });
+        }}
       />
       {/* Hero section inspired by docs/index.html */}
       <section className="grid items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">

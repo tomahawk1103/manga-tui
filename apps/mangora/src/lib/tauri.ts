@@ -65,6 +65,7 @@ import type {
 
 export interface CatalogItem {
   id: string;
+  provider?: string;
   title: string;
   description: string | null;
   coverUrl: string;
@@ -77,11 +78,22 @@ export interface CatalogPage {
   hasNext: boolean;
 }
 
-export function searchCatalog(provider: string, query: string, page: number): Promise<CatalogPage> {
+export function searchCatalog(
+  provider: string,
+  query: string,
+  page: number,
+  tags?: string[],
+  uiLanguage?: UiLanguage,
+): Promise<CatalogPage> {
   if (isTauriRuntime()) {
-    return invoke<CatalogPage>("search_catalog", { provider, query, page });
+    return invoke<CatalogPage>("search_catalog", {
+      provider,
+      query,
+      page,
+      tags: tags && tags.length > 0 ? tags : null,
+    });
   }
-  return webSearchCatalog(provider, query, page);
+  return webSearchCatalog(provider, query, page, tags, uiLanguage);
 }
 
 const FALLBACK_PROVIDERS: ProviderOption[] = [
@@ -478,7 +490,7 @@ export function defaultBrowserIntegrationsOverview(): IntegrationsOverviewDto {
     supportConfig: {
       kofiUrl: null,
       sponsorsUrl: "https://github.com/sponsors/tomahawk1103",
-      discordUrl: "https://discord.gg/SeqsWUCpVx",
+      discordUrl: null,
       githubUrl: "https://github.com/tomahawk1103/manga-tui",
       githubIssuesUrl: "https://github.com/tomahawk1103/manga-tui/issues/new",
       websiteUrl: "https://tomahawk1103.github.io/manga-tui/",

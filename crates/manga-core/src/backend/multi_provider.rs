@@ -17,7 +17,10 @@ use crate::backend::manga_provider::inmanga::InmangaProvider;
 use crate::backend::manga_provider::inmanga::filter_state::InmangaFilterState;
 use crate::backend::manga_provider::leercapitulo::LeercapituloProvider;
 use crate::backend::manga_provider::leercapitulo::filter_state::LeercapituloFilterState;
-use crate::backend::manga_provider::mangadex::filters::api_parameter::{ContentRating, Filters, SortBy};
+use crate::backend::manga_provider::mangadex::api_responses::tags::TagsResponse;
+use crate::backend::manga_provider::mangadex::filters::api_parameter::{
+    ContentRating, Filters, MagazineDemographic, SortBy, TagData, TagSelection,
+};
 use crate::backend::manga_provider::mangadex::{API_URL_BASE, COVER_IMG_URL_BASE, MangadexClient};
 use crate::backend::manga_provider::mangaoni::MangaoniProvider;
 use crate::backend::manga_provider::mangaoni::filter_state::MangaoniFilterState;
@@ -1556,6 +1559,143 @@ pub async fn search_mangas_for_provider(
     record_result(provider, res)
 }
 
+static MANGADEX_TAGS_CACHE: tokio::sync::OnceCell<HashMap<String, String>> = tokio::sync::OnceCell::const_new();
+
+fn canonical_tag_name(raw_tag: &str) -> String {
+    let lower = raw_tag.trim().to_ascii_lowercase();
+    match lower.as_str() {
+        "slice_of_life" | "slice of life" => "slice of life".to_string(),
+        "scifi" | "sci-fi" | "ciencia ficcion" | "ciencia ficción" => "sci-fi".to_string(),
+        "martial_arts" | "martial arts" | "artes marciales" => "martial arts".to_string(),
+        "action" | "accion" | "acción" => "action".to_string(),
+        "adventure" | "aventura" | "aventuras" => "adventure".to_string(),
+        "fantasy" | "fantasia" | "fantasía" => "fantasy".to_string(),
+        "comedy" | "comedia" => "comedy".to_string(),
+        "horror" | "terror" => "horror".to_string(),
+        "mystery" | "misterio" => "mystery".to_string(),
+        "psychological" | "psicologico" | "psicológico" => "psychological".to_string(),
+        "sports" | "deportes" => "sports".to_string(),
+        "historical" | "historico" | "histórico" => "historical".to_string(),
+        "supernatural" | "sobrenatural" => "supernatural".to_string(),
+        _ => lower,
+    }
+}
+
+fn build_mangadex_filters_for_tags(
+    provider: MangaProviders,
+    has_query: bool,
+    tags: &[String],
+    tag_uuid_map: &HashMap<String, String>,
+) -> Filters {
+    let mut filters = Filters::default();
+    filters.set_sort_by(if has_query { SortBy::BestMatch } else { SortBy::MostFollows });
+
+    let languages = match provider {
+        MangaProviders::Inmanga | MangaProviders::Mangaoni | MangaProviders::Leercapitulo => {
+            vec![Languages::Spanish, Languages::SpanishLa]
+        },
+        MangaProviders::Weebcentral | MangaProviders::Mangapill | MangaProviders::Comizy => vec![Languages::English],
+        MangaProviders::Mangadex => match *Languages::get_preferred_lang() {
+            Languages::Spanish => vec![Languages::Spanish, Languages::SpanishLa],
+            Languages::SpanishLa => vec![Languages::SpanishLa, Languages::Spanish],
+            other => vec![other],
+        },
+    };
+    filters.set_languages(languages);
+
+    let mut demographics: Vec<MagazineDemographic> = Vec::new();
+    let mut include_ecchi = false;
+    let mut tag_items: Vec<TagData> = Vec::new();
+
+    for raw in tags {
+        let lower = raw.trim().to_ascii_lowercase();
+        if lower.is_empty() {
+            continue;
+        }
+        match lower.as_str() {
+            "shonen" | "shounen" => {
+                if !demographics.contains(&MagazineDemographic::Shounen) {
+                    demographics.push(MagazineDemographic::Shounen);
+                }
+            },
+            "seinen" => {
+                if !demographics.contains(&MagazineDemographic::Seinen) {
+                    demographics.push(MagazineDemographic::Seinen);
+                }
+            },
+            "shojo" | "shoujo" => {
+                if !demographics.contains(&MagazineDemographic::Shoujo) {
+                    demographics.push(MagazineDemographic::Shoujo);
+                }
+            },
+            "josei" => {
+                if !demographics.contains(&MagazineDemographic::Josei) {
+                    demographics.push(MagazineDemographic::Josei);
+                }
+            },
+            "ecchi" => {
+                include_ecchi = true;
+            },
+            _ => {
+                let canonical = canonical_tag_name(&lower);
+                if let Some(uuid) = tag_uuid_map.get(&canonical)
+                    && !tag_items.iter().any(|item| item.id == *uuid)
+                {
+                    tag_items.push(TagData::new(uuid.clone(), TagSelection::Included, canonical));
+                }
+            },
+        }
+    }
+
+    filters.set_magazine_demographic(demographics);
+    filters.set_tags(tag_items);
+    if include_ecchi {
+        filters.set_content_rating(vec![ContentRating::Suggestive, ContentRating::Erotic]);
+    } else {
+        filters.set_content_rating(vec![ContentRating::Safe, ContentRating::Suggestive]);
+    }
+
+    filters
+}
+
+async fn fetch_mangadex_tag_map() -> &'static HashMap<String, String> {
+    MANGADEX_TAGS_CACHE
+        .get_or_init(|| async {
+            let mut map = HashMap::new();
+            if let Ok(resp) = POOL.mangadex.get_tags().await
+                && let Ok(parsed) = resp.json::<TagsResponse>().await
+            {
+                for item in parsed.data {
+                    let key = item.attributes.name.en.trim().to_ascii_lowercase();
+                    if !key.is_empty() {
+                        map.insert(key, item.id);
+                    }
+                }
+            }
+            map
+        })
+        .await
+}
+
+pub async fn search_mangas_with_tags_for_provider(
+    provider: MangaProviders,
+    search_term: Option<SearchTerm>,
+    tags: &[String],
+    pagination: Pagination,
+) -> Result<(GetMangasResponse, MangaProviders), Box<dyn Error>> {
+    let cleaned_tags: Vec<String> = tags.iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+    if cleaned_tags.is_empty() {
+        let res = search_mangas_for_provider(provider, search_term, pagination).await?;
+        return Ok((res, provider));
+    }
+
+    let tag_map = fetch_mangadex_tag_map().await;
+    let filters = build_mangadex_filters_for_tags(provider, search_term.is_some(), &cleaned_tags, tag_map);
+    let res = POOL.mangadex.search_mangas(search_term, filters, pagination).await;
+    let mapped = record_result(MangaProviders::Mangadex, res)?;
+    Ok((mapped, MangaProviders::Mangadex))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1807,5 +1947,31 @@ mod tests {
         let mangaoni_count = results.iter().filter(|r| r.provider == Some(MangaProviders::Mangaoni)).count();
         println!("MangaOni results count: {}", mangaoni_count);
         assert!(mangaoni_count > 0, "No mangaoni results returned in search_all_providers for made in abyss!");
+    }
+
+    #[test]
+    fn test_build_mangadex_filters_for_tags_maps_demographics_ecchi_and_genres() {
+        let mut uuid_map = HashMap::new();
+        uuid_map.insert("action".to_string(), "uuid-action".to_string());
+        uuid_map.insert("slice of life".to_string(), "uuid-sol".to_string());
+        uuid_map.insert("sci-fi".to_string(), "uuid-scifi".to_string());
+
+        let tags = vec![
+            "shonen".to_string(),
+            "seinen".to_string(),
+            "ecchi".to_string(),
+            "action".to_string(),
+            "slice_of_life".to_string(),
+            "scifi".to_string(),
+        ];
+        let filters = build_mangadex_filters_for_tags(MangaProviders::Mangaoni, false, &tags, &uuid_map);
+        assert_eq!(filters.sort_by, SortBy::MostFollows);
+        assert_eq!(filters.languages, vec![Languages::Spanish, Languages::SpanishLa]);
+        assert_eq!(filters.magazine_demographic, vec![MagazineDemographic::Shounen, MagazineDemographic::Seinen,]);
+        assert_eq!(filters.content_rating, vec![ContentRating::Suggestive, ContentRating::Erotic]);
+        assert_eq!(filters.tags.len(), 3);
+        assert_eq!(filters.tags[0].id, "uuid-action");
+        assert_eq!(filters.tags[1].id, "uuid-sol");
+        assert_eq!(filters.tags[2].id, "uuid-scifi");
     }
 }

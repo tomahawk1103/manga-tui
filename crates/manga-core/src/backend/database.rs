@@ -285,8 +285,12 @@ pub struct ExtendedReaderMetrics {
     pub total_chapters_read: u32,
     pub chapters_read_today: u32,
     pub chapters_read_last_7_days: u32,
+    #[serde(default)]
+    pub chapters_read_last_14_days: u32,
     pub chapters_read_last_30_days: u32,
     pub total_pages_read: u32,
+    #[serde(default)]
+    pub pages_read_last_14_days: u32,
     pub recorded_reading_seconds: u64,
     pub estimated_total_reading_minutes: u32,
     pub average_minutes_per_chapter: f32,
@@ -2331,6 +2335,9 @@ impl<'a> Database<'a> {
             });
         }
 
+        let chapters_read_last_14_days: u32 = daily_activity_last_14_days.iter().map(|d| d.chapters_read).sum();
+        let pages_read_last_14_days: u32 = daily_activity_last_14_days.iter().map(|d| d.pages_read).sum();
+
         // Per-manga aggregation without double-counting chapters or reading time
         let mut manga_meta: HashMap<(String, String), String> = HashMap::new();
         let mut manga_chapters_read: HashMap<(String, String), u32> = HashMap::new();
@@ -2510,8 +2517,10 @@ impl<'a> Database<'a> {
             total_chapters_read,
             chapters_read_today,
             chapters_read_last_7_days,
+            chapters_read_last_14_days,
             chapters_read_last_30_days,
             total_pages_read,
+            pages_read_last_14_days,
             recorded_reading_seconds,
             estimated_total_reading_minutes,
             average_minutes_per_chapter,
@@ -5069,7 +5078,9 @@ mod test {
         assert_eq!(metrics.total_chapters_read, 2);
         assert_eq!(metrics.chapters_read_today, 2);
         assert_eq!(metrics.chapters_read_last_7_days, 2);
+        assert_eq!(metrics.chapters_read_last_14_days, 2);
         assert_eq!(metrics.total_pages_read, 22);
+        assert_eq!(metrics.pages_read_last_14_days, 22);
         assert_eq!(metrics.recorded_reading_seconds, 180);
         // 180s real session + 360s fallback for dd_ch_2 = 540s = 9 min (no double counting of dd_ch_1)
         assert_eq!(metrics.estimated_total_reading_minutes, 9);

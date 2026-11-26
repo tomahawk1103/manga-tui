@@ -10,7 +10,7 @@ use manga_core::backend::manga_provider::{
     Chapter, ChapterFilters, ChapterOrderBy, Languages, Manga, MangaProviders, MangaStatus, Pagination,
 };
 use manga_core::backend::multi_provider::{
-    get_chapters_for_provider, get_manga_by_id_for_provider, get_popular_mangas_for_provider, search_mangas_for_provider,
+    get_chapters_for_provider, get_manga_by_id_for_provider, get_popular_mangas_for_provider, search_mangas_with_tags_for_provider,
 };
 use manga_core::backend::offline::{OfflineChapter, OfflineManga, find_offline_manga_in_dir};
 use serde::{Deserialize, Serialize};
@@ -35,6 +35,7 @@ use crate::state::{
 #[serde(rename_all = "camelCase")]
 pub struct CatalogItem {
     pub id: String,
+    pub provider: Option<String>,
     pub title: String,
     pub description: Option<String>,
     pub cover_url: String,
@@ -119,28 +120,42 @@ pub struct ForYouResponse {
 }
 
 #[tauri::command]
-pub async fn search_catalog(provider: String, query: String, page: u32) -> Result<CatalogPage, String> {
+pub async fn search_catalog(provider: String, query: String, page: u32, tags: Option<Vec<String>>) -> Result<CatalogPage, String> {
     let provider = MangaProviders::from_str(&provider).map_err(|_| "Unknown catalog source")?;
-    let term = SearchTerm::trimmed(&query).ok_or("Missing search term")?;
+    let cleaned_tags: Vec<String> = tags
+        .unwrap_or_default()
+        .into_iter()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+        .collect();
+    let term = SearchTerm::trimmed(&query);
+    if term.is_none() && cleaned_tags.is_empty() {
+        return Err("Missing search term or category tag".into());
+    }
     let mut pagination = Pagination::default();
     if page == 0 || page > u32::MAX / pagination.items_per_page {
         return Err("Invalid catalog page".into());
     }
     pagination.current_page = page;
     let end_offset = page * pagination.items_per_page;
-    let response = tokio::time::timeout(Duration::from_secs(20), search_mangas_for_provider(provider, Some(term), pagination))
-        .await
-        .map_err(|_| "Catalog request timed out")?
-        .map_err(|err| err.to_string())?;
+    let (response, effective_provider) = tokio::time::timeout(
+        Duration::from_secs(20),
+        search_mangas_with_tags_for_provider(provider, term, &cleaned_tags, pagination),
+    )
+    .await
+    .map_err(|_| "Catalog request timed out")?
+    .map_err(|err| err.to_string())?;
+    let effective_provider_id = effective_provider.to_string();
     Ok(CatalogPage {
         has_next: response.next_page
             && !response.mangas.is_empty()
-            && (provider != MangaProviders::Mangadex || end_offset < response.total_mangas),
+            && (effective_provider != MangaProviders::Mangadex || end_offset < response.total_mangas),
         items: response
             .mangas
             .into_iter()
             .map(|item| CatalogItem {
                 id: item.id,
+                provider: Some(item.provider.map(|p| p.to_string()).unwrap_or_else(|| effective_provider_id.clone())),
                 title: item.title,
                 description: item.description,
                 cover_url: item.cover_img_url,
@@ -424,6 +439,7 @@ pub async fn get_for_you_recommendations(state: State<'_, AppState>, provider: O
             .into_iter()
             .map(|item| CatalogItem {
                 id: item.id,
+                provider: Some(parsed_provider.to_string()),
                 title: item.title,
                 description: if item.description.trim().is_empty() { None } else { Some(item.description) },
                 cover_url: item.cover_img_url,
@@ -435,17 +451,20 @@ pub async fn get_for_you_recommendations(state: State<'_, AppState>, provider: O
     };
 
     if raw_items.is_empty() {
-        let search_fallback =
-            tokio::time::timeout(Duration::from_secs(15), search_mangas_for_provider(parsed_provider, None, Pagination::default()))
-                .await
-                .map_err(|_| "Recommendations request timed out".to_string())
-                .and_then(|res| res.map_err(|e| e.to_string()))?;
+        let (search_fallback, fallback_provider) = tokio::time::timeout(
+            Duration::from_secs(15),
+            search_mangas_with_tags_for_provider(parsed_provider, None, &[], Pagination::default()),
+        )
+        .await
+        .map_err(|_| "Recommendations request timed out".to_string())
+        .and_then(|res| res.map_err(|e| e.to_string()))?;
 
         raw_items = search_fallback
             .mangas
             .into_iter()
             .map(|item| CatalogItem {
                 id: item.id,
+                provider: Some(fallback_provider.to_string()),
                 title: item.title,
                 description: item.description,
                 cover_url: item.cover_img_url,
@@ -1039,7 +1058,10 @@ mod tests {
 
     #[test]
     fn validate_external_https_url_allows_only_https() {
-        assert_eq!(validate_external_https_url("  https://discord.gg/SeqsWUCpVx  ").unwrap(), "https://discord.gg/SeqsWUCpVx");
+        assert_eq!(
+            validate_external_https_url("  https://github.com/tomahawk1103/manga-tui  ").unwrap(),
+            "https://github.com/tomahawk1103/manga-tui"
+        );
         for invalid in ["", "   ", "http://example.com", "javascript:alert(1)", "file:///etc/passwd"] {
             assert!(validate_external_https_url(invalid).is_err());
         }
@@ -1136,6 +1158,7 @@ mod tests {
         let items = vec![
             CatalogItem {
                 id: "1".into(),
+                provider: None,
                 title: "Pure Sports".into(),
                 description: None,
                 cover_url: String::new(),
@@ -1144,6 +1167,7 @@ mod tests {
             },
             CatalogItem {
                 id: "2".into(),
+                provider: None,
                 title: "Dark Mystery".into(),
                 description: Some("A psychological thriller".into()),
                 cover_url: String::new(),
@@ -1161,14 +1185,20 @@ mod tests {
     #[tokio::test]
     async fn catalog_rejects_invalid_input_before_querying_the_provider() {
         for (provider, query, page) in [("missing", "Monster", 1), ("mangadex", "  ", 1), ("mangadex", "Monster", 0)] {
-            assert!(search_catalog(provider.into(), query.into(), page).await.is_err());
+            assert!(search_catalog(provider.into(), query.into(), page, None).await.is_err());
         }
+        assert!(search_catalog("mangadex".into(), "  ".into(), 1, Some(vec!["  ".into()])).await.is_err());
+        assert!(
+            search_catalog("mangadex".into(), "Monster".into(), 0, Some(vec!["shonen".into()]))
+                .await
+                .is_err()
+        );
     }
 
     #[tokio::test]
     #[ignore = "requires a live MangaDex connection"]
     async fn mangadex_catalog_returns_titles_and_covers() {
-        let page = search_catalog("mangadex".into(), "Monster".into(), 1).await.unwrap();
+        let page = search_catalog("mangadex".into(), "Monster".into(), 1, None).await.unwrap();
         assert!(
             page.items
                 .iter()

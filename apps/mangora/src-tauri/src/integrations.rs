@@ -26,7 +26,6 @@ use tauri_plugin_opener::OpenerExt;
 use crate::feedback::{DEFAULT_GITHUB_ISSUES_URL, FeedbackConfigDto, build_feedback_config};
 use crate::state::{AppState, InitialAppState};
 
-pub const DEFAULT_DISCORD_URL: &str = "https://discord.gg/SeqsWUCpVx";
 pub const DEFAULT_GITHUB_URL: &str = "https://github.com/tomahawk1103/manga-tui";
 pub const DEFAULT_WEBSITE_URL: &str = "https://tomahawk1103.github.io/manga-tui/";
 pub const DEFAULT_SPONSORS_URL: &str = "https://github.com/sponsors/tomahawk1103";
@@ -238,7 +237,7 @@ pub struct TrackersStatusDto {
 pub struct SupportConfigDto {
     pub kofi_url: Option<String>,
     pub sponsors_url: String,
-    pub discord_url: String,
+    pub discord_url: Option<String>,
     pub github_url: String,
     pub github_issues_url: String,
     pub website_url: String,
@@ -324,7 +323,7 @@ pub fn resolve_support_config() -> SupportConfigDto {
     SupportConfigDto {
         kofi_url,
         sponsors_url,
-        discord_url: DEFAULT_DISCORD_URL.to_string(),
+        discord_url: None,
         github_url: DEFAULT_GITHUB_URL.to_string(),
         github_issues_url: DEFAULT_GITHUB_ISSUES_URL.to_string(),
         website_url: DEFAULT_WEBSITE_URL.to_string(),

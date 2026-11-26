@@ -13,7 +13,6 @@ import {
   HardDrive,
   Heart,
   Languages,
-  MessageSquare,
   RefreshCw,
   Sparkles,
   Square,
@@ -35,8 +34,6 @@ import type {
   ToggleFavoritePayload,
   UiLanguage,
 } from "../types/mangora";
-
-const DISCORD_URL = "https://discord.gg/SeqsWUCpVx";
 
 const LANGUAGE_LABELS: Record<string, string> = {
   es: "Español (ES)",
@@ -912,7 +909,7 @@ export function SeriesDetailView({
         </section>
       ) : null}
 
-      {/* AniList Community + Discord CTA */}
+      {/* AniList Community */}
       <section className="editorial-card p-5 sm:p-6">
         <div className="flex flex-col gap-3 border-b-2 border-[var(--ink)] pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
@@ -1068,33 +1065,6 @@ export function SeriesDetailView({
               </div>
             </div>
           )}
-
-          {/* Discord Community CTA */}
-          <div className="editorial-callout flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex items-start gap-3">
-              <MessageSquare
-                className="mt-0.5 h-5 w-5 shrink-0 text-[var(--red-text)]"
-                aria-hidden="true"
-              />
-              <div>
-                <p className="font-display text-base text-[var(--ink)]">
-                  {s.communityDiscordTitle}
-                </p>
-                <p className="text-xs text-[var(--muted)]">
-                  {s.communityDiscordDesc}
-                </p>
-              </div>
-            </div>
-
-            <button
-              type="button"
-              onClick={() => void onOpenExternal(DISCORD_URL)}
-              className="editorial-btn-primary inline-flex min-h-[44px] shrink-0 touch-manipulation items-center justify-center gap-2 px-4 py-2 text-xs font-bold uppercase tracking-[0.12em]"
-            >
-              <ExternalLink className="h-4 w-4" aria-hidden="true" />
-              <span>{s.communityDiscordBtn}</span>
-            </button>
-          </div>
         </div>
       </section>
     </div>

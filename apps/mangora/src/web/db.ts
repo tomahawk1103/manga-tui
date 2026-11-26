@@ -160,7 +160,7 @@ interface MemoryStore {
   nextSessionId: number;
 }
 
-export const WEB_BUILD_STAMP = "2026.11.26-r3";
+export const WEB_BUILD_STAMP = "2026.11.26-r4";
 
 const memoryStore: MemoryStore = {
   kv: new Map(),
@@ -491,7 +491,11 @@ async function addSessionRecord(session: RecordReadingSessionRequest): Promise<n
     },
     () => {
       const id = memoryStore.nextSessionId++;
-      memoryStore.sessions.push({ ...session, id });
+      memoryStore.sessions.push({
+        ...session,
+        started_at: session.started_at ?? new Date().toISOString(),
+        id,
+      });
       persistMemoryFallbackToStorage();
       return memoryStore.sessions.length;
     },
@@ -551,6 +555,7 @@ function defaultWebPrefs(availableProviders: ProviderOption[]): StoredAppPrefs {
       viewMode: "cascade",
       direction: "rtl",
       fitMode: "fitWidth",
+      pagedFitMode: "fitHeight",
       zoomPercent: 100,
       cascadeGapPx: 8,
       firstPageSingle: true,
@@ -1577,8 +1582,10 @@ export async function computeWebExtendedMetrics(): Promise<ExtendedReaderMetrics
     total_chapters_read: totalCh,
     chapters_read_today: daily[daily.length - 1]?.chapters_read ?? 0,
     chapters_read_last_7_days: daily.slice(-7).reduce((acc, d) => acc + d.chapters_read, 0),
+    chapters_read_last_14_days: daily.reduce((acc, d) => acc + d.chapters_read, 0),
     chapters_read_last_30_days: totalCh,
     total_pages_read: totalPages,
+    pages_read_last_14_days: daily.reduce((acc, d) => acc + d.pages_read, 0),
     recorded_reading_seconds: totalSeconds,
     estimated_total_reading_minutes: totalMins,
     average_minutes_per_chapter: totalCh > 0 ? Math.round((totalMins / totalCh) * 10) / 10 : 0,

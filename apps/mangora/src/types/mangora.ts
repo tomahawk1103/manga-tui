@@ -16,6 +16,7 @@ export interface ReaderPrefs {
   viewMode: ReaderViewMode;
   direction: ReadingDirection;
   fitMode: PageFitMode;
+  pagedFitMode?: PageFitMode;
   zoomPercent: number;
   cascadeGapPx: number;
   firstPageSingle: boolean;
@@ -472,7 +473,7 @@ export interface TrackersStatusDto {
 export interface SupportConfigDto {
   kofiUrl: string | null;
   sponsorsUrl: string;
-  discordUrl: string;
+  discordUrl: string | null;
   githubUrl: string;
   githubIssuesUrl: string;
   websiteUrl: string;

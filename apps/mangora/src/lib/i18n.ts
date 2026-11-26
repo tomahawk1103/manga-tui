@@ -81,6 +81,40 @@ export const GENRE_OPTIONS: GenreOption[] = [
   },
 ];
 
+export interface CategoryTagOption {
+  id: string;
+  labelEs: string;
+  labelEn: string;
+  aliases: string[];
+  primary?: boolean;
+}
+
+export const CATEGORY_TAG_OPTIONS: CategoryTagOption[] = [
+  { id: "shonen", labelEs: "Shonen", labelEn: "Shonen", aliases: ["shounen"], primary: true },
+  { id: "seinen", labelEs: "Seinen", labelEn: "Seinen", aliases: ["mature", "adulto"], primary: true },
+  { id: "shojo", labelEs: "Shojo", labelEn: "Shoujo", aliases: ["shoujo"], primary: false },
+  { id: "josei", labelEs: "Josei", labelEn: "Josei", aliases: ["josei"], primary: false },
+  { id: "ecchi", labelEs: "Ecchi", labelEn: "Ecchi", aliases: ["suggestive", "fanservice"], primary: true },
+  { id: "action", labelEs: "Acción", labelEn: "Action", aliases: ["accion"], primary: true },
+  { id: "adventure", labelEs: "Aventura", labelEn: "Adventure", aliases: ["aventuras"], primary: false },
+  { id: "fantasy", labelEs: "Fantasía", labelEn: "Fantasy", aliases: ["fantasia"], primary: true },
+  { id: "isekai", labelEs: "Isekai", labelEn: "Isekai", aliases: ["reencarnacion", "reincarnation"], primary: true },
+  { id: "romance", labelEs: "Romance", labelEn: "Romance", aliases: ["romantica"], primary: true },
+  { id: "comedy", labelEs: "Comedia", labelEn: "Comedy", aliases: ["humor"], primary: true },
+  { id: "drama", labelEs: "Drama", labelEn: "Drama", aliases: ["drama"], primary: true },
+  { id: "slice_of_life", labelEs: "Slice of Life", labelEn: "Slice of Life", aliases: ["vida cotidiana", "costumbrista"], primary: false },
+  { id: "horror", labelEs: "Terror", labelEn: "Horror", aliases: ["horror", "gore"], primary: true },
+  { id: "mystery", labelEs: "Misterio", labelEn: "Mystery", aliases: ["suspense", "detective"], primary: true },
+  { id: "psychological", labelEs: "Psicológico", labelEn: "Psychological", aliases: ["psicologico"], primary: false },
+  { id: "scifi", labelEs: "Ciencia Ficción", labelEn: "Sci-Fi", aliases: ["sci-fi", "ciencia ficcion", "cyberpunk"], primary: false },
+  { id: "sports", labelEs: "Deportes", labelEn: "Sports", aliases: ["spokon"], primary: true },
+  { id: "supernatural", labelEs: "Sobrenatural", labelEn: "Supernatural", aliases: ["ocultismo"], primary: false },
+  { id: "martial_arts", labelEs: "Artes Marciales", labelEn: "Martial Arts", aliases: ["peleas"], primary: false },
+  { id: "historical", labelEs: "Histórico", labelEn: "Historical", aliases: ["historia"], primary: false },
+  { id: "harem", labelEs: "Harem", labelEn: "Harem", aliases: ["harem"], primary: false },
+  { id: "mecha", labelEs: "Mecha", labelEn: "Mecha", aliases: ["robots"], primary: false },
+];
+
 export interface TourCardCopy {
   glyph: string;
   section: NavSection;
@@ -221,6 +255,13 @@ export interface Translations {
     language: string;
     genre: string;
     all: string;
+    tagsTitle: string;
+    tagsFilterPlaceholder: string;
+    clearTags: string;
+    showMoreTags: (count: number) => string;
+    showLessTags: string;
+    activeTagsSummary: (count: number) => string;
+    tagsSourceNote: string;
     webSourcesTitle: string;
     webSourcesDesc: string;
     webDownloadAppBtn: string;
@@ -280,9 +321,6 @@ export interface Translations {
     communityReviewsTitle: string;
     communityNoReviews: string;
     communityOpenAniList: string;
-    communityDiscordTitle: string;
-    communityDiscordDesc: string;
-    communityDiscordBtn: string;
   };
   reader: {
     backToSeries: string;
@@ -307,6 +345,7 @@ export interface Translations {
     fitLabel: string;
     fitWidth: string;
     fitHeight: string;
+    fitPage: string;
     fitOriginal: string;
     zoomOut: string;
     zoomIn: string;
@@ -487,9 +526,6 @@ export interface Translations {
     eyebrow: string;
     title: string;
     subtitle: string;
-    discordTitle: string;
-    discordDesc: string;
-    discordBtn: string;
     githubTitle: string;
     githubDesc: string;
     githubBtn: string;
@@ -530,7 +566,7 @@ const ES: Translations = {
     explore: "Explorar",
     downloads: "Descargas",
     settings: "Ajustes",
-    support: "Apoyar / Discord",
+    support: "Apoyar",
   },
   navMobile: {
     home: "Biblioteca",
@@ -713,6 +749,13 @@ const ES: Translations = {
     language: "Idioma en esta página",
     genre: "Género en esta página",
     all: "Todos",
+    tagsTitle: "Buscar por categorías / etiquetas",
+    tagsFilterPlaceholder: "Filtrar etiquetas (ej. shonen, seinen, ecchi…)",
+    clearTags: "Limpiar etiquetas",
+    showMoreTags: (count) => `Ver todas (+${count})`,
+    showLessTags: "Ver menos",
+    activeTagsSummary: (count) => (count === 1 ? "1 categoría activa" : `${count} categorías activas`),
+    tagsSourceNote: "Búsqueda por categorías consultada vía MangaDex en tu idioma.",
     webSourcesTitle: "Más fuentes y descargas offline en la app nativa",
     webSourcesDesc:
       "Mangora Web usa el proxy público con MangaOni y MangaDex. Si quieres los 7 proveedores directos sin límites y descargas CBZ/EPUB/PDF/RAW, usa Mangora para Windows o Android.",
@@ -769,7 +812,7 @@ const ES: Translations = {
     downloadSelectedBtn: (count) => `Descargar (${count})`,
     enqueuedToast: (count) =>
       count === 1 ? "1 capítulo añadido a la cola de descargas" : `${count} capítulos añadidos a la cola de descargas`,
-    communityEyebrow: "Comunidad · AniList + Discord",
+    communityEyebrow: "Comunidad · AniList",
     communityTitle: "Opinión y reseñas",
     communityLoading: "Consultando ficha pública de AniList…",
     communityUnavailable: "AniList no respondió en este momento; tu ficha y capítulos siguen operativos.",
@@ -781,10 +824,6 @@ const ES: Translations = {
     communityReviewsTitle: "Reseñas públicas de lectores",
     communityNoReviews: "Todavía no hay reseñas públicas registradas en AniList para esta serie.",
     communityOpenAniList: "Ver en AniList ↗",
-    communityDiscordTitle: "Comenta esta serie en Discord",
-    communityDiscordDesc:
-      "¿Quieres recomendarla, comentar el último capítulo o avisar si un servidor falla? Pásate por el Discord oficial.",
-    communityDiscordBtn: "Abrir Discord ↗",
   },
   reader: {
     backToSeries: "Volver",
@@ -809,6 +848,7 @@ const ES: Translations = {
     fitLabel: "Ajuste",
     fitWidth: "Ancho",
     fitHeight: "Alto",
+    fitPage: "Pantalla",
     fitOriginal: "Original",
     zoomOut: "Alejar",
     zoomIn: "Acercar",
@@ -1024,10 +1064,6 @@ const ES: Translations = {
     title: "Hecho con tinta abierta.",
     subtitle:
       "Mangora y manga-tui son software libre bajo licencia MIT. Tu lectura es privada y nunca enviamos telemetría oculta.",
-    discordTitle: "Únete al Discord oficial",
-    discordDesc:
-      "Pide funciones, reporta un servidor caído o charla con otros lectores y colaboradores del proyecto.",
-    discordBtn: "Abrir Discord ↗",
     githubTitle: "Código fuente en GitHub",
     githubDesc:
       "Revisa cada línea de Rust y TypeScript, consulta lanzamientos oficiales o abre una incidencia técnica.",
@@ -1055,7 +1091,7 @@ const ES: Translations = {
       "Gracias a todas las personas de la comunidad que mantienen viva esta app:",
     supportersList: [
       "Colaboradores de Rust, React y CSS que aportan PRs y mejoras.",
-      "Testers de Windows y Android en el Discord oficial.",
+      "Testers de Windows, Web y Android de la comunidad.",
       "Supporters voluntarios que invitan a un Monster ⚡ para impulsar nuevos hitos.",
     ],
     privacyTitle: "Privacidad local garantizada",
@@ -1080,7 +1116,7 @@ const EN: Translations = {
     explore: "Explore",
     downloads: "Downloads",
     settings: "Settings",
-    support: "Support / Discord",
+    support: "Support",
   },
   navMobile: {
     home: "Library",
@@ -1263,6 +1299,13 @@ const EN: Translations = {
     language: "Language on this page",
     genre: "Genre on this page",
     all: "All",
+    tagsTitle: "Browse by categories / tags",
+    tagsFilterPlaceholder: "Filter tags (e.g. shonen, seinen, ecchi…)",
+    clearTags: "Clear tags",
+    showMoreTags: (count) => `Show all (+${count})`,
+    showLessTags: "Show less",
+    activeTagsSummary: (count) => (count === 1 ? "1 active category" : `${count} active categories`),
+    tagsSourceNote: "Category search powered by MangaDex in your selected language.",
     webSourcesTitle: "More sources & offline downloads in the native app",
     webSourcesDesc:
       "Mangora Web uses the public proxy for MangaOni and MangaDex. For all 7 direct Rust sources without proxy limits and CBZ/EPUB/PDF/RAW offline downloads, get Mangora for Windows or Android.",
@@ -1319,7 +1362,7 @@ const EN: Translations = {
     downloadSelectedBtn: (count) => `Download (${count})`,
     enqueuedToast: (count) =>
       count === 1 ? "1 chapter added to the download queue" : `${count} chapters added to the download queue`,
-    communityEyebrow: "Community · AniList + Discord",
+    communityEyebrow: "Community · AniList",
     communityTitle: "Community & reviews",
     communityLoading: "Fetching public AniList data…",
     communityUnavailable: "AniList didn’t respond right now; series details and chapters remain available.",
@@ -1331,10 +1374,6 @@ const EN: Translations = {
     communityReviewsTitle: "Public reader reviews",
     communityNoReviews: "No public AniList reviews yet for this series.",
     communityOpenAniList: "Open on AniList ↗",
-    communityDiscordTitle: "Chat about this series on Discord",
-    communityDiscordDesc:
-      "Share thoughts, ask for features, or report a broken source in the official Discord server.",
-    communityDiscordBtn: "Open Discord ↗",
   },
   reader: {
     backToSeries: "Back",
@@ -1359,6 +1398,7 @@ const EN: Translations = {
     fitLabel: "Fit",
     fitWidth: "Fit width",
     fitHeight: "Fit height",
+    fitPage: "Fit page",
     fitOriginal: "Original",
     zoomOut: "Zoom out",
     zoomIn: "Zoom in",
@@ -1574,10 +1614,6 @@ const EN: Translations = {
     title: "Built with open ink.",
     subtitle:
       "Mangora and manga-tui are MIT-licensed open source software. Your reading stays private with zero hidden telemetry.",
-    discordTitle: "Join the official Discord",
-    discordDesc:
-      "Suggest features, report broken sources, or chat with contributors and fellow readers.",
-    discordBtn: "Open Discord ↗",
     githubTitle: "Source code on GitHub",
     githubDesc:
       "Inspect every line of Rust and TypeScript, track official releases, or open a bug report.",
@@ -1605,7 +1641,7 @@ const EN: Translations = {
       "Thank you to everyone in the community helping keep this project alive:",
     supportersList: [
       "Rust, React, and CSS contributors sending pull requests and fixes.",
-      "Windows and Android community testers in our Discord server.",
+      "Windows, Web, and Android community testers.",
       "Voluntary supporters buying a Monster ⚡ to keep new milestones moving.",
     ],
     privacyTitle: "Local-first privacy",

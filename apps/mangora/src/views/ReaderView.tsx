@@ -147,12 +147,34 @@ export function ReaderView({
     latestPageRef.current = currentPage;
   }, [currentPage]);
 
+  const spreads = useMemo(() => {
+    if (!session) return [];
+    if (prefs.viewMode === "double") {
+      return buildSpreads(session.pageCount, prefs.firstPageSingle);
+    }
+    return Array.from({ length: session.pageCount }, (_, idx) => [idx]);
+  }, [session, prefs.viewMode, prefs.firstPageSingle]);
+
+  const currentSpreadIndex = useMemo(() => {
+    if (spreads.length === 0) return 0;
+    const found = spreads.findIndex((pair) => pair.includes(currentPage));
+    return found >= 0 ? found : 0;
+  }, [spreads, currentPage]);
+
+  const activeSpreadPages = spreads[currentSpreadIndex] ?? [];
+
   const { flushSession } = useReadingSessionTracker({
     mangaId: session?.mangaId ?? "",
     provider: session?.provider ?? "",
     chapterId: session?.chapterId ?? "",
     currentPage: session ? currentPage + 1 : 0,
     totalPages: session?.pageCount ?? 0,
+    initialPage: session ? session.initialPage + 1 : 1,
+    visiblePages: session
+      ? prefs.viewMode === "double"
+        ? activeSpreadPages.map((idx) => idx + 1)
+        : [currentPage + 1]
+      : [],
     enabled: Boolean(session && !isLoading && !loadError),
   });
 
@@ -211,7 +233,7 @@ export function ReaderView({
     };
   }, [activeRequest, reloadNonce, source]);
 
-  // Restore initial page scroll position in cascade mode
+  // Restore initial page scroll position in cascade mode, or reset to top in paged modes
   useEffect(() => {
     if (!session || prefs.viewMode !== "cascade" || session.initialPage <= 0) return;
     const timer = window.setTimeout(() => {
@@ -222,7 +244,11 @@ export function ReaderView({
   }, [session?.sessionId, session?.initialPage, prefs.viewMode]);
 
   useEffect(() => {
-    if (source === nativeSource) return;
+    if (prefs.viewMode === "cascade") return;
+    cascadeContainerRef.current?.scrollTo({ top: 0, left: 0, behavior: "auto" });
+  }, [currentPage, prefs.viewMode, session?.sessionId]);
+
+  useEffect(() => {
     const save = () => void flushProgress(latestSessionRef.current, latestPageRef.current);
     const onVisibilityChange = () => {
       if (document.visibilityState === "hidden") save();
@@ -234,7 +260,7 @@ export function ReaderView({
       document.removeEventListener("visibilitychange", onVisibilityChange);
       save();
     };
-  }, [flushProgress, source]);
+  }, [flushProgress]);
 
   // Debounced auto-save reading progress on page change
   useEffect(() => {
@@ -283,22 +309,6 @@ export function ReaderView({
     },
     [onUpdatePrefs],
   );
-
-  const spreads = useMemo(() => {
-    if (!session) return [];
-    if (prefs.viewMode === "double") {
-      return buildSpreads(session.pageCount, prefs.firstPageSingle);
-    }
-    return Array.from({ length: session.pageCount }, (_, idx) => [idx]);
-  }, [session, prefs.viewMode, prefs.firstPageSingle]);
-
-  const currentSpreadIndex = useMemo(() => {
-    if (spreads.length === 0) return 0;
-    const found = spreads.findIndex((pair) => pair.includes(currentPage));
-    return found >= 0 ? found : 0;
-  }, [spreads, currentPage]);
-
-  const activeSpreadPages = spreads[currentSpreadIndex] ?? [];
 
   const handleOpenNeighbor = useCallback(
     async (neighbor: ReaderChapterNeighbor | null) => {
@@ -607,6 +617,12 @@ export function ReaderView({
     }
   };
 
+  const isPagedMode = prefs.viewMode !== "cascade";
+  const activeFitMode: PageFitMode = isPagedMode
+    ? prefs.pagedFitMode ?? "fitHeight"
+    : prefs.fitMode;
+  const fitEntirePage = isPagedMode && activeFitMode === "fitHeight" && prefs.zoomPercent <= 100;
+
   const renderPageImage = (pageIndex: number) => {
     if (!session) return null;
     const nonce = failedPages[pageIndex] ?? 0;
@@ -615,16 +631,22 @@ export function ReaderView({
     const cacheBustedSrc = nonce > 0 ? `${src}${src.includes("?") ? "&" : "?"}r=${nonce}` : src;
 
     const isCascade = prefs.viewMode === "cascade";
-    const imgStyle =
-      prefs.fitMode === "fitHeight"
+    const imgStyle = fitEntirePage
+      ? {
+          maxHeight: `${prefs.zoomPercent}%`,
+          maxWidth: `${prefs.zoomPercent}%`,
+          width: "auto",
+          height: "auto",
+        }
+      : activeFitMode === "fitHeight"
         ? {
             maxHeight: isCascade
               ? `${(85 * prefs.zoomPercent) / 100}dvh`
-              : `calc(${(86 * prefs.zoomPercent) / 100}dvh)`,
+              : `${(86 * prefs.zoomPercent) / 100}dvh`,
             width: "auto",
             maxWidth: prefs.zoomPercent > 100 ? "none" : "100%",
           }
-        : prefs.fitMode === "original"
+        : activeFitMode === "original"
           ? {
               width: "auto",
               maxWidth: "none",
@@ -639,7 +661,7 @@ export function ReaderView({
                   : prefs.zoomPercent <= 100
                     ? isCascade
                       ? "920px"
-                      : "100%"
+                      : "960px"
                     : "none",
               height: "auto",
             };
@@ -651,7 +673,11 @@ export function ReaderView({
           pageRefs.current[pageIndex] = el;
         }}
         className={`flex justify-center ${
-          prefs.viewMode === "double" ? "min-w-0 flex-1 items-center" : "w-full"
+          fitEntirePage
+            ? `h-full min-h-0 items-center ${prefs.viewMode === "double" ? "min-w-0 flex-1" : "w-full"}`
+            : prefs.viewMode === "double"
+              ? "min-w-0 flex-1 items-start my-auto"
+              : "w-full items-start"
         }`}
       >
         <img
@@ -661,6 +687,7 @@ export function ReaderView({
           alt={`${session.mangaTitle} - ${pageIndex + 1}`}
           loading={Math.abs(pageIndex - currentPage) <= 3 ? "eager" : "lazy"}
           decoding="async"
+          referrerPolicy="no-referrer"
           draggable={false}
           style={imgStyle}
           onError={() => {
@@ -836,16 +863,18 @@ export function ReaderView({
                   {(
                     [
                       ["fitWidth", t.fitWidth],
-                      ["fitHeight", t.fitHeight],
+                      ["fitHeight", isPagedMode ? t.fitPage : t.fitHeight],
                       ["original", t.fitOriginal],
                     ] as Array<[PageFitMode, string]>
                   ).map(([fit, label]) => (
                     <button
                       key={fit}
                       type="button"
-                      onClick={() => applyPrefs({ fitMode: fit })}
+                      onClick={() =>
+                        applyPrefs(isPagedMode ? { pagedFitMode: fit } : { fitMode: fit })
+                      }
                       className={`min-h-[44px] cursor-pointer border-2 border-[var(--ink)] px-2 py-1 text-xs font-bold ${
-                        prefs.fitMode === fit
+                        activeFitMode === fit
                           ? "bg-[var(--ink)] text-[var(--paper)]"
                           : "bg-[var(--paper)] text-[var(--ink)]"
                       }`}
@@ -962,7 +991,7 @@ export function ReaderView({
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className="relative flex-1 touch-pan-x touch-pan-y overflow-auto"
+        className="relative min-h-0 flex-1 touch-pan-x touch-pan-y overflow-auto"
       >
         {isLoading ? (
           <div className="flex h-full min-h-[280px] flex-col items-center justify-center gap-3 p-6 text-center">
@@ -1049,7 +1078,9 @@ export function ReaderView({
           </div>
         ) : session ? (
           <div
-            className={`mx-auto flex min-h-full w-full items-center justify-center gap-2 p-2 sm:p-4 ${
+            className={`mx-auto flex w-full justify-center gap-2 ${
+              fitEntirePage ? "h-full items-center overflow-hidden p-2 sm:p-3" : "min-h-full items-start p-2 sm:p-4"
+            } ${
               prefs.viewMode === "double" && prefs.direction === "rtl" ? "flex-row-reverse" : "flex-row"
             }`}
           >

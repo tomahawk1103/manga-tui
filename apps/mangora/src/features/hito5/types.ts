@@ -117,8 +117,10 @@ export interface ExtendedReaderMetrics {
   total_chapters_read: number;
   chapters_read_today: number;
   chapters_read_last_7_days: number;
+  chapters_read_last_14_days?: number;
   chapters_read_last_30_days: number;
   total_pages_read: number;
+  pages_read_last_14_days?: number;
   recorded_reading_seconds: number;
   estimated_total_reading_minutes: number;
   average_minutes_per_chapter: number;

@@ -16,6 +16,7 @@ import { getWebMangaChapterState, recordWebChapterOpen } from "./db";
 
 export interface ChapterUpdate {
   id: string;
+  provider?: string;
   title: string;
   cover?: string;
   published?: string;
@@ -168,10 +169,174 @@ export async function resolveWebProviders(allProviders: ProviderOption[]): Promi
   return allProviders.filter((p) => p.id === "mangaoni");
 }
 
+const MANGADEX_PUBLIC_API = "https://api.mangadex.org";
+let directMdTagMapPromise: Promise<Map<string, string>> | null = null;
+
+const CANONICAL_TAG_MAP: Record<string, string> = {
+  slice_of_life: "slice of life",
+  scifi: "sci-fi",
+  martial_arts: "martial arts",
+};
+
+function resolveDirectMdCover(mangaId: string, fileName: string | undefined, size: 256 | 512, useProxy: boolean): string {
+  if (!fileName) return "";
+  const raw = `https://uploads.mangadex.org/covers/${mangaId}/${fileName}.${size}.jpg`;
+  if (!useProxy) return raw;
+  const proxy = apiUrl("v1/image");
+  proxy.searchParams.set("url", raw);
+  return proxy.href;
+}
+
+function pickMdText(map: Record<string, string> | undefined, preferred: string[]): string {
+  if (!map) return "";
+  for (const key of preferred) {
+    const val = map[key]?.trim();
+    if (val) return val;
+  }
+  const first = Object.values(map).find((v) => typeof v === "string" && v.trim());
+  return first?.trim() ?? "";
+}
+
+async function getDirectMangaDexTagMap(): Promise<Map<string, string>> {
+  if (!directMdTagMapPromise) {
+    directMdTagMapPromise = (async () => {
+      const map = new Map<string, string>();
+      try {
+        const res = await fetchJson<{
+          data?: Array<{ id: string; attributes?: { name?: Record<string, string> } }>;
+        }>(`${MANGADEX_PUBLIC_API}/manga/tag`, undefined, 10000);
+        for (const tag of res.data ?? []) {
+          const en = pickMdText(tag.attributes?.name, ["en"]).toLowerCase();
+          if (en && tag.id) map.set(en, tag.id);
+        }
+      } catch {
+        // Non-fatal fallback
+      }
+      return map;
+    })();
+  }
+  return directMdTagMapPromise;
+}
+
+async function directMangaDexLatestUpdates(
+  page: number,
+  language: "es" | "en",
+  signal: AbortSignal,
+  useProxy: boolean,
+): Promise<{ items: ChapterUpdate[]; hasMore: boolean }> {
+  const limit = 24;
+  const offset = Math.max(0, (page - 1) * limit);
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+    "order[readableAt]": "desc",
+  });
+  params.append("contentRating[]", "safe");
+  params.append("contentRating[]", "suggestive");
+  params.append("includes[]", "manga");
+  if (language === "en") {
+    params.append("translatedLanguage[]", "en");
+  } else {
+    params.append("translatedLanguage[]", "es");
+    params.append("translatedLanguage[]", "es-la");
+  }
+
+  const payload = await fetchJson<{
+    total?: number;
+    data?: Array<{
+      id: string;
+      attributes?: { chapter?: string | null; title?: string | null; readableAt?: string | null; publishAt?: string | null };
+      relationships?: Array<{ id: string; type: string; attributes?: { title?: Record<string, string> } }>;
+    }>;
+  }>(`${MANGADEX_PUBLIC_API}/chapter?${params.toString()}`, { signal }, 15000);
+
+  const chapters = payload.data ?? [];
+  const mangaIds = Array.from(
+    new Set(chapters.map((ch) => ch.relationships?.find((r) => r.type === "manga")?.id).filter((id): id is string => Boolean(id))),
+  );
+  const mangaMeta = new Map<string, { title: string; cover?: string }>();
+  if (mangaIds.length > 0) {
+    const mParams = new URLSearchParams({ limit: String(mangaIds.length) });
+    mParams.append("includes[]", "cover_art");
+    for (const id of mangaIds) mParams.append("ids[]", id);
+    const mRes = await fetchJson<{
+      data?: Array<{
+        id: string;
+        attributes?: { title?: Record<string, string> };
+        relationships?: Array<{ type: string; attributes?: { fileName?: string } }>;
+      }>;
+    }>(`${MANGADEX_PUBLIC_API}/manga?${mParams.toString()}`, { signal }, 15000).catch(() => null);
+    for (const m of mRes?.data ?? []) {
+      const title = pickMdText(m.attributes?.title, language === "en" ? ["en", "es"] : ["es", "es-la", "en"]) || m.id;
+      const coverFile = m.relationships?.find((r) => r.type === "cover_art")?.attributes?.fileName;
+      mangaMeta.set(m.id, { title, cover: resolveDirectMdCover(m.id, coverFile, 256, useProxy) || undefined });
+    }
+  }
+
+  const items: ChapterUpdate[] = chapters.flatMap((ch) => {
+    const mangaRel = ch.relationships?.find((r) => r.type === "manga");
+    if (!mangaRel?.id) return [];
+    const meta = mangaMeta.get(mangaRel.id);
+    const title = meta?.title || pickMdText(mangaRel.attributes?.title, ["es", "es-la", "en"]) || mangaRel.id;
+    const num = ch.attributes?.chapter?.trim();
+    const chapterTitle = num ? (language === "en" ? `Ch. ${num}` : `Cap. ${num}`) : ch.attributes?.title?.trim() || "Cap.";
+    const published = (ch.attributes?.readableAt || ch.attributes?.publishAt || "").slice(0, 10) || undefined;
+    return [
+      {
+        id: mangaRel.id,
+        provider: "mangadex",
+        title,
+        cover: meta?.cover,
+        published,
+        chapterId: ch.id,
+        chapterTitle,
+      },
+    ];
+  });
+
+  const total = payload.total ?? offset + chapters.length;
+  return {
+    items,
+    hasMore: chapters.length > 0 && offset + chapters.length < total && offset + limit < 2000,
+  };
+}
+
 export async function loadUpdates(signal: AbortSignal): Promise<ChapterUpdate[]> {
   const response = await fetch(apiUrl("updates"), { signal });
   if (!response.ok) throw new Error(String(response.status));
   return (await response.json()) as ChapterUpdate[];
+}
+
+export async function loadUpdatesPage(
+  page: number,
+  language: "es" | "en",
+  signal: AbortSignal,
+): Promise<{ items: ChapterUpdate[]; hasMore: boolean }> {
+  const caps = await detectWorkerCapabilities();
+  if (page === 1) {
+    const items = await loadUpdates(signal);
+    return {
+      items: items.map((entry) => ({ ...entry, provider: entry.provider ?? "mangaoni" })),
+      hasMore: true,
+    };
+  }
+
+  if (caps.v1Supported) {
+    try {
+      const url = apiUrl("v1/updates");
+      url.searchParams.set("provider", "mangaoni");
+      url.searchParams.set("page", String(page));
+      url.searchParams.set("lang", language);
+      const data = await fetchJson<{ items?: ChapterUpdate[]; hasMore?: boolean } | ChapterUpdate[]>(url, { signal }, 12000);
+      if (!Array.isArray(data) && Array.isArray(data.items)) {
+        return { items: data.items, hasMore: Boolean(data.hasMore) };
+      }
+    } catch {
+      // Fallback to direct MangaDex feed if deployed worker predates paginated v1/updates
+    }
+  }
+
+  return directMangaDexLatestUpdates(Math.max(1, page - 1), language, signal, caps.v1Supported);
 }
 
 function normalizeLegacySeriesId(rawId: string): string {
@@ -223,19 +388,132 @@ function providerBadge(provider: string): string {
   return provider;
 }
 
-export async function webSearchCatalog(provider: string, query: string, page: number): Promise<CatalogPage> {
+async function directMangaDexSearch(
+  query: string,
+  page: number,
+  tags: string[],
+  uiLanguage: "es" | "en",
+  useProxy: boolean,
+): Promise<CatalogPage> {
+  const limit = 20;
+  const offset = Math.max(0, (page - 1) * limit);
+  const params = new URLSearchParams({
+    limit: String(limit),
+    offset: String(offset),
+  });
   const trimmed = query.trim();
-  if (!trimmed) return { items: [], hasNext: false };
+  if (trimmed) {
+    params.set("title", trimmed);
+  } else {
+    params.set("order[followedCount]", "desc");
+  }
+
+  const normalizedTags = tags.map((t) => t.trim().toLowerCase()).filter(Boolean);
+  const hasEcchi = normalizedTags.includes("ecchi");
+  if (hasEcchi) {
+    params.append("contentRating[]", "suggestive");
+    params.append("contentRating[]", "erotica");
+  } else {
+    params.append("contentRating[]", "safe");
+    params.append("contentRating[]", "suggestive");
+  }
+
+  if (normalizedTags.length > 0) {
+    if (uiLanguage === "en") {
+      params.append("availableTranslatedLanguage[]", "en");
+    } else {
+      params.append("availableTranslatedLanguage[]", "es");
+      params.append("availableTranslatedLanguage[]", "es-la");
+    }
+    const demographics = new Set(["shonen", "shounen", "seinen", "shojo", "shoujo", "josei"]);
+    const tagMap = await getDirectMangaDexTagMap();
+    for (const tag of normalizedTags) {
+      if (tag === "ecchi") continue;
+      if (demographics.has(tag)) {
+        params.append("publicationDemographic[]", tag === "shonen" ? "shounen" : tag === "shojo" ? "shoujo" : tag);
+        continue;
+      }
+      const canonical = CANONICAL_TAG_MAP[tag] ?? tag;
+      const uuid = tagMap.get(canonical);
+      if (uuid) params.append("includedTags[]", uuid);
+    }
+  }
+  params.append("includes[]", "cover_art");
+
+  const payload = await fetchJson<{
+    total?: number;
+    data?: Array<{
+      id: string;
+      attributes?: {
+        title?: Record<string, string>;
+        altTitles?: Array<Record<string, string>>;
+        description?: Record<string, string>;
+        availableTranslatedLanguages?: string[];
+        tags?: Array<{ attributes?: { name?: Record<string, string> } }>;
+      };
+      relationships?: Array<{ type: string; attributes?: { fileName?: string } }>;
+    }>;
+  }>(`${MANGADEX_PUBLIC_API}/manga?${params.toString()}`, undefined, 15000);
+
+  const preferred = uiLanguage === "en" ? ["en", "es", "es-la"] : ["es", "es-la", "en"];
+  const items = (payload.data ?? []).map((manga) => {
+    const attrs = manga.attributes ?? {};
+    const title =
+      pickMdText(attrs.title, preferred) ||
+      attrs.altTitles?.map((alt) => pickMdText(alt, preferred)).find(Boolean) ||
+      manga.id;
+    const coverFile = manga.relationships?.find((r) => r.type === "cover_art")?.attributes?.fileName;
+    return {
+      id: manga.id,
+      provider: "mangadex",
+      title,
+      description: pickMdText(attrs.description, preferred) || null,
+      coverUrl: resolveDirectMdCover(manga.id, coverFile, 256, useProxy),
+      genres: (attrs.tags ?? []).map((t) => pickMdText(t.attributes?.name, ["en", "es"])).filter(Boolean),
+      languages: (attrs.availableTranslatedLanguages ?? []).filter(Boolean),
+    };
+  });
+  const total = payload.total ?? items.length;
+  return {
+    items,
+    hasNext: items.length > 0 && offset + items.length < total,
+  };
+}
+
+export async function webSearchCatalog(
+  provider: string,
+  query: string,
+  page: number,
+  tags: string[] = [],
+  uiLanguage: "es" | "en" = "es",
+): Promise<CatalogPage> {
+  const trimmed = query.trim();
+  const cleanedTags = tags.map((t) => t.trim()).filter(Boolean);
+  if (!trimmed && cleanedTags.length === 0) return { items: [], hasNext: false };
 
   const caps = await detectWorkerCapabilities();
   const normProvider = provider.trim().toLowerCase() || "mangaoni";
 
-  if (caps.v1Supported && caps.providers.includes(normProvider)) {
-    const url = apiUrl("v1/search");
-    url.searchParams.set("provider", normProvider);
-    url.searchParams.set("q", trimmed);
-    url.searchParams.set("page", String(page));
-    return fetchJson<CatalogPage>(url);
+  if (caps.v1Supported && (caps.providers.includes(normProvider) || cleanedTags.length > 0)) {
+    try {
+      const url = apiUrl("v1/search");
+      url.searchParams.set("provider", normProvider);
+      if (trimmed) url.searchParams.set("q", trimmed);
+      if (cleanedTags.length > 0) {
+        url.searchParams.set("tags", cleanedTags.join(","));
+        url.searchParams.set("lang", uiLanguage);
+      }
+      url.searchParams.set("page", String(page));
+      return await fetchJson<CatalogPage>(url);
+    } catch (err) {
+      if (cleanedTags.length === 0 && normProvider !== "mangadex") {
+        throw err;
+      }
+    }
+  }
+
+  if (cleanedTags.length > 0 || normProvider === "mangadex") {
+    return directMangaDexSearch(trimmed, page, cleanedTags, uiLanguage, caps.v1Supported);
   }
 
   try {
@@ -245,6 +523,7 @@ export async function webSearchCatalog(provider: string, query: string, page: nu
     return {
       items: items.map((item) => ({
         id: item.id,
+        provider: "mangaoni",
         title: item.title,
         description: null,
         coverUrl: item.cover ?? "",
@@ -262,6 +541,7 @@ export async function webSearchCatalog(provider: string, query: string, page: nu
       return {
         items: matched.map((item) => ({
           id: item.id,
+          provider: "mangaoni",
           title: item.title,
           description: null,
           coverUrl: item.cover ? new URL(item.cover, catalogJsonUrl()).href : "",
@@ -451,6 +731,116 @@ export async function webGetSeriesDetail(
     };
   }
 
+  if (normProvider === "mangadex") {
+    const metaParams = new URLSearchParams();
+    metaParams.append("includes[]", "cover_art");
+    metaParams.append("includes[]", "author");
+    metaParams.append("includes[]", "artist");
+    const metaJson = await fetchJson<{
+      data: {
+        id: string;
+        attributes?: {
+          title?: Record<string, string>;
+          altTitles?: Array<Record<string, string>>;
+          description?: Record<string, string>;
+          status?: string;
+          availableTranslatedLanguages?: string[];
+          tags?: Array<{ attributes?: { name?: Record<string, string> } }>;
+        };
+        relationships?: Array<{ type: string; attributes?: { fileName?: string; name?: string } }>;
+      };
+    }>(`${MANGADEX_PUBLIC_API}/manga/${encodeURIComponent(mangaId)}?${metaParams.toString()}`);
+
+    const manga = metaJson.data;
+    const attrs = manga.attributes ?? {};
+    const availableLanguages = Array.from(new Set((attrs.availableTranslatedLanguages ?? []).filter(Boolean)));
+    const preferredLang =
+      (options?.language && (availableLanguages.length === 0 || availableLanguages.includes(options.language))
+        ? options.language
+        : null) ||
+      ["es", "es-la", "en"].find((code) => availableLanguages.includes(code)) ||
+      availableLanguages[0] ||
+      "es";
+
+    const offset = Math.max(0, (page - 1) * CHAPTERS_PER_PAGE);
+    const feedParams = new URLSearchParams({
+      limit: String(CHAPTERS_PER_PAGE),
+      offset: String(offset),
+      "order[chapter]": order,
+    });
+    feedParams.append("translatedLanguage[]", preferredLang);
+    feedParams.append("contentRating[]", "safe");
+    feedParams.append("contentRating[]", "suggestive");
+    feedParams.append("includes[]", "scanlation_group");
+    const feedJson = await fetchJson<{
+      total?: number;
+      data?: Array<{
+        id: string;
+        attributes?: {
+          title?: string | null;
+          chapter?: string | null;
+          volume?: string | null;
+          translatedLanguage?: string;
+          publishAt?: string | null;
+        };
+        relationships?: Array<{ type: string; attributes?: { name?: string } }>;
+      }>;
+    }>(`${MANGADEX_PUBLIC_API}/manga/${encodeURIComponent(mangaId)}/feed?${feedParams.toString()}`);
+
+    const dbState = await getWebMangaChapterState(normProvider, manga.id);
+    const chapters: SeriesChapterItem[] = (feedJson.data ?? []).map((ch) => {
+      const saved = dbState.chaptersByKey.get(ch.id);
+      return {
+        id: ch.id,
+        title: ch.attributes?.title?.trim() ?? "",
+        chapterNumber: ch.attributes?.chapter?.trim() || "0",
+        volumeNumber: ch.attributes?.volume?.trim() || null,
+        language: ch.attributes?.translatedLanguage ?? preferredLang,
+        scanlator: ch.relationships?.find((rel) => rel.type === "scanlation_group")?.attributes?.name ?? null,
+        publicationDate: ch.attributes?.publishAt ? ch.attributes.publishAt.slice(0, 10) : null,
+        isRead: Boolean(saved?.isRead),
+        isDownloaded: false,
+        isAvailableOnline: true,
+        isBookmarked: Boolean(saved?.isBookmarked),
+        bookmarkedPage: saved?.numberPageBookmarked ?? null,
+        offlineFormat: null,
+      };
+    });
+
+    const totalChapters = feedJson.total ?? chapters.length;
+    const coverFile = manga.relationships?.find((rel) => rel.type === "cover_art")?.attributes?.fileName;
+    const title =
+      pickMdText(attrs.title, ["es", "es-la", "en"]) ||
+      attrs.altTitles?.map((alt) => pickMdText(alt, ["es", "es-la", "en"])).find(Boolean) ||
+      selection.title;
+
+    return {
+      id: manga.id,
+      provider: normProvider,
+      providerLabel: providerBadge(normProvider),
+      title,
+      coverUrl: resolveDirectMdCover(manga.id, coverFile, 512, caps.v1Supported) || selection.coverUrl || null,
+      description: pickMdText(attrs.description, ["es", "es-la", "en"]) || selection.description || null,
+      author: manga.relationships?.find((rel) => rel.type === "author")?.attributes?.name ?? null,
+      artist: manga.relationships?.find((rel) => rel.type === "artist")?.attributes?.name ?? null,
+      status: attrs.status ?? "unknown",
+      genres: (attrs.tags ?? []).map((t) => pickMdText(t.attributes?.name, ["en", "es"])).filter(Boolean),
+      availableLanguages: availableLanguages.length > 0 ? availableLanguages : [preferredLang],
+      activeLanguage: preferredLang,
+      order,
+      page,
+      totalChapters,
+      hasNextPage: offset + chapters.length < totalChapters,
+      isFavorite: dbState.isFavorite,
+      isOfflineFallback: false,
+      offlineChapterCount: 0,
+      readChapterCount: chapters.filter((c) => c.isRead).length,
+      nextUnreadChapter: pickNextUnread(chapters),
+      chapters,
+      onlineWarning: null,
+    };
+  }
+
   // Legacy MangaOni worker endpoint (`series?id=...`)
   const url = apiUrl("series");
   url.searchParams.set("id", mangaId);
@@ -578,6 +968,19 @@ export async function webOpenReaderChapter(request: OpenReaderChapterRequest): P
       url.searchParams.set("chapterId", normalizedChapterId);
       const data = await fetchJson<{ pages: string[] }>(url);
       pages = data.pages;
+    } else if (normProvider === "mangadex") {
+      const data = await fetchJson<{
+        baseUrl?: string;
+        chapter?: { hash?: string; dataSaver?: string[]; data?: string[] };
+      }>(`${MANGADEX_PUBLIC_API}/at-home/server/${encodeURIComponent(normalizedChapterId)}`);
+      const baseUrl = data.baseUrl;
+      const hash = data.chapter?.hash;
+      const files = data.chapter?.dataSaver?.length ? data.chapter.dataSaver : data.chapter?.data;
+      if (!baseUrl || !hash || !files?.length) {
+        throw new Error("MangaDex no devolvió páginas disponibles para este capítulo");
+      }
+      const mode = data.chapter?.dataSaver?.length ? "data-saver" : "data";
+      pages = files.map((file) => `${baseUrl}/${mode}/${hash}/${file}`);
     } else {
       const split = splitChapterCompoundId(mangaId, normalizedChapterId);
       const url = apiUrl("chapter");

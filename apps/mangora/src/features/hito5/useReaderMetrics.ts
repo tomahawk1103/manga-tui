@@ -172,12 +172,55 @@ export interface UseReadingSessionTrackerOptions {
   chapterId: string;
   currentPage: number;
   totalPages: number;
+  initialPage?: number;
+  visiblePages?: number[];
   enabled?: boolean;
   bridge?: Hito5Bridge;
 }
 
 export interface UseReadingSessionTrackerResult {
   flushSession: () => Promise<void>;
+}
+
+const SEEN_PAGES_STORAGE_KEY = "mangora.seen_pages.v1";
+const MAX_SEEN_PAGE_CHAPTERS = 500;
+
+function loadSeenPagesForChapter(chapterStorageKey: string): Set<number> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = window.localStorage.getItem(SEEN_PAGES_STORAGE_KEY);
+    if (!raw) return new Set();
+    const parsed = JSON.parse(raw) as Record<string, number[]>;
+    const list = parsed?.[chapterStorageKey];
+    if (!Array.isArray(list)) return new Set();
+    return new Set(list.filter((n) => typeof n === "number" && Number.isFinite(n) && n > 0));
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSeenPagesForChapter(chapterStorageKey: string, pages: Set<number>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const raw = window.localStorage.getItem(SEEN_PAGES_STORAGE_KEY);
+    const parsed: Record<string, number[]> = raw ? (JSON.parse(raw) as Record<string, number[]>) : {};
+    const ordered: Record<string, number[]> = {};
+    for (const key of Object.keys(parsed)) {
+      if (key !== chapterStorageKey) {
+        ordered[key] = parsed[key];
+      }
+    }
+    ordered[chapterStorageKey] = Array.from(pages).sort((a, b) => a - b);
+    const keys = Object.keys(ordered);
+    if (keys.length > MAX_SEEN_PAGE_CHAPTERS) {
+      for (const oldKey of keys.slice(0, keys.length - MAX_SEEN_PAGE_CHAPTERS)) {
+        delete ordered[oldKey];
+      }
+    }
+    window.localStorage.setItem(SEEN_PAGES_STORAGE_KEY, JSON.stringify(ordered));
+  } catch {
+    // Ignore storage quota or restricted WebView errors
+  }
 }
 
 /**
@@ -190,19 +233,22 @@ export function useReadingSessionTracker({
   chapterId,
   currentPage,
   totalPages,
+  initialPage = 1,
+  visiblePages,
   enabled = true,
   bridge = defaultHito5Bridge,
 }: UseReadingSessionTrackerOptions): UseReadingSessionTrackerResult {
   const activeSecondsRef = useRef(0);
-  const visitedPagesRef = useRef<Set<number>>(new Set());
+  const alreadySeenRef = useRef<Set<number>>(new Set());
+  const newPagesRef = useRef<Set<number>>(new Set());
+  const chapterKeyRef = useRef("");
   const completedRef = useRef(false);
   const flushedRef = useRef(false);
 
   const flushSession = useCallback(async () => {
     if (!enabled || !mangaId || !chapterId || flushedRef.current) return;
     const elapsed = activeSecondsRef.current;
-    const visitedCount = visitedPagesRef.current.size;
-    const pagesCount = visitedCount > 0 ? visitedCount : elapsed >= 1 ? 1 : 0;
+    const pagesCount = newPagesRef.current.size;
     const completed = completedRef.current;
     if (elapsed >= 1 || completed || pagesCount > 0) {
       flushedRef.current = true;
@@ -224,8 +270,19 @@ export function useReadingSessionTracker({
   // Increment active seconds only while document is visible (declared before page tracker so reset runs first)
   useEffect(() => {
     if (!enabled || !mangaId || !chapterId) return;
+    const storageKey = `${provider.trim().toLowerCase()}::${mangaId}::${chapterId}`;
+    chapterKeyRef.current = storageKey;
+    const seen = loadSeenPagesForChapter(storageKey);
+    if (initialPage > 1) {
+      for (let page = 1; page <= initialPage; page += 1) {
+        seen.add(page);
+      }
+      saveSeenPagesForChapter(storageKey, seen);
+    }
+
     activeSecondsRef.current = 0;
-    visitedPagesRef.current = new Set();
+    alreadySeenRef.current = seen;
+    newPagesRef.current = new Set();
     completedRef.current = false;
     flushedRef.current = false;
 
@@ -239,18 +296,30 @@ export function useReadingSessionTracker({
       clearInterval(timer);
       void flushSession();
     };
-  }, [enabled, mangaId, provider, chapterId, flushSession]);
+  }, [enabled, mangaId, provider, chapterId, initialPage, flushSession]);
 
-  // Track visited pages and chapter completion
+  // Track newly discovered pages (ignoring already-visited or backward pages) and chapter completion
+  const visibleSignature = visiblePages?.join(",") ?? "";
   useEffect(() => {
     if (!enabled || !chapterId) return;
-    if (currentPage > 0) {
-      visitedPagesRef.current.add(currentPage);
+    const pagesNow =
+      visiblePages && visiblePages.length > 0 ? visiblePages : currentPage > 0 ? [currentPage] : [];
+    let added = false;
+    for (const pageNum of pagesNow) {
+      if (pageNum > 0 && !alreadySeenRef.current.has(pageNum)) {
+        alreadySeenRef.current.add(pageNum);
+        newPagesRef.current.add(pageNum);
+        added = true;
+      }
     }
-    if (totalPages > 0 && currentPage >= totalPages) {
+    if (added && chapterKeyRef.current) {
+      saveSeenPagesForChapter(chapterKeyRef.current, alreadySeenRef.current);
+    }
+    const maxVisible = pagesNow.length > 0 ? Math.max(...pagesNow) : currentPage;
+    if (totalPages > 0 && maxVisible >= totalPages) {
       completedRef.current = true;
     }
-  }, [enabled, chapterId, currentPage, totalPages]);
+  }, [enabled, chapterId, currentPage, visibleSignature, visiblePages, totalPages]);
 
   return { flushSession };
 }

@@ -206,6 +206,8 @@ export function App() {
   const mainRef = useRef<HTMLElement>(null);
   const uiLangRef = useRef<"es" | "en">("es");
   const readerBackHandlerRef = useRef<(() => Promise<boolean>) | null>(null);
+  const suppressNextWebPushRef = useRef(false);
+  const prevReaderTargetRef = useRef<OpenReaderChapterRequest | null>(null);
   const backStateRef = useRef({
     feedbackOpen: false,
     hasReader: false,
@@ -477,6 +479,7 @@ export function App() {
     if (!isTauriRuntime()) {
       const applyHash = () => {
         const parsed = parseWebHash(window.location.hash);
+        suppressNextWebPushRef.current = true;
         if (parsed.kind === "reader") {
           setReaderTarget(parsed.request);
         } else if (parsed.kind === "series") {
@@ -489,9 +492,30 @@ export function App() {
           setNavigationTarget(parsed.focusSearch ? "search" : null);
         }
       };
+
+      const initialHash = window.location.hash || "#";
+      if (initialHash !== "#") {
+        try {
+          window.history.replaceState({ mangoraWeb: true, hash: "#" }, "", "#");
+          window.history.pushState({ mangoraWeb: true, hash: initialHash }, "", initialHash);
+        } catch {
+          // Ignore history restrictions
+        }
+      } else {
+        try {
+          window.history.replaceState({ mangoraWeb: true, hash: "#" }, "", "#");
+        } catch {
+          // Ignore history restrictions
+        }
+      }
+
       applyHash();
+      window.addEventListener("popstate", applyHash);
       window.addEventListener("hashchange", applyHash);
-      return () => window.removeEventListener("hashchange", applyHash);
+      return () => {
+        window.removeEventListener("popstate", applyHash);
+        window.removeEventListener("hashchange", applyHash);
+      };
     }
 
     const onPopState = () => {
@@ -534,14 +558,27 @@ export function App() {
     if (isTauriRuntime() || !appState) return;
     const targetHash = buildWebHash({ activeSection, selectedSeries, readerTarget });
     const currentHash = window.location.hash || "#";
+    if (suppressNextWebPushRef.current) {
+      suppressNextWebPushRef.current = false;
+      if (currentHash === targetHash) return;
+    }
     if (currentHash !== targetHash) {
       try {
-        window.history.replaceState(null, "", targetHash);
+        window.history.pushState({ mangoraWeb: true, hash: targetHash }, "", targetHash);
       } catch {
         // Ignore history restrictions
       }
     }
   }, [appState, activeSection, selectedSeries, readerTarget]);
+
+  useEffect(() => {
+    const prev = prevReaderTargetRef.current;
+    prevReaderTargetRef.current = readerTarget;
+    if (prev && !readerTarget) {
+      setDownloadCompletedTick((tick) => tick + 1);
+      void Promise.all([loadInitial(), loadLibrary()]);
+    }
+  }, [readerTarget, loadInitial, loadLibrary]);
 
   const activeDownloadChapterIds = useMemo(() => {
     const ids = new Set<string>();
@@ -669,10 +706,8 @@ export function App() {
     }
   };
 
-  const handleCloseReader = async () => {
+  const handleCloseReader = () => {
     setReaderTarget(null);
-    setDownloadCompletedTick((prev) => prev + 1);
-    await Promise.all([loadInitial(), loadLibrary()]);
   };
 
   if (!appState) {
@@ -788,9 +823,11 @@ export function App() {
     if (section !== "home" && activeSection === "home" && !selectedSeries) {
       pushBackGuard();
     }
+    setReaderTarget(null);
     setSelectedSeries(null);
     setNavigationTarget(null);
     setActiveSection(section);
+    mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   return (
@@ -816,6 +853,7 @@ export function App() {
           availableProviders={appState.availableProviders}
           onToggleTheme={() => void handleSwitchThemeMode(nextTheme)}
           onChangeLanguage={(lang) => void runMutation(() => setUiLanguage(lang), true)}
+          onGoHome={() => navigate("home")}
         />
 
         <main

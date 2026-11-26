@@ -51,7 +51,12 @@ export function Sidebar({
       className="hidden w-64 shrink-0 flex-col justify-between border-r-2 border-[var(--ink)] bg-[var(--surface)] md:flex"
     >
       <div>
-        <div className="border-b-2 border-[var(--ink)] bg-[var(--paper)] px-5 py-4">
+        <button
+          type="button"
+          onClick={() => onSelectSection("home")}
+          aria-label={`Mangora — ${t.nav.home}`}
+          className="block w-full cursor-pointer border-b-2 border-[var(--ink)] bg-[var(--paper)] px-5 py-4 text-left transition-colors hover:bg-[var(--surface)]"
+        >
           <div className="flex items-center gap-3">
             <span className="mark" aria-hidden="true">
               M!
@@ -63,7 +68,7 @@ export function Sidebar({
               </div>
             </div>
           </div>
-        </div>
+        </button>
 
         <nav className="flex flex-col gap-2 p-4" aria-label="Main navigation">
           {primaryItems.map((item) => {

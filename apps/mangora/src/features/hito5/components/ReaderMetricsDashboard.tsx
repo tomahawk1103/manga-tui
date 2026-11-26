@@ -64,7 +64,17 @@ export function ReaderMetricsDashboard({
     return days.length > 0 ? days[days.length - 1].pages_read : 0;
   }, [metrics]);
 
+  const chapters14d = useMemo(() => {
+    if (typeof metrics?.chapters_read_last_14_days === "number") {
+      return metrics.chapters_read_last_14_days;
+    }
+    return (metrics?.daily_activity_last_14_days ?? []).reduce((sum, day) => sum + day.chapters_read, 0);
+  }, [metrics]);
+
   const pages14d = useMemo(() => {
+    if (typeof metrics?.pages_read_last_14_days === "number") {
+      return metrics.pages_read_last_14_days;
+    }
     return (metrics?.daily_activity_last_14_days ?? []).reduce((sum, day) => sum + day.pages_read, 0);
   }, [metrics]);
 
@@ -129,8 +139,8 @@ export function ReaderMetricsDashboard({
           </div>
           <div className="mangora-mono-meta">
             {language === "en"
-              ? `Today ${metrics?.chapters_read_today ?? 0} · 7d ${metrics?.chapters_read_last_7_days ?? 0}`
-              : `Hoy ${metrics?.chapters_read_today ?? 0} · 7d ${metrics?.chapters_read_last_7_days ?? 0}`}
+              ? `Today ${metrics?.chapters_read_today ?? 0} · Last 14d: ${chapters14d}`
+              : `Hoy ${metrics?.chapters_read_today ?? 0} · Últimos 14d: ${chapters14d}`}
           </div>
         </article>
 
@@ -141,8 +151,8 @@ export function ReaderMetricsDashboard({
           </div>
           <div className="mangora-mono-meta">
             {language === "en"
-              ? `Today ${pagesToday} · 14d ${pages14d}`
-              : `Hoy ${pagesToday} · 14d ${pages14d}`}
+              ? `Today ${pagesToday} · Last 14d: ${pages14d}`
+              : `Hoy ${pagesToday} · Últimos 14d: ${pages14d}`}
           </div>
         </article>
 
