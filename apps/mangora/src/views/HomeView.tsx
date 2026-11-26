@@ -1,11 +1,9 @@
 import { useState } from "react";
 import { BarChart3, BookOpen, Compass, RotateCcw, X, Zap } from "lucide-react";
 import { LibraryShelf } from "../components/LibraryShelf";
-import { ChapterUpdates } from "../components/ChapterUpdates";
 import { ReaderMetricsDashboard } from "../features/hito5";
 import type {
   InitialAppState,
-  OpenReaderChapterRequest,
   LibraryOverview,
   SeriesSelection,
   ToggleFavoritePayload,
@@ -23,7 +21,6 @@ interface HomeViewProps {
   onRefreshLibrary: (search?: string) => Promise<void>;
   onToggleFavorite: (payload: ToggleFavoritePayload) => Promise<void>;
   onOpenSeries: (series: SeriesSelection) => void;
-  onOpenReader: (request: OpenReaderChapterRequest) => void;
   onSearch: () => void;
   onRelaunchTour: () => void;
   onOpenSupport?: () => void;
@@ -40,7 +37,6 @@ export function HomeView({
   onRefreshLibrary,
   onToggleFavorite,
   onOpenSeries,
-  onOpenReader,
   onSearch,
   onRelaunchTour,
   onOpenSupport,
@@ -57,29 +53,6 @@ export function HomeView({
 
   return (
     <div className="space-y-8">
-      <ChapterUpdates language={appState.uiLanguage}
-        onSeries={(item) => {
-          const provider = item.provider ?? "mangaoni";
-          onOpenSeries({ mangaId: item.id, provider, title: item.title, coverUrl: item.cover });
-        }}
-        onChapter={(item) => {
-          const provider = item.provider ?? "mangaoni";
-          const chapterId =
-            provider === "mangaoni" && !item.chapterId.includes("|")
-              ? `${item.id}|${item.chapterId}`
-              : item.chapterId;
-          onOpenReader({
-            mangaId: item.id,
-            provider,
-            mangaTitle: item.title,
-            coverUrl: item.cover,
-            chapterId,
-            chapterTitle: item.chapterTitle,
-            chapterNumber: item.chapterTitle.match(/\d+(?:\.\d+)?/)?.[0],
-            language: appState.uiLanguage,
-          });
-        }}
-      />
       {/* Hero section inspired by docs/index.html */}
       <section className="grid items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
         <div>

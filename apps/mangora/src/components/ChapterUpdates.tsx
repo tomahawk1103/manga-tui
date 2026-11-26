@@ -22,7 +22,6 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
   const [loadingMore, setLoadingMore] = useState(false);
 
   const es = language === "es";
-  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const loadingMoreRef = useRef(false);
 
@@ -85,8 +84,7 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
   useEffect(() => {
     if (status !== "ready") return;
     const sentinel = sentinelRef.current;
-    const root = scrollContainerRef.current;
-    if (!sentinel || !root) return;
+    if (!sentinel) return;
 
     if (typeof IntersectionObserver === "undefined") return;
     const observer = new IntersectionObserver(
@@ -95,7 +93,7 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
           void loadMore();
         }
       },
-      { root, rootMargin: "220px 0px" },
+      { root: null, rootMargin: "320px 0px" },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
@@ -115,9 +113,9 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
     <section aria-labelledby="updates-title" className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-2 border-b-4 border-[var(--ink)] pb-3">
         <div>
-          <h1 id="updates-title" className="font-display text-4xl sm:text-5xl">
+          <h2 id="updates-title" className="font-display scroll-mt-6 text-3xl sm:text-4xl">
             {es ? "Novedades" : "Latest chapters"}
-          </h1>
+          </h2>
           <p className="mt-1 text-sm text-[var(--muted)]">
             MangaOni &amp; MangaDex · {es ? "En español" : "Latest releases"}
           </p>
@@ -148,10 +146,7 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
       )}
 
       {status === "ready" && (
-        <div
-          ref={scrollContainerRef}
-          className="max-h-[540px] space-y-4 overflow-y-auto pr-1 sm:max-h-[600px]"
-        >
+        <div className="space-y-4">
           <ul className="grid gap-4 sm:grid-cols-2">
             {visibleItems.map((item) => {
               const prov = item.provider ?? "mangaoni";
@@ -195,11 +190,11 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
                         </span>
                       )}
                     </div>
-                    <h2 className="font-display text-lg leading-tight">
+                    <h3 className="font-display text-lg leading-tight">
                       <a href={series} onClick={(event) => follow(event, onSeries, item)}>
                         {item.title}
                       </a>
-                    </h2>
+                    </h3>
                     <a
                       href={chapter}
                       onClick={(event) => follow(event, onChapter, item)}

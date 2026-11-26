@@ -895,7 +895,6 @@ export function App() {
               <>
                 {activeSection === "home" && (
                   <HomeView
-                    onOpenReader={openReader}
                     appState={appState}
                     library={libraryOverview}
                     libraryLoading={libraryLoading}
@@ -924,6 +923,7 @@ export function App() {
                     favoriteKeys={favoriteKeys}
                     onToggleFavorite={handleToggleFavorite}
                     onOpenSeries={openSeries}
+                    onOpenReader={openReader}
                     onSelectProvider={(provider) =>
                       runMutation(() => setDefaultProvider(provider), true)
                     }

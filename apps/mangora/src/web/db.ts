@@ -160,7 +160,7 @@ interface MemoryStore {
   nextSessionId: number;
 }
 
-export const WEB_BUILD_STAMP = "2026.11.26-r4";
+export const WEB_BUILD_STAMP = "2026.11.26-r5";
 
 const memoryStore: MemoryStore = {
   kv: new Map(),

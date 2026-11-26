@@ -1,9 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { ArrowRight, Check, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { ArrowDown, ArrowRight, Check, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { CatalogSearch } from "../components/CatalogSearch";
+import { ChapterUpdates } from "../components/ChapterUpdates";
 import type {
   ForYouResponse,
   InitialAppState,
+  OpenReaderChapterRequest,
   SeriesSelection,
   ToggleFavoritePayload,
 } from "../types/mangora";
@@ -17,6 +19,7 @@ interface ExploreViewProps {
   favoriteKeys: Set<string>;
   onToggleFavorite: (payload: ToggleFavoritePayload) => Promise<void>;
   onOpenSeries: (series: SeriesSelection) => void;
+  onOpenReader: (request: OpenReaderChapterRequest) => void;
   onSelectProvider: (providerId: string) => Promise<void>;
   onEditGenres: () => void;
 }
@@ -28,6 +31,7 @@ export function ExploreView({
   favoriteKeys,
   onToggleFavorite,
   onOpenSeries,
+  onOpenReader,
   onSelectProvider,
   onEditGenres,
 }: ExploreViewProps) {
@@ -68,10 +72,22 @@ export function ExploreView({
 
   return (
     <div className="space-y-8">
-      <div>
-        <p className="eyebrow mb-3">{t.explore.eyebrow}</p>
-        <h1 className="font-display mb-2 text-4xl sm:text-5xl">{t.explore.title}</h1>
-        <p className="max-w-2xl text-base text-[var(--muted)]">{t.explore.subtitle}</p>
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <div>
+          <p className="eyebrow mb-3">{t.explore.eyebrow}</p>
+          <h1 className="font-display mb-2 text-4xl sm:text-5xl">{t.explore.title}</h1>
+          <p className="max-w-2xl text-base text-[var(--muted)]">{t.explore.subtitle}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => {
+            document.getElementById("updates-title")?.scrollIntoView({ behavior: "smooth", block: "start" });
+          }}
+          className="editorial-btn-secondary min-h-[44px] px-3.5 py-2 text-xs"
+        >
+          <ArrowDown className="h-3.5 w-3.5" aria-hidden="true" />
+          <span>{appState.uiLanguage === "en" ? "Latest chapters" : "Novedades"}</span>
+        </button>
       </div>
 
       {active && (
@@ -270,6 +286,31 @@ export function ExploreView({
           </button>
         </section>
       )}
+
+      <ChapterUpdates
+        language={appState.uiLanguage}
+        onSeries={(item) => {
+          const provider = item.provider ?? "mangaoni";
+          onOpenSeries({ mangaId: item.id, provider, title: item.title, coverUrl: item.cover });
+        }}
+        onChapter={(item) => {
+          const provider = item.provider ?? "mangaoni";
+          const chapterId =
+            provider === "mangaoni" && !item.chapterId.includes("|")
+              ? `${item.id}|${item.chapterId}`
+              : item.chapterId;
+          onOpenReader({
+            mangaId: item.id,
+            provider,
+            mangaTitle: item.title,
+            coverUrl: item.cover,
+            chapterId,
+            chapterTitle: item.chapterTitle,
+            chapterNumber: item.chapterTitle.match(/\d+(?:\.\d+)?/)?.[0],
+            language: appState.uiLanguage,
+          });
+        }}
+      />
     </div>
   );
 }
