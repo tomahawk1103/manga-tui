@@ -1,15 +1,41 @@
 const MANGAONI_ORIGIN = "https://manga-oni.com";
 const MANGADEX_API = "https://api.mangadex.org";
+const WEEBCENTRAL_ORIGIN = "https://weebcentral.com";
 const MANGAONI_SERIES_ID = /^(manga|manhwa|manhua|novela)\/[a-z0-9_-]+$/i;
 const MANGADEX_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const WEEBCENTRAL_ID = /^[A-Z0-9]{10,40}$/i;
 const CHAPTER_DIGITS = /^\d+$/;
 const CHAPTERS_PER_PAGE = 50;
 const USER_AGENT = "MangoraWeb/1.0 (https://github.com/tomahawk1103/manga-tui)";
-const ALLOWED_IMAGE_HOSTS = new Set([
+const WEEBCENTRAL_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0";
+const EXACT_ALLOWED_IMAGE_HOSTS = new Set([
   "uploads.mangadex.org",
   "oni.ntr-files.online",
   "manga-oni.com",
+  "temp.compsci88.com",
+  "weebcentral.com",
 ]);
+const ALLOWED_IMAGE_SUFFIXES = [
+  ".planeptune.us",
+  ".lastation.us",
+  ".lowee.us",
+  ".leanbox.us",
+  ".compsci88.com",
+  ".weebcentral.com",
+];
+
+function isAllowedImageHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  if (EXACT_ALLOWED_IMAGE_HOSTS.has(lower)) return true;
+  return ALLOWED_IMAGE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
+
+function isWeebCentralHost(hostname: string): boolean {
+  const lower = hostname.toLowerCase();
+  if (lower === "weebcentral.com" || lower === "temp.compsci88.com") return true;
+  return ALLOWED_IMAGE_SUFFIXES.some((suffix) => lower.endsWith(suffix));
+}
 
 const CORS_HEADERS: Record<string, string> = {
   "Access-Control-Allow-Origin": "*",
@@ -144,6 +170,19 @@ async function upstreamMangaDex(path: string): Promise<Response> {
     },
   });
   if (!response.ok) throw new Error(`MangaDex respondió ${response.status}`);
+  return response;
+}
+
+async function upstreamWeebCentral(path: string): Promise<Response> {
+  const response = await fetchWithTimeout(WEEBCENTRAL_ORIGIN + path, {
+    headers: {
+      "User-Agent": WEEBCENTRAL_USER_AGENT,
+      Referer: `${WEEBCENTRAL_ORIGIN}/`,
+      Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+      "Accept-Language": "en-US,en;q=0.9",
+    },
+  });
+  if (!response.ok) throw new Error(`WeebCentral respondió ${response.status}`);
   return response;
 }
 
@@ -668,6 +707,222 @@ async function mangaDexPages(chapterId: string): Promise<{ pages: string[] }> {
   };
 }
 
+async function weebCentralSearch(
+  requestUrl: URL,
+  query: string,
+  page: number,
+): Promise<{ items: NormalizedSeriesSummary[]; hasNext: boolean }> {
+  const limit = 24;
+  const offset = Math.max(0, (page - 1) * limit);
+  const trimmed = query.trim();
+  const params = new URLSearchParams({
+    text: trimmed,
+    limit: String(limit),
+    offset: String(offset),
+    sort: trimmed ? "Best Match" : "Popularity",
+    order: "Descending",
+    official: "Any",
+    anime: "Any",
+    adult: "Any",
+    display_mode: "Full Display",
+  });
+  const html = await (await upstreamWeebCentral(`/search/data?${params.toString()}`)).text();
+  const blocks = html.split(/<article\s+class="bg-base-300\b/i).slice(1);
+  const items: NormalizedSeriesSummary[] = [];
+  const seenIds = new Set<string>();
+
+  for (const block of blocks) {
+    const idMatch = block.match(/href="(?:https:\/\/weebcentral\.com)?\/series\/([A-Z0-9]+)(?:\/[^"]*)?"/i);
+    if (!idMatch) continue;
+    const id = idMatch[1];
+    if (!WEEBCENTRAL_ID.test(id) || seenIds.has(id)) continue;
+    seenIds.add(id);
+
+    const coverRaw =
+      block.match(/<source[^>]+srcset="(https:\/\/[^"]+)"/i)?.[1] ??
+      block.match(/<img[^>]+src="(https:\/\/[^"]+)"/i)?.[1] ??
+      "";
+    const altTitle = block.match(/<img[^>]+alt="([^"]+)"/i)?.[1]?.replace(/\s+cover$/i, "") ?? "";
+    const anchorTitle =
+      block.match(
+        /<a[^>]+href="(?:https:\/\/weebcentral\.com)?\/series\/[A-Z0-9]+\/[^"]*"[^>]*class="[^"]*link-hover[^"]*"[^>]*>([\s\S]*?)<\/a>/i,
+      )?.[1] ?? "";
+    const title = plainText(anchorTitle || altTitle) || id;
+
+    const genres = Array.from(
+      new Set(
+        Array.from(block.matchAll(/<a[^>]+included_tag=[^>]*>([\s\S]*?)<\/a>/gi))
+          .map((m) => plainText(m[1]))
+          .filter(Boolean),
+      ),
+    );
+
+    items.push({
+      id,
+      provider: "weebcentral",
+      title,
+      description: null,
+      coverUrl: coverRaw ? buildImageProxyUrl(requestUrl, coverRaw) : "",
+      genres,
+      languages: ["en"],
+    });
+  }
+
+  return {
+    items,
+    hasNext: items.length >= limit,
+  };
+}
+
+async function weebCentralPopular(requestUrl: URL): Promise<{ items: NormalizedSeriesSummary[] }> {
+  const res = await weebCentralSearch(requestUrl, "", 1);
+  return { items: res.items.slice(0, 16) };
+}
+
+async function weebCentralSeriesDetail(
+  requestUrl: URL,
+  id: string,
+  order: "asc" | "desc",
+  page: number,
+): Promise<NormalizedSeriesDetail> {
+  const [seriesHtml, chaptersHtml] = await Promise.all([
+    (await upstreamWeebCentral(`/series/${id}`)).text(),
+    (await upstreamWeebCentral(`/series/${id}/full-chapter-list`)).text(),
+  ]);
+
+  const title =
+    plainText(seriesHtml.match(/<h1\b[^>]*>([\s\S]*?)<\/h1>/i)?.[1] ?? "") ||
+    plainText(seriesHtml.match(/<title>([\s\S]*?)\s*\|\s*Weeb Central<\/title>/i)?.[1] ?? "") ||
+    id;
+
+  const coverRaw =
+    seriesHtml.match(/<meta[^>]+property="og:image"[^>]+content="([^"]+)"/i)?.[1] ??
+    seriesHtml.match(/<meta[^>]+content="([^"]+)"[^>]+property="og:image"/i)?.[1] ??
+    "";
+  const coverUrl = coverRaw ? buildImageProxyUrl(requestUrl, coverRaw) : null;
+
+  const rawDesc =
+    seriesHtml.match(/<p[^>]*class="[^"]*whitespace-pre-line[^"]*"[^>]*>([\s\S]*?)<\/p>/i)?.[1] ??
+    seriesHtml.match(/<meta[^>]+name="description"[^>]+content="([^"]+)"/i)?.[1] ??
+    "";
+  const description = rawDesc ? plainText(rawDesc) : null;
+
+  const lowerStatus = (
+    seriesHtml.match(/Status:<\/strong>[\s\S]*?<a[^>]*>([\s\S]*?)<\/a>/i)?.[1] ??
+    seriesHtml.match(/Status:<\/strong>\s*([^<\n]+)/i)?.[1] ??
+    ""
+  ).toLowerCase();
+  const status = lowerStatus.includes("complete")
+    ? "completed"
+    : lowerStatus.includes("hiatus")
+      ? "hiatus"
+      : lowerStatus.includes("cancel")
+        ? "cancelled"
+        : "ongoing";
+
+  const genres = Array.from(
+    new Set(
+      Array.from(seriesHtml.matchAll(/<a[^>]+href="[^"]*\/search\?[^"]*included_tag=[^"]*"[^>]*>([\s\S]*?)<\/a>/gi))
+        .map((m) => plainText(m[1]))
+        .filter(Boolean),
+    ),
+  );
+
+  const author =
+    plainText(
+      seriesHtml.match(/<a[^>]+href="[^"]*\/search\?[^"]*author=[^"]*"[^>]*>([\s\S]*?)<\/a>/i)?.[1] ?? "",
+    ) || null;
+
+  const parsedChapters: NormalizedChapterItem[] = [];
+  const seenChapters = new Set<string>();
+  const chunks = chaptersHtml.split(/(?=<a\b[^>]*href="(?:https:\/\/weebcentral\.com)?\/chapters\/)/i);
+  let lastChunkDate: string | null = null;
+
+  for (const chunk of chunks) {
+    const chunkDate =
+      chunk.match(/datetime="(\d{4}-\d{2}-\d{2})/i)?.[1] ??
+      chunk.match(/checkNewChapter\('(\d{4}-\d{2}-\d{2})/i)?.[1] ??
+      null;
+    const chMatch = chunk.match(
+      /^<a\b[^>]*href="(?:https:\/\/weebcentral\.com)?\/chapters\/([A-Z0-9]+)"[^>]*>([\s\S]*?)<\/a>/i,
+    );
+    if (!chMatch) {
+      if (chunkDate) lastChunkDate = chunkDate;
+      continue;
+    }
+
+    const chId = chMatch[1];
+    if (!WEEBCENTRAL_ID.test(chId) || seenChapters.has(chId)) continue;
+    seenChapters.add(chId);
+
+    const anchorText = plainText(chMatch[2])
+      .replace(/\bLast Read\b/gi, "")
+      .replace(/\d{4}-\d{2}-\d{2}T[\d:.]+Z?/g, "")
+      .trim();
+    const numMatch = anchorText.match(/\d+(?:\.\d+)?/);
+    const chNum = numMatch?.[0] ?? "?";
+    const pubDate = chunkDate ?? lastChunkDate;
+    lastChunkDate = chunkDate;
+
+    parsedChapters.push({
+      id: chId,
+      title: anchorText || `Chapter ${chNum}`,
+      chapterNumber: chNum,
+      volumeNumber: null,
+      language: "en",
+      scanlator: "WeebCentral",
+      publicationDate: pubDate,
+    });
+  }
+
+  parsedChapters.sort((a, b) => {
+    const na = Number.parseFloat(a.chapterNumber);
+    const nb = Number.parseFloat(b.chapterNumber);
+    if (Number.isFinite(na) && Number.isFinite(nb) && na !== nb) {
+      return order === "asc" ? na - nb : nb - na;
+    }
+    return order === "asc" ? a.id.localeCompare(b.id) : b.id.localeCompare(a.id);
+  });
+
+  const offset = (page - 1) * CHAPTERS_PER_PAGE;
+  const sliced = parsedChapters.slice(offset, offset + CHAPTERS_PER_PAGE);
+
+  return {
+    id,
+    provider: "weebcentral",
+    title,
+    coverUrl,
+    description,
+    author,
+    artist: null,
+    status,
+    genres,
+    availableLanguages: ["en"],
+    activeLanguage: "en",
+    order,
+    page,
+    totalChapters: parsedChapters.length,
+    hasNextPage: offset + sliced.length < parsedChapters.length,
+    chapters: sliced,
+  };
+}
+
+async function weebCentralPages(requestUrl: URL, chapterId: string): Promise<{ pages: string[] }> {
+  const html = await (
+    await upstreamWeebCentral(`/chapters/${chapterId}/images?is_prev=False&current_page=1&reading_style=long_strip`)
+  ).text();
+  const pages: string[] = [];
+  for (const match of html.matchAll(/<img\b[^>]*\bsrc="(https:\/\/[^"]+)"/gi)) {
+    const imgUrl = match[1];
+    if (!imgUrl || imgUrl.includes("/static/")) continue;
+    pages.push(buildImageProxyUrl(requestUrl, imgUrl));
+  }
+  if (pages.length === 0) {
+    throw new Error("WeebCentral no devolvió páginas para este capítulo");
+  }
+  return { pages };
+}
+
 async function proxyImage(rawUrl: string): Promise<Response> {
   let target: URL;
   try {
@@ -679,7 +934,7 @@ async function proxyImage(rawUrl: string): Promise<Response> {
     target.protocol !== "https:" ||
     target.username ||
     target.password ||
-    !ALLOWED_IMAGE_HOSTS.has(target.hostname.toLowerCase())
+    !isAllowedImageHost(target.hostname)
   ) {
     return jsonResponse({ error: "Origen de imagen no permitido" }, 403);
   }
@@ -687,13 +942,16 @@ async function proxyImage(rawUrl: string): Promise<Response> {
   const referer =
     target.hostname.toLowerCase() === "uploads.mangadex.org"
       ? "https://mangadex.org/"
-      : `${MANGAONI_ORIGIN}/`;
+      : isWeebCentralHost(target.hostname)
+        ? `${WEEBCENTRAL_ORIGIN}/`
+        : `${MANGAONI_ORIGIN}/`;
+  const ua = isWeebCentralHost(target.hostname) ? WEEBCENTRAL_USER_AGENT : USER_AGENT;
 
   const resp = await fetchWithTimeout(
     target.href,
     {
       headers: {
-        "User-Agent": USER_AGENT,
+        "User-Agent": ua,
         Referer: referer,
         Accept: "image/avif,image/webp,image/apng,image/*,*/*;q=0.8",
       },
@@ -746,7 +1004,7 @@ export async function mangoraWorkerFetch(request: Request): Promise<Response> {
   try {
     if (v1Route) {
       if (v1Route === "/v1/providers") {
-        return jsonResponse({ version: 1, providers: ["mangaoni", "mangadex"] }, 200, 300);
+        return jsonResponse({ version: 1, providers: ["mangaoni", "mangadex", "weebcentral"] }, 200, 300);
       }
 
       if (v1Route === "/v1/image") {
@@ -777,6 +1035,9 @@ export async function mangoraWorkerFetch(request: Request): Promise<Response> {
         return withEdgeCache(request, async () => {
           if (provider === "mangadex") {
             return jsonResponse(await mangaDexPopular(url, lang), 200, 300);
+          }
+          if (provider === "weebcentral") {
+            return jsonResponse(await weebCentralPopular(url), 200, 300);
           }
           if (provider === "mangaoni") {
             const updates = await mangaOniUpdates();
@@ -811,6 +1072,12 @@ export async function mangoraWorkerFetch(request: Request): Promise<Response> {
         if ((!query && tags.length === 0) || query.length > 120) {
           return jsonResponse({ error: "Consulta inválida" }, 400);
         }
+        if (provider === "weebcentral" && tags.length === 0) {
+          return withEdgeCache(
+            request,
+            async () => jsonResponse(await weebCentralSearch(url, query, page), 200, 120),
+          );
+        }
         if (provider === "mangadex" || tags.length > 0) {
           return withEdgeCache(
             request,
@@ -838,6 +1105,13 @@ export async function mangoraWorkerFetch(request: Request): Promise<Response> {
         const order = url.searchParams.get("order") === "asc" ? "asc" : "desc";
         const page = Math.max(1, Number.parseInt(url.searchParams.get("page") ?? "1", 10) || 1);
         const lang = url.searchParams.get("lang")?.trim() || null;
+
+        if (provider === "weebcentral" && WEEBCENTRAL_ID.test(id)) {
+          return withEdgeCache(
+            request,
+            async () => jsonResponse(await weebCentralSeriesDetail(url, id, order, page), 200, 120),
+          );
+        }
 
         if (provider === "mangadex" && MANGADEX_UUID.test(id)) {
           return withEdgeCache(
@@ -889,6 +1163,9 @@ export async function mangoraWorkerFetch(request: Request): Promise<Response> {
       if (v1Route === "/v1/chapter") {
         const mangaId = (url.searchParams.get("mangaId") ?? "").trim();
         const rawChapterId = (url.searchParams.get("chapterId") ?? "").trim();
+        if (provider === "weebcentral" && WEEBCENTRAL_ID.test(rawChapterId)) {
+          return withEdgeCache(request, async () => jsonResponse(await weebCentralPages(url, rawChapterId), 200, 120));
+        }
         if (provider === "mangadex" && MANGADEX_UUID.test(rawChapterId)) {
           return withEdgeCache(request, async () => jsonResponse(await mangaDexPages(rawChapterId), 200, 120));
         }

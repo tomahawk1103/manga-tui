@@ -1,6 +1,6 @@
 # Mangora Public API Worker
 
-Cloudflare Worker ligero para **Mangora Web** (`docs/mangora-web/`). Actúa como puente CORS, caché en *edge* y proxy de imágenes seguro para proveedores públicos (`MangaOni` y `MangaDex`), conservando además las rutas legadas de MangaOni (`/updates`, `/search`, `/series`, `/chapter`).
+Cloudflare Worker ligero para **Mangora Web** (`docs/mangora-web/`). Actúa como puente CORS, caché en *edge* y proxy de imágenes seguro para proveedores públicos (`MangaOni`, `MangaDex` y `WeebCentral`), conservando además las rutas legadas de MangaOni (`/updates`, `/search`, `/series`, `/chapter`).
 
 ## Desarrollo local
 
