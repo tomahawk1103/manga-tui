@@ -862,8 +862,8 @@ export function SettingsView({
                   )}
 
                   {desktop && cloud && cloud.detectedFolders.length > 0 && (
-                    <div>
-                      <div className="mb-1.5 text-xs font-bold text-[var(--muted)]">
+                    <div className="space-y-1.5">
+                      <div className="text-xs font-bold text-[var(--muted)]">
                         {t.settings.cloudDetectedFoldersLabel}
                       </div>
                       <div className="flex flex-wrap gap-2">
@@ -880,6 +880,11 @@ export function SettingsView({
                           </button>
                         ))}
                       </div>
+                      <p className="text-xs text-[var(--muted)]">
+                        {appState.uiLanguage === "en"
+                          ? "Tip: If you sync Google Drive with Android or Web, use «Connect Google Drive (1-click)» above on every device instead of linking the local Drive Desktop folder to avoid duplicate MangaTUI (1) folders."
+                          : "Consejo: si sincronizas Google Drive con Android o Web, usa «Conectar Google Drive (1 clic)» arriba en todos tus dispositivos en lugar de vincular la carpeta local de Drive Desktop para evitar carpetas duplicadas MangaTUI (1)."}
+                      </p>
                     </div>
                   )}
 

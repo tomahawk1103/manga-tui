@@ -109,8 +109,8 @@ impl CloudActionRow {
                 }
             },
             Self::LinkLocalCloudFolder => tr(
-                "Detecta en 1 clic tu carpeta de iCloud Drive, Google Drive o OneDrive (o pulsa <e> para elegir otra carpeta)",
-                "Detects your iCloud Drive, Google Drive, or OneDrive folder in 1 click (or press <e> to choose a folder)",
+                "Detecta iCloud/OneDrive o carpeta local (si usas Google Drive en móvil/web, usa <g> para evitar carpetas MangaTUI (1) duplicadas)",
+                "Detects iCloud/OneDrive or local folder (if syncing Google Drive with mobile/web, use <g> to avoid duplicate MangaTUI (1) folders)",
             ),
             Self::LinkMyAnimeList => {
                 if has_mal_ready {

@@ -819,6 +819,8 @@ pub struct DriveFileEntry {
     pub mime_type: String,
     #[serde(default)]
     pub size: Option<String>,
+    #[serde(rename = "createdTime", default)]
+    pub created_time: Option<String>,
     #[serde(rename = "modifiedTime", default)]
     pub modified_time: Option<String>,
 }
@@ -1170,38 +1172,112 @@ impl GoogleDriveClient {
             .map_err(|e| format!("Failed parsing Drive about response: {e}"))
     }
 
+    pub async fn list_folders_by_name(
+        &self,
+        access_token: &str,
+        folder_name: &str,
+        parent_id: Option<&str>,
+    ) -> Result<Vec<DriveFileEntry>, String> {
+        let escaped_name = folder_name.replace('\\', "\\\\").replace('\'', "\\'");
+        let queries: Vec<String> = match parent_id {
+            Some(pid) => vec![format!(
+                "name='{escaped_name}' and mimeType='application/vnd.google-apps.folder' and '{pid}' in parents and trashed=false"
+            )],
+            None => vec![
+                format!(
+                    "name='{escaped_name}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false"
+                ),
+                format!("name='{escaped_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"),
+            ],
+        };
+
+        for query in queries {
+            let list_url = format!(
+                "{}/files?q={}&orderBy={}&fields=files(id,name,mimeType,createdTime,modifiedTime)&pageSize=100",
+                self.api_base_url,
+                url_encode_component(&query),
+                url_encode_component("createdTime asc")
+            );
+
+            let resp = self
+                .http
+                .get(&list_url)
+                .bearer_auth(access_token)
+                .send()
+                .await
+                .map_err(|e| format!("Drive folder lookup failed: {e}"))?;
+
+            if !resp.status().is_success() {
+                let status = resp.status();
+                let body = resp.text().await.unwrap_or_default();
+                return Err(format!("Drive folder lookup error ({status}): {body}"));
+            }
+
+            let list: DriveFileListResponse = resp.json().await.map_err(|e| e.to_string())?;
+            if !list.files.is_empty() {
+                return Ok(list.files);
+            }
+        }
+
+        Ok(Vec::new())
+    }
+
+    pub async fn move_file_to_folder(
+        &self,
+        access_token: &str,
+        file_id: &str,
+        old_parent_id: &str,
+        new_parent_id: &str,
+    ) -> Result<(), String> {
+        let url = format!(
+            "{}/files/{file_id}?addParents={}&removeParents={}&fields=id",
+            self.api_base_url,
+            url_encode_component(new_parent_id),
+            url_encode_component(old_parent_id)
+        );
+        let resp = self
+            .http
+            .patch(&url)
+            .bearer_auth(access_token)
+            .json(&serde_json::json!({}))
+            .send()
+            .await
+            .map_err(|e| format!("Drive file move failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Drive file move error ({status}): {body}"));
+        }
+        Ok(())
+    }
+
+    pub async fn trash_file(&self, access_token: &str, file_id: &str) -> Result<(), String> {
+        let url = format!("{}/files/{file_id}?fields=id", self.api_base_url);
+        let resp = self
+            .http
+            .patch(&url)
+            .bearer_auth(access_token)
+            .json(&serde_json::json!({ "trashed": true }))
+            .send()
+            .await
+            .map_err(|e| format!("Drive trash request failed: {e}"))?;
+
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().await.unwrap_or_default();
+            return Err(format!("Drive trash error ({status}): {body}"));
+        }
+        Ok(())
+    }
+
     pub async fn find_or_create_folder(
         &self,
         access_token: &str,
         folder_name: &str,
         parent_id: Option<&str>,
     ) -> Result<String, String> {
-        let escaped_name = folder_name.replace('\\', "\\\\").replace('\'', "\\'");
-        let query = match parent_id {
-            Some(pid) => format!(
-                "name='{escaped_name}' and mimeType='application/vnd.google-apps.folder' and '{pid}' in parents and trashed=false"
-            ),
-            None => format!("name='{escaped_name}' and mimeType='application/vnd.google-apps.folder' and trashed=false"),
-        };
-        let list_url =
-            format!("{}/files?q={}&fields=files(id,name,mimeType)&pageSize=10", self.api_base_url, url_encode_component(&query));
-
-        let resp = self
-            .http
-            .get(&list_url)
-            .bearer_auth(access_token)
-            .send()
-            .await
-            .map_err(|e| format!("Drive folder lookup failed: {e}"))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let body = resp.text().await.unwrap_or_default();
-            return Err(format!("Drive folder lookup error ({status}): {body}"));
-        }
-
-        let list: DriveFileListResponse = resp.json().await.map_err(|e| e.to_string())?;
-        if let Some(existing) = list.files.into_iter().next() {
+        if let Some(existing) = self.list_folders_by_name(access_token, folder_name, parent_id).await?.into_iter().next() {
             return Ok(existing.id);
         }
 
@@ -1235,6 +1311,114 @@ impl GoogleDriveClient {
 
         let created: DriveCreateIdResponse = create_resp.json().await.map_err(|e| e.to_string())?;
         Ok(created.id)
+    }
+
+    fn merge_drive_folder_into<'a>(
+        &'a self,
+        access_token: &'a str,
+        source_folder_id: &'a str,
+        target_folder_id: &'a str,
+        is_root: bool,
+        extra_snapshots: &'a mut Vec<LibrarySyncSnapshot>,
+    ) -> std::pin::Pin<Box<dyn std::future::Future<Output = Result<(), String>> + Send + 'a>> {
+        Box::pin(async move {
+            let source_children = self.list_files_in_folder(access_token, source_folder_id).await?;
+            let target_children = self.list_files_in_folder(access_token, target_folder_id).await?;
+
+            let mut target_folders: HashMap<String, String> = HashMap::new();
+            let mut target_files: BTreeSet<String> = BTreeSet::new();
+            for entry in target_children {
+                if entry.mime_type == "application/vnd.google-apps.folder" {
+                    target_folders.entry(entry.name).or_insert(entry.id);
+                } else {
+                    target_files.insert(entry.name);
+                }
+            }
+
+            for child in source_children {
+                if child.mime_type == "application/vnd.google-apps.folder" {
+                    if let Some(existing_target_sub_id) = target_folders.get(&child.name).cloned() {
+                        self.merge_drive_folder_into(access_token, &child.id, &existing_target_sub_id, false, extra_snapshots)
+                            .await?;
+                        let _ = self.trash_file(access_token, &child.id).await;
+                    } else {
+                        self.move_file_to_folder(access_token, &child.id, source_folder_id, target_folder_id)
+                            .await?;
+                        target_folders.insert(child.name, child.id);
+                    }
+                } else if is_root && child.name == CLOUD_LIBRARY_JSON_NAME {
+                    if let Ok(bytes) = self.download_file_bytes(access_token, &child.id).await
+                        && let Ok(snap) = serde_json::from_slice::<LibrarySyncSnapshot>(&bytes)
+                    {
+                        extra_snapshots.push(snap);
+                    }
+                    let _ = self.trash_file(access_token, &child.id).await;
+                } else if is_root && child.name == CLOUD_DB_BACKUP_NAME {
+                    let _ = self.trash_file(access_token, &child.id).await;
+                } else if target_files.contains(&child.name) {
+                    let _ = self.trash_file(access_token, &child.id).await;
+                } else {
+                    self.move_file_to_folder(access_token, &child.id, source_folder_id, target_folder_id)
+                        .await?;
+                    target_files.insert(child.name);
+                }
+            }
+
+            let _ = self.trash_file(access_token, source_folder_id).await;
+            Ok(())
+        })
+    }
+
+    pub async fn consolidate_duplicate_drive_folders(
+        &self,
+        access_token: &str,
+        folders: &[DriveFileEntry],
+        is_root: bool,
+    ) -> Result<(String, Vec<DriveFileEntry>, Vec<LibrarySyncSnapshot>), String> {
+        let first = folders.first().ok_or_else(|| "No Drive folders provided to consolidate".to_string())?;
+        if folders.len() == 1 {
+            let children = self.list_files_in_folder(access_token, &first.id).await?;
+            return Ok((first.id.clone(), children, Vec::new()));
+        }
+
+        let mut listings: Vec<Vec<DriveFileEntry>> = Vec::with_capacity(folders.len());
+        for folder in folders {
+            listings.push(self.list_files_in_folder(access_token, &folder.id).await?);
+        }
+
+        let canonical_idx = if is_root {
+            listings
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, files)| {
+                    files
+                        .iter()
+                        .filter(|f| f.name == CLOUD_LIBRARY_JSON_NAME)
+                        .filter_map(|f| f.modified_time.as_deref())
+                        .max()
+                        .map(|ts| (idx, ts))
+                })
+                .max_by(|a, b| a.1.cmp(b.1))
+                .map(|(idx, _)| idx)
+                .or_else(|| listings.iter().position(|files| !files.is_empty()))
+                .unwrap_or(0)
+        } else {
+            listings.iter().position(|files| !files.is_empty()).unwrap_or(0)
+        };
+
+        let canonical_id = folders[canonical_idx].id.clone();
+        let mut extra_snapshots = Vec::new();
+
+        for (idx, folder) in folders.iter().enumerate() {
+            if idx == canonical_idx {
+                continue;
+            }
+            self.merge_drive_folder_into(access_token, &folder.id, &canonical_id, is_root, &mut extra_snapshots)
+                .await?;
+        }
+
+        let canonical_children = self.list_files_in_folder(access_token, &canonical_id).await?;
+        Ok((canonical_id, canonical_children, extra_snapshots))
     }
 
     pub async fn list_files_in_folder(&self, access_token: &str, folder_id: &str) -> Result<Vec<DriveFileEntry>, String> {
@@ -1586,8 +1770,15 @@ where
     });
 
     let access_token = drive_client.resolve_valid_access_token(state).await?;
-    let root_folder_id = drive_client.find_or_create_folder(&access_token, CLOUD_ROOT_FOLDER_NAME, None).await?;
-    let root_files = drive_client.list_files_in_folder(&access_token, &root_folder_id).await?;
+    let root_folders = drive_client.list_folders_by_name(&access_token, CLOUD_ROOT_FOLDER_NAME, None).await?;
+    let (root_folder_id, root_files, extra_root_snapshots) = if root_folders.is_empty() {
+        let created_id = drive_client.find_or_create_folder(&access_token, CLOUD_ROOT_FOLDER_NAME, None).await?;
+        (created_id, Vec::new(), Vec::new())
+    } else {
+        drive_client
+            .consolidate_duplicate_drive_folders(&access_token, &root_folders, true)
+            .await?
+    };
 
     let mut total_mangas = 0usize;
     let mut total_read_chapters = 0usize;
@@ -1607,14 +1798,26 @@ where
             total_items: 4,
         });
 
-        let remote_snapshot_entry = root_files.iter().find(|f| f.name == CLOUD_LIBRARY_JSON_NAME);
-        let remote_snapshot: Option<LibrarySyncSnapshot> = if let Some(entry) = remote_snapshot_entry {
+        let mut snapshot_entries: Vec<&DriveFileEntry> = root_files.iter().filter(|f| f.name == CLOUD_LIBRARY_JSON_NAME).collect();
+        snapshot_entries.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
+
+        let primary_snapshot_entry = snapshot_entries.first().copied();
+        let mut collected_snapshots: Vec<LibrarySyncSnapshot> = Vec::new();
+        for entry in &snapshot_entries {
             let bytes = drive_client.download_file_bytes(&access_token, &entry.id).await?;
             bytes_transferred += bytes.len() as u64;
-            serde_json::from_slice(&bytes).ok()
-        } else {
-            None
-        };
+            if let Ok(snap) = serde_json::from_slice::<LibrarySyncSnapshot>(&bytes) {
+                collected_snapshots.push(snap);
+            }
+        }
+        collected_snapshots.extend(extra_root_snapshots);
+
+        for dup_entry in snapshot_entries.iter().skip(1) {
+            let _ = drive_client.trash_file(&access_token, &dup_entry.id).await;
+        }
+
+        let remote_snapshot: Option<LibrarySyncSnapshot> =
+            collected_snapshots.into_iter().reduce(|acc, item| merge_library_snapshots(&acc, &item));
 
         let merged = {
             let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
@@ -1639,7 +1842,7 @@ where
                 &access_token,
                 &root_folder_id,
                 CLOUD_LIBRARY_JSON_NAME,
-                remote_snapshot_entry.map(|e| e.id.as_str()),
+                primary_snapshot_entry.map(|e| e.id.as_str()),
                 "application/json",
                 merged_json,
             )
@@ -1649,7 +1852,12 @@ where
         if db_path.is_file()
             && let Ok(db_bytes) = fs::read(db_path)
         {
-            let existing_db_entry = root_files.iter().find(|f| f.name == CLOUD_DB_BACKUP_NAME);
+            let mut db_entries: Vec<&DriveFileEntry> = root_files.iter().filter(|f| f.name == CLOUD_DB_BACKUP_NAME).collect();
+            db_entries.sort_by(|a, b| b.modified_time.cmp(&a.modified_time));
+            let existing_db_entry = db_entries.first().copied();
+            for dup_db in db_entries.iter().skip(1) {
+                let _ = drive_client.trash_file(&access_token, &dup_db.id).await;
+            }
             bytes_transferred += db_bytes.len() as u64;
             let _ = drive_client
                 .upload_or_update_file(
@@ -1665,16 +1873,37 @@ where
     }
 
     if matches!(mode, CloudSyncMode::FullSync | CloudSyncMode::PushDownloadsOnly | CloudSyncMode::PullDownloadsOnly) {
-        let downloads_folder_id = drive_client
-            .find_or_create_folder(&access_token, CLOUD_DOWNLOADS_FOLDER_NAME, Some(&root_folder_id))
+        let downloads_folders = drive_client
+            .list_folders_by_name(&access_token, CLOUD_DOWNLOADS_FOLDER_NAME, Some(&root_folder_id))
             .await?;
-        let remote_manga_folders = drive_client.list_files_in_folder(&access_token, &downloads_folder_id).await?;
+        let (downloads_folder_id, remote_manga_folders) = if downloads_folders.is_empty() {
+            let created_id = drive_client
+                .find_or_create_folder(&access_token, CLOUD_DOWNLOADS_FOLDER_NAME, Some(&root_folder_id))
+                .await?;
+            (created_id, Vec::new())
+        } else {
+            let (id, children, _) = drive_client
+                .consolidate_duplicate_drive_folders(&access_token, &downloads_folders, false)
+                .await?;
+            (id, children)
+        };
 
-        let mut remote_folder_map: HashMap<String, String> = remote_manga_folders
-            .into_iter()
-            .filter(|f| f.mime_type == "application/vnd.google-apps.folder")
-            .map(|f| (f.name, f.id))
-            .collect();
+        let mut grouped_series_folders: BTreeMap<String, Vec<DriveFileEntry>> = BTreeMap::new();
+        for f in remote_manga_folders {
+            if f.mime_type == "application/vnd.google-apps.folder" {
+                grouped_series_folders.entry(f.name.clone()).or_default().push(f);
+            }
+        }
+
+        let mut remote_folder_map: HashMap<String, String> = HashMap::new();
+        for (name, group) in grouped_series_folders {
+            if group.len() == 1 {
+                remote_folder_map.insert(name, group[0].id.clone());
+            } else {
+                let (canonical_id, _, _) = drive_client.consolidate_duplicate_drive_folders(&access_token, &group, false).await?;
+                remote_folder_map.insert(name, canonical_id);
+            }
+        }
 
         // 1. Push local downloads not yet on Google Drive
         if matches!(mode, CloudSyncMode::FullSync | CloudSyncMode::PushDownloadsOnly) {
@@ -1737,6 +1966,7 @@ where
                             name: item.file_name,
                             mime_type: "application/octet-stream".to_string(),
                             size: Some(item.size_bytes.to_string()),
+                            created_time: None,
                             modified_time: None,
                         });
                     }
@@ -1821,6 +2051,82 @@ where
     Ok(report)
 }
 
+fn is_numbered_duplicate_folder_name(candidate: &str, base_name: &str) -> bool {
+    let Some(rest) = candidate.strip_prefix(base_name) else {
+        return false;
+    };
+    let Some(inner) = rest.strip_prefix(" (").and_then(|s| s.strip_suffix(')')) else {
+        return false;
+    };
+    !inner.is_empty() && inner.bytes().all(|b| b.is_ascii_digit())
+}
+
+fn consolidate_local_duplicate_cloud_folders(cloud_manga_tui_dir: &Path) -> Vec<LibrarySyncSnapshot> {
+    let mut extra_snapshots = Vec::new();
+    let Some(parent_dir) = cloud_manga_tui_dir.parent() else {
+        return extra_snapshots;
+    };
+    let Some(base_name) = cloud_manga_tui_dir.file_name().and_then(|n| n.to_str()) else {
+        return extra_snapshots;
+    };
+    let Ok(entries) = fs::read_dir(parent_dir) else {
+        return extra_snapshots;
+    };
+
+    let mut dup_dirs: Vec<PathBuf> = entries
+        .flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.is_dir()
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(|name| is_numbered_duplicate_folder_name(name, base_name))
+        })
+        .collect();
+    dup_dirs.sort();
+
+    if dup_dirs.is_empty() {
+        return extra_snapshots;
+    }
+
+    let target_downloads_dir = cloud_manga_tui_dir.join(CLOUD_DOWNLOADS_FOLDER_NAME);
+    for dup_dir in dup_dirs {
+        let dup_json = dup_dir.join(CLOUD_LIBRARY_JSON_NAME);
+        if dup_json.is_file()
+            && let Ok(raw) = fs::read(&dup_json)
+            && let Ok(snap) = serde_json::from_slice::<LibrarySyncSnapshot>(&raw)
+        {
+            extra_snapshots.push(snap);
+        }
+
+        let dup_downloads_dir = dup_dir.join(CLOUD_DOWNLOADS_FOLDER_NAME);
+        if dup_downloads_dir.is_dir() {
+            for item in scan_local_download_archives(&dup_downloads_dir) {
+                let dest_dir = target_downloads_dir.join(&item.manga_folder);
+                let dest_file = dest_dir.join(&item.file_name);
+                if !dest_file.exists() {
+                    let _ = fs::create_dir_all(&dest_dir);
+                    let _ = fs::copy(&item.full_path, &dest_file);
+                }
+            }
+        }
+
+        let _ = fs::remove_dir_all(&dup_dir);
+    }
+
+    if !extra_snapshots.is_empty() {
+        let canonical_json = cloud_manga_tui_dir.join(CLOUD_LIBRARY_JSON_NAME);
+        if !canonical_json.is_file()
+            && let Some(merged_extra) = extra_snapshots.iter().cloned().reduce(|a, b| merge_library_snapshots(&a, &b))
+            && let Ok(bytes) = serde_json::to_vec_pretty(&merged_extra)
+        {
+            let _ = fs::write(&canonical_json, bytes);
+        }
+    }
+
+    extra_snapshots
+}
+
 pub fn sync_with_local_cloud_folder<F>(
     cloud_manga_tui_dir: &Path,
     mode: CloudSyncMode,
@@ -1832,6 +2138,7 @@ where
     F: FnMut(CloudSyncProgress),
 {
     fs::create_dir_all(cloud_manga_tui_dir).map_err(|e| format!("Could not create cloud sync folder: {e}"))?;
+    let extra_snapshots = consolidate_local_duplicate_cloud_folders(cloud_manga_tui_dir);
 
     let mut total_mangas = 0usize;
     let mut total_read_chapters = 0usize;
@@ -1852,13 +2159,16 @@ where
         });
 
         let cloud_json_path = cloud_manga_tui_dir.join(CLOUD_LIBRARY_JSON_NAME);
-        let remote_snapshot: Option<LibrarySyncSnapshot> = if cloud_json_path.is_file() {
+        let mut all_remote_snapshots = extra_snapshots;
+        if cloud_json_path.is_file() {
             let raw = fs::read(&cloud_json_path).map_err(|e| e.to_string())?;
             bytes_transferred += raw.len() as u64;
-            serde_json::from_slice(&raw).ok()
-        } else {
-            None
-        };
+            if let Ok(parsed) = serde_json::from_slice::<LibrarySyncSnapshot>(&raw) {
+                all_remote_snapshots.push(parsed);
+            }
+        }
+        let remote_snapshot: Option<LibrarySyncSnapshot> =
+            all_remote_snapshots.into_iter().reduce(|acc, item| merge_library_snapshots(&acc, &item));
 
         let merged = {
             let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
@@ -2434,5 +2744,250 @@ mod tests {
         assert_eq!(code, "abc123");
         responder.send_success(Some("mangora://oauth/done")).await;
         client_task.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn google_drive_client_consolidates_duplicate_root_folders_and_merges_snapshots() {
+        let server = MockServer::start_async().await;
+
+        let _about_mock = server
+            .mock_async(|when, then| {
+                when.method(GET).path("/drive/v3/about");
+                then.status(200).json_body(serde_json::json!({
+                    "user": {
+                        "displayName": "Test Reader",
+                        "emailAddress": "reader@example.com"
+                    }
+                }));
+            })
+            .await;
+
+        let _root_lookup_mock = server
+            .mock_async(|when, then| {
+                when.method(GET).path("/drive/v3/files").query_param(
+                    "q",
+                    "name='MangaTUI' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false",
+                );
+                then.status(200).json_body(serde_json::json!({
+                    "files": [
+                        {
+                            "id": "root_old",
+                            "name": "MangaTUI",
+                            "mimeType": "application/vnd.google-apps.folder",
+                            "createdTime": "2026-11-20T00:00:00Z"
+                        },
+                        {
+                            "id": "root_dup",
+                            "name": "MangaTUI",
+                            "mimeType": "application/vnd.google-apps.folder",
+                            "createdTime": "2026-11-26T00:00:00Z"
+                        }
+                    ]
+                }));
+            })
+            .await;
+
+        let _list_old_mock = server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/drive/v3/files")
+                    .query_param("q", "'root_old' in parents and trashed=false");
+                then.status(200).json_body(serde_json::json!({
+                    "files": [
+                        {
+                            "id": "json_old",
+                            "name": "library_sync.json",
+                            "mimeType": "application/json",
+                            "modifiedTime": "2026-11-21T10:00:00Z"
+                        }
+                    ]
+                }));
+            })
+            .await;
+
+        let _list_dup_mock = server
+            .mock_async(|when, then| {
+                when.method(GET)
+                    .path("/drive/v3/files")
+                    .query_param("q", "'root_dup' in parents and trashed=false");
+                then.status(200).json_body(serde_json::json!({
+                    "files": [
+                        {
+                            "id": "json_dup",
+                            "name": "library_sync.json",
+                            "mimeType": "application/json",
+                            "modifiedTime": "2026-11-26T10:00:00Z"
+                        }
+                    ]
+                }));
+            })
+            .await;
+
+        let snap_old = LibrarySyncSnapshot {
+            mangas: vec![SyncMangaRecord {
+                id: "m_old".to_string(),
+                title: "Dandadan".to_string(),
+                created_at: None,
+                updated_at: None,
+                last_read: Some("2026-11-21 10:00:00".to_string()),
+                deleted_at: None,
+                img_url: None,
+                manga_provider: "mangadex".to_string(),
+                in_reading_history: true,
+                in_plan_to_read: false,
+            }],
+            ..LibrarySyncSnapshot::default()
+        };
+
+        let snap_dup = LibrarySyncSnapshot {
+            mangas: vec![SyncMangaRecord {
+                id: "m_dup".to_string(),
+                title: "Berserk".to_string(),
+                created_at: None,
+                updated_at: None,
+                last_read: Some("2026-11-26 10:00:00".to_string()),
+                deleted_at: None,
+                img_url: None,
+                manga_provider: "weebcentral".to_string(),
+                in_reading_history: true,
+                in_plan_to_read: false,
+            }],
+            ..LibrarySyncSnapshot::default()
+        };
+
+        let _dl_old_mock = server
+            .mock_async(|when, then| {
+                when.method(GET).path("/drive/v3/files/json_old");
+                then.status(200).json_body(serde_json::to_value(&snap_old).unwrap());
+            })
+            .await;
+
+        let _dl_dup_mock = server
+            .mock_async(|when, then| {
+                when.method(GET).path("/drive/v3/files/json_dup");
+                then.status(200).json_body(serde_json::to_value(&snap_dup).unwrap());
+            })
+            .await;
+
+        let trash_old_folder_mock = server
+            .mock_async(|when, then| {
+                when.method(PATCH).path("/drive/v3/files/root_old");
+                then.status(200).json_body(serde_json::json!({ "id": "root_old" }));
+            })
+            .await;
+
+        let trash_old_json_mock = server
+            .mock_async(|when, then| {
+                when.method(PATCH).path("/drive/v3/files/json_old");
+                then.status(200).json_body(serde_json::json!({ "id": "json_old" }));
+            })
+            .await;
+
+        let _upload_dup_json_mock = server
+            .mock_async(|when, then| {
+                when.method(PATCH).path("/upload/drive/v3/files/json_dup");
+                then.status(200).json_body(serde_json::json!({ "id": "json_dup" }));
+            })
+            .await;
+
+        let client = GoogleDriveClient::new().with_endpoints(
+            server.url("/o/oauth2/v2/auth"),
+            server.url("/token"),
+            server.url("/drive/v3"),
+            server.url("/upload/drive/v3"),
+        );
+
+        let base_dir = PathBuf::from("./test_results/cloud_gdrive_consolidate_test");
+        let _ = fs::remove_dir_all(&base_dir);
+        fs::create_dir_all(&base_dir).unwrap();
+        let db_path = base_dir.join("test_history.db");
+        let dl_dir = base_dir.join("downloads");
+        fs::create_dir_all(&dl_dir).unwrap();
+
+        let mut state = CloudConnectionState {
+            backend: Some(CloudBackendKind::GoogleDriveApi),
+            client_id: Some("test_client_id".to_string()),
+            account_email: Some("reader@example.com".to_string()),
+            fallback_access_token: Some("valid_test_token".to_string()),
+            ..Default::default()
+        };
+
+        let report = run_cloud_sync_with_paths(&mut state, CloudSyncMode::LibraryOnly, &client, &db_path, &dl_dir, &mut |_| {})
+            .await
+            .unwrap();
+
+        assert_eq!(report.total_mangas, 2);
+        trash_old_folder_mock.assert_async().await;
+        trash_old_json_mock.assert_async().await;
+
+        let _ = fs::remove_dir_all(&base_dir);
+    }
+
+    #[test]
+    fn local_cloud_folder_sync_consolidates_numbered_duplicate_siblings() {
+        let base_dir = PathBuf::from("./test_results/cloud_folder_consolidate_siblings_test");
+        let _ = fs::remove_dir_all(&base_dir);
+        let cloud_root = base_dir.join("Mi unidad");
+        let canonical_dir = cloud_root.join("MangaTUI");
+        let dup_dir = cloud_root.join("MangaTUI (1)");
+        let local_db = base_dir.join("local_history.db");
+        let local_dl = base_dir.join("local_downloads");
+        fs::create_dir_all(&canonical_dir).unwrap();
+        fs::create_dir_all(&dup_dir).unwrap();
+        fs::create_dir_all(&local_dl).unwrap();
+
+        let snap_canonical = LibrarySyncSnapshot {
+            mangas: vec![SyncMangaRecord {
+                id: "m_1".to_string(),
+                title: "Dandadan".to_string(),
+                created_at: None,
+                updated_at: None,
+                last_read: Some("2026-11-21 10:00:00".to_string()),
+                deleted_at: None,
+                img_url: None,
+                manga_provider: "mangadex".to_string(),
+                in_reading_history: true,
+                in_plan_to_read: false,
+            }],
+            ..LibrarySyncSnapshot::default()
+        };
+        let snap_dup = LibrarySyncSnapshot {
+            mangas: vec![SyncMangaRecord {
+                id: "m_2".to_string(),
+                title: "One Piece".to_string(),
+                created_at: None,
+                updated_at: None,
+                last_read: Some("2026-11-26 16:00:00".to_string()),
+                deleted_at: None,
+                img_url: None,
+                manga_provider: "mangaplus".to_string(),
+                in_reading_history: true,
+                in_plan_to_read: false,
+            }],
+            ..LibrarySyncSnapshot::default()
+        };
+
+        fs::write(canonical_dir.join(CLOUD_LIBRARY_JSON_NAME), serde_json::to_vec_pretty(&snap_canonical).unwrap()).unwrap();
+        fs::write(dup_dir.join(CLOUD_LIBRARY_JSON_NAME), serde_json::to_vec_pretty(&snap_dup).unwrap()).unwrap();
+
+        let dup_series_dir = dup_dir.join(CLOUD_DOWNLOADS_FOLDER_NAME).join("One Piece");
+        fs::create_dir_all(&dup_series_dir).unwrap();
+        fs::write(dup_series_dir.join("Ch 100.cbz"), b"dummy_cbz").unwrap();
+
+        let report =
+            sync_with_local_cloud_folder(&canonical_dir, CloudSyncMode::FullSync, &local_db, &local_dl, &mut |_| {}).unwrap();
+
+        assert_eq!(report.total_mangas, 2);
+        assert!(!dup_dir.exists());
+        assert!(
+            canonical_dir
+                .join(CLOUD_DOWNLOADS_FOLDER_NAME)
+                .join("One Piece")
+                .join("Ch 100.cbz")
+                .is_file()
+        );
+        assert!(local_dl.join("One Piece").join("Ch 100.cbz").is_file());
+
+        let _ = fs::remove_dir_all(&base_dir);
     }
 }
