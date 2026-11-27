@@ -8,6 +8,7 @@ import {
 } from "../features/hito5";
 import { CATEGORY_TAG_OPTIONS, getTranslations } from "../lib/i18n";
 import { searchCatalog, type CatalogPage } from "../lib/tauri";
+import { CoverImage } from "./CoverImage";
 import {
   type ProviderOption,
   type SeriesSelection,
@@ -125,6 +126,9 @@ export function CatalogSearch({
   };
 
   const items = result?.items ?? [];
+  const usingAniListTagSource =
+    Boolean(request?.tags.length) &&
+    items.some((item) => item.provider === "anilist");
   const usingTagFallbackSource =
     Boolean(request?.tags.length) &&
     provider.id !== "mangadex" &&
@@ -223,9 +227,11 @@ export function CatalogSearch({
           </button>
         )}
       </div>
-      {usingTagFallbackSource && (
+      {usingAniListTagSource ? (
+        <p className="font-mono-editorial text-xs text-[var(--muted)]">{t.tagsAniListSourceNote}</p>
+      ) : usingTagFallbackSource ? (
         <p className="font-mono-editorial text-xs text-[var(--muted)]">{t.tagsSourceNote}</p>
-      )}
+      ) : null}
       {request && !result && <p role="status">{failed ? t.unavailable : t.loading}</p>}
       {request && failed && (
         <button
@@ -279,24 +285,12 @@ export function CatalogSearch({
                   className="group flex flex-1 cursor-pointer touch-manipulation flex-col text-left hover:bg-[var(--surface)] focus-visible:outline-offset-[-4px]"
                   onClick={() => onOpenSeries(seriesPayload)}
                 >
-                  {/^https?:\/\//i.test(item.coverUrl) ? (
-                    <img
-                      src={item.coverUrl}
-                      alt=""
-                      loading="lazy"
-                      referrerPolicy="no-referrer"
-                      className="aspect-[2/3] w-full border-b border-[var(--ink)] object-cover"
-                      onError={(event) => {
-                        event.currentTarget.hidden = true;
-                      }}
-                    />
-                  ) : (
-                    <div className="screentone-bg flex aspect-[2/3] w-full items-center justify-center border-b border-[var(--ink)] p-3">
-                      <span className="border-2 border-[var(--ink)] bg-[var(--paper)] px-2 py-1 font-display text-lg text-[var(--ink)]">
-                        {item.title.slice(0, 2).toUpperCase()}
-                      </span>
-                    </div>
-                  )}
+                  <CoverImage
+                    src={item.coverUrl}
+                    provider={resolvedProvider}
+                    title={item.title}
+                    className="aspect-[2/3] w-full border-b-2 border-[var(--ink)] bg-[var(--surface)]"
+                  />
                   <span className="font-display line-clamp-2 block p-3 text-sm leading-snug group-hover:text-[var(--red-text)] sm:text-base">
                     {item.title}
                   </span>

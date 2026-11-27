@@ -23,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost http://asset.localhost mangora: http://mangora.localhost https://mangora.localhost blob: data: https: http:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost mangora: http://mangora.localhost https://mangora.localhost https://mangora-lector-publico.chirpybroth8.chatgpt.site; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
+      "csp": "default-src 'self'; img-src 'self' asset: https://asset.localhost http://asset.localhost mangora: http://mangora.localhost https://mangora.localhost blob: data: https: http:; connect-src 'self' ipc: http://ipc.localhost https://ipc.localhost mangora: http://mangora.localhost https://mangora.localhost https://mangora-lector-publico.chirpybroth8.chatgpt.site https://graphql.anilist.co; style-src 'self' 'unsafe-inline'; font-src 'self' data:"
     }
   },
   "bundle": {

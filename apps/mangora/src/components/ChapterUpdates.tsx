@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { RefreshCw } from "lucide-react";
+import { CoverImage } from "./CoverImage";
 import { isTauriRuntime } from "../lib/tauri";
 import { loadUpdatesPage, type ChapterUpdate } from "../web/catalog";
 
@@ -150,6 +151,7 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
           <ul className="grid gap-4 sm:grid-cols-2">
             {visibleItems.map((item) => {
               const prov = item.provider ?? "mangaoni";
+              const isSeriesOnly = prov === "anilist";
               const series = `${base}#serie/${encodeURIComponent(prov)}/${encodeURIComponent(item.id)}`;
               const chapter = `${base}#leer/${encodeURIComponent(prov)}/${encodeURIComponent(item.id)}/${encodeURIComponent(item.chapterId)}`;
               return (
@@ -157,23 +159,20 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
                   key={`${prov}:${item.id}:${item.chapterId}`}
                   className="editorial-card flex overflow-hidden bg-[var(--paper)]"
                 >
-                  {item.cover && (
-                    <a
-                      href={chapter}
-                      tabIndex={-1}
-                      aria-hidden="true"
-                      onClick={(event) => follow(event, onChapter, item)}
-                      className="w-24 shrink-0 sm:w-28"
-                    >
-                      <img
-                        src={item.cover}
-                        loading="lazy"
-                        referrerPolicy="no-referrer"
-                        alt=""
-                        className="h-full min-h-36 w-full object-cover"
-                      />
-                    </a>
-                  )}
+                  <a
+                    href={isSeriesOnly ? series : chapter}
+                    tabIndex={-1}
+                    aria-hidden="true"
+                    onClick={(event) => follow(event, isSeriesOnly ? onSeries : onChapter, item)}
+                    className="w-24 shrink-0 border-r border-[var(--ink)] sm:w-28"
+                  >
+                    <CoverImage
+                      src={item.cover}
+                      provider={prov}
+                      title={item.title}
+                      className="h-full min-h-36 w-full"
+                    />
+                  </a>
                   <div className="flex min-w-0 flex-1 flex-col items-start justify-between gap-2 p-3">
                     <div className="flex flex-wrap items-center gap-2">
                       {item.published && (
@@ -189,6 +188,11 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
                           MangaDex
                         </span>
                       )}
+                      {prov === "anilist" && (
+                        <span className="border border-[var(--ink)] bg-[var(--surface)] px-1.5 py-0.5 font-mono-editorial text-[10px] font-bold uppercase text-[var(--ink)]">
+                          AniList
+                        </span>
+                      )}
                     </div>
                     <h3 className="font-display text-lg leading-tight">
                       <a href={series} onClick={(event) => follow(event, onSeries, item)}>
@@ -196,8 +200,8 @@ export function ChapterUpdates({ language, onSeries, onChapter }: Props) {
                       </a>
                     </h3>
                     <a
-                      href={chapter}
-                      onClick={(event) => follow(event, onChapter, item)}
+                      href={isSeriesOnly ? series : chapter}
+                      onClick={(event) => follow(event, isSeriesOnly ? onSeries : onChapter, item)}
                       aria-label={item.title + " · " + item.chapterTitle}
                       className="editorial-btn-primary min-h-[44px] text-xs"
                     >

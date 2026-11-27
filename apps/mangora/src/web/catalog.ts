@@ -170,13 +170,77 @@ export async function resolveWebProviders(allProviders: ProviderOption[]): Promi
 }
 
 const MANGADEX_PUBLIC_API = "https://api.mangadex.org";
-let directMdTagMapPromise: Promise<Map<string, string>> | null = null;
+const ANILIST_GRAPHQL_URL = "https://graphql.anilist.co";
 
-const CANONICAL_TAG_MAP: Record<string, string> = {
-  slice_of_life: "slice of life",
-  scifi: "sci-fi",
-  martial_arts: "martial arts",
+interface AniListSearchMeta {
+  id: number;
+  title: string;
+  romaji: string | null;
+  english: string | null;
+  synonyms: string[];
+  coverUrl: string;
+  description: string | null;
+  status: string;
+  genres: string[];
+}
+
+const anilistSearchMetaCache = new Map<string, AniListSearchMeta>();
+
+const ANILIST_GENRE_MAP: Record<string, string> = {
+  action: "Action",
+  adventure: "Adventure",
+  comedy: "Comedy",
+  drama: "Drama",
+  ecchi: "Ecchi",
+  fantasy: "Fantasy",
+  horror: "Horror",
+  mecha: "Mecha",
+  mystery: "Mystery",
+  psychological: "Psychological",
+  romance: "Romance",
+  scifi: "Sci-Fi",
+  "sci-fi": "Sci-Fi",
+  slice_of_life: "Slice of Life",
+  "slice of life": "Slice of Life",
+  sports: "Sports",
+  supernatural: "Supernatural",
 };
+
+const ANILIST_TAG_MAP: Record<string, string> = {
+  shonen: "Shounen",
+  shounen: "Shounen",
+  seinen: "Seinen",
+  shojo: "Shoujo",
+  shoujo: "Shoujo",
+  josei: "Josei",
+  isekai: "Isekai",
+  martial_arts: "Martial Arts",
+  "martial arts": "Martial Arts",
+  historical: "Historical",
+  harem: "Female Harem",
+};
+
+function stripAniListHtml(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  const cleaned = raw
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<[^>]*>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  return cleaned || null;
+}
+
+function mapAniListStatus(raw: string | null | undefined): string {
+  const key = (raw ?? "").toUpperCase();
+  if (key === "FINISHED") return "completed";
+  if (key === "RELEASING") return "ongoing";
+  if (key === "HIATUS") return "hiatus";
+  if (key === "CANCELLED") return "cancelled";
+  return "ongoing";
+}
 
 function resolveDirectMdCover(mangaId: string, fileName: string | undefined, size: 256 | 512, useProxy: boolean): string {
   if (!fileName) return "";
@@ -197,107 +261,212 @@ function pickMdText(map: Record<string, string> | undefined, preferred: string[]
   return first?.trim() ?? "";
 }
 
-async function getDirectMangaDexTagMap(): Promise<Map<string, string>> {
-  if (!directMdTagMapPromise) {
-    directMdTagMapPromise = (async () => {
-      const map = new Map<string, string>();
-      try {
-        const res = await fetchJson<{
-          data?: Array<{ id: string; attributes?: { name?: Record<string, string> } }>;
-        }>(`${MANGADEX_PUBLIC_API}/manga/tag`, undefined, 10000);
-        for (const tag of res.data ?? []) {
-          const en = pickMdText(tag.attributes?.name, ["en"]).toLowerCase();
-          if (en && tag.id) map.set(en, tag.id);
-        }
-      } catch {
-        // Non-fatal fallback
+const ANILIST_TAG_SEARCH_QUERY = `
+query ($page: Int, $perPage: Int, $search: String, $genres: [String], $tags: [String], $sort: [MediaSort]) {
+  Page(page: $page, perPage: $perPage) {
+    pageInfo {
+      hasNextPage
+    }
+    media(type: MANGA, sort: $sort, search: $search, genre_in: $genres, tag_in: $tags, isAdult: false) {
+      id
+      title {
+        romaji
+        english
+        native
       }
-      return map;
-    })();
+      synonyms
+      description(asHtml: false)
+      status
+      genres
+      coverImage {
+        large
+        extraLarge
+      }
+    }
   }
-  return directMdTagMapPromise;
+}
+`;
+
+const ANILIST_MEDIA_BY_ID_QUERY = `
+query ($id: Int) {
+  Media(id: $id, type: MANGA) {
+    id
+    title {
+      romaji
+      english
+      native
+    }
+    synonyms
+    description(asHtml: false)
+    status
+    genres
+    coverImage {
+      large
+      extraLarge
+    }
+  }
+}
+`;
+
+interface RawAniListMedia {
+  id: number;
+  title?: { romaji?: string | null; english?: string | null; native?: string | null };
+  synonyms?: string[] | null;
+  description?: string | null;
+  status?: string | null;
+  genres?: string[] | null;
+  coverImage?: { large?: string | null; extraLarge?: string | null };
 }
 
-async function directMangaDexLatestUpdates(
-  page: number,
-  language: "es" | "en",
-  signal: AbortSignal,
-  useProxy: boolean,
-): Promise<{ items: ChapterUpdate[]; hasMore: boolean }> {
-  const limit = 24;
-  const offset = Math.max(0, (page - 1) * limit);
-  const params = new URLSearchParams({
-    limit: String(limit),
-    offset: String(offset),
-    "order[readableAt]": "desc",
-  });
-  params.append("contentRating[]", "safe");
-  params.append("contentRating[]", "suggestive");
-  params.append("includes[]", "manga");
-  if (language === "en") {
-    params.append("translatedLanguage[]", "en");
-  } else {
-    params.append("translatedLanguage[]", "es");
-    params.append("translatedLanguage[]", "es-la");
+function cacheAniListMedia(media: RawAniListMedia): AniListSearchMeta {
+  const romaji = media.title?.romaji?.trim() || null;
+  const english = media.title?.english?.trim() || null;
+  const native = media.title?.native?.trim() || null;
+  const title = english || romaji || native || `AniList #${media.id}`;
+  const meta: AniListSearchMeta = {
+    id: media.id,
+    title,
+    romaji,
+    english,
+    synonyms: (media.synonyms ?? []).map((s) => s.trim()).filter(Boolean),
+    coverUrl: media.coverImage?.extraLarge || media.coverImage?.large || "",
+    description: stripAniListHtml(media.description),
+    status: mapAniListStatus(media.status),
+    genres: (media.genres ?? []).map((g) => g.trim()).filter(Boolean),
+  };
+  anilistSearchMetaCache.set(`anilist:${media.id}`, meta);
+  return meta;
+}
+
+async function fetchAniListMediaById(id: number): Promise<AniListSearchMeta | null> {
+  const cacheKey = `anilist:${id}`;
+  const cached = anilistSearchMetaCache.get(cacheKey);
+  if (cached) return cached;
+  try {
+    const payload = await fetchJson<{ data?: { Media?: RawAniListMedia | null } }>(
+      ANILIST_GRAPHQL_URL,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ query: ANILIST_MEDIA_BY_ID_QUERY, variables: { id } }),
+      },
+      10000,
+    );
+    if (!payload.data?.Media) return null;
+    return cacheAniListMedia(payload.data.Media);
+  } catch {
+    return null;
   }
+}
 
-  const payload = await fetchJson<{
-    total?: number;
-    data?: Array<{
-      id: string;
-      attributes?: { chapter?: string | null; title?: string | null; readableAt?: string | null; publishAt?: string | null };
-      relationships?: Array<{ id: string; type: string; attributes?: { title?: Record<string, string> } }>;
-    }>;
-  }>(`${MANGADEX_PUBLIC_API}/chapter?${params.toString()}`, { signal }, 15000);
-
-  const chapters = payload.data ?? [];
-  const mangaIds = Array.from(
-    new Set(chapters.map((ch) => ch.relationships?.find((r) => r.type === "manga")?.id).filter((id): id is string => Boolean(id))),
-  );
-  const mangaMeta = new Map<string, { title: string; cover?: string }>();
-  if (mangaIds.length > 0) {
-    const mParams = new URLSearchParams({ limit: String(mangaIds.length) });
-    mParams.append("includes[]", "cover_art");
-    for (const id of mangaIds) mParams.append("ids[]", id);
-    const mRes = await fetchJson<{
-      data?: Array<{
-        id: string;
-        attributes?: { title?: Record<string, string> };
-        relationships?: Array<{ type: string; attributes?: { fileName?: string } }>;
-      }>;
-    }>(`${MANGADEX_PUBLIC_API}/manga?${mParams.toString()}`, { signal }, 15000).catch(() => null);
-    for (const m of mRes?.data ?? []) {
-      const title = pickMdText(m.attributes?.title, language === "en" ? ["en", "es"] : ["es", "es-la", "en"]) || m.id;
-      const coverFile = m.relationships?.find((r) => r.type === "cover_art")?.attributes?.fileName;
-      mangaMeta.set(m.id, { title, cover: resolveDirectMdCover(m.id, coverFile, 256, useProxy) || undefined });
+async function aniListTagSearch(
+  query: string,
+  page: number,
+  tags: string[],
+  uiLanguage: "es" | "en",
+): Promise<CatalogPage> {
+  const trimmed = query.trim();
+  const genres: string[] = [];
+  const tagNames: string[] = [];
+  for (const raw of tags) {
+    const norm = raw.trim().toLowerCase();
+    if (!norm) continue;
+    const mappedGenre = ANILIST_GENRE_MAP[norm];
+    if (mappedGenre && !genres.includes(mappedGenre)) {
+      genres.push(mappedGenre);
+      continue;
+    }
+    const mappedTag = ANILIST_TAG_MAP[norm];
+    if (mappedTag && !tagNames.includes(mappedTag)) {
+      tagNames.push(mappedTag);
     }
   }
 
-  const items: ChapterUpdate[] = chapters.flatMap((ch) => {
-    const mangaRel = ch.relationships?.find((r) => r.type === "manga");
-    if (!mangaRel?.id) return [];
-    const meta = mangaMeta.get(mangaRel.id);
-    const title = meta?.title || pickMdText(mangaRel.attributes?.title, ["es", "es-la", "en"]) || mangaRel.id;
-    const num = ch.attributes?.chapter?.trim();
-    const chapterTitle = num ? (language === "en" ? `Ch. ${num}` : `Cap. ${num}`) : ch.attributes?.title?.trim() || "Cap.";
-    const published = (ch.attributes?.readableAt || ch.attributes?.publishAt || "").slice(0, 10) || undefined;
-    return [
-      {
-        id: mangaRel.id,
-        provider: "mangadex",
-        title,
-        cover: meta?.cover,
-        published,
-        chapterId: ch.id,
-        chapterTitle,
-      },
-    ];
-  });
+  const variables: Record<string, unknown> = {
+    page: Math.max(1, page),
+    perPage: 20,
+    sort: trimmed ? ["SEARCH_MATCH"] : ["POPULARITY_DESC"],
+  };
+  if (trimmed) variables.search = trimmed;
+  if (genres.length > 0) variables.genres = genres;
+  if (tagNames.length > 0) variables.tags = tagNames;
 
-  const total = payload.total ?? offset + chapters.length;
+  const payload = await fetchJson<{
+    data?: {
+      Page?: {
+        pageInfo?: { hasNextPage?: boolean };
+        media?: RawAniListMedia[];
+      };
+    };
+  }>(
+    ANILIST_GRAPHQL_URL,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ query: ANILIST_TAG_SEARCH_QUERY, variables }),
+    },
+    12000,
+  );
+
+  const pageData = payload.data?.Page;
+  const items = (pageData?.media ?? []).map((raw) => {
+    const meta = cacheAniListMedia(raw);
+    return {
+      id: `anilist:${meta.id}`,
+      provider: "anilist",
+      title: meta.title,
+      description: meta.description,
+      coverUrl: meta.coverUrl,
+      genres: meta.genres,
+      languages: [uiLanguage],
+    };
+  });
   return {
     items,
-    hasMore: chapters.length > 0 && offset + chapters.length < total && offset + limit < 2000,
+    hasNext: Boolean(pageData?.pageInfo?.hasNextPage) && items.length > 0,
+  };
+}
+
+async function aniListRecentUpdates(
+  page: number,
+  language: "es" | "en",
+  signal: AbortSignal,
+): Promise<{ items: ChapterUpdate[]; hasMore: boolean }> {
+  const payload = await fetchJson<{
+    data?: {
+      Page?: {
+        pageInfo?: { hasNextPage?: boolean };
+        media?: RawAniListMedia[];
+      };
+    };
+  }>(
+    ANILIST_GRAPHQL_URL,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({
+        query: ANILIST_TAG_SEARCH_QUERY,
+        variables: { page: Math.max(1, page), perPage: 16, sort: ["TRENDING_DESC"] },
+      }),
+      signal,
+    },
+    12000,
+  );
+  const pageData = payload.data?.Page;
+  const items: ChapterUpdate[] = (pageData?.media ?? []).map((raw) => {
+    const meta = cacheAniListMedia(raw);
+    return {
+      id: `anilist:${meta.id}`,
+      provider: "anilist",
+      title: meta.title,
+      cover: meta.coverUrl || undefined,
+      chapterId: "open-series",
+      chapterTitle: language === "en" ? "View chapters" : "Ver capítulos",
+    };
+  });
+  return {
+    items,
+    hasMore: Boolean(pageData?.pageInfo?.hasNextPage) && items.length > 0,
   };
 }
 
@@ -332,11 +501,11 @@ export async function loadUpdatesPage(
         return { items: data.items, hasMore: Boolean(data.hasMore) };
       }
     } catch {
-      // Fallback to direct MangaDex feed if deployed worker predates paginated v1/updates
+      // Fallback to CORS-friendly AniList trending feed if deployed worker predates paginated v1/updates
     }
   }
 
-  return directMangaDexLatestUpdates(Math.max(1, page - 1), language, signal, caps.v1Supported);
+  return aniListRecentUpdates(Math.max(1, page - 1), language, signal);
 }
 
 function normalizeLegacySeriesId(rawId: string): string {
@@ -388,98 +557,6 @@ function providerBadge(provider: string): string {
   return provider;
 }
 
-async function directMangaDexSearch(
-  query: string,
-  page: number,
-  tags: string[],
-  uiLanguage: "es" | "en",
-  useProxy: boolean,
-): Promise<CatalogPage> {
-  const limit = 20;
-  const offset = Math.max(0, (page - 1) * limit);
-  const params = new URLSearchParams({
-    limit: String(limit),
-    offset: String(offset),
-  });
-  const trimmed = query.trim();
-  if (trimmed) {
-    params.set("title", trimmed);
-  } else {
-    params.set("order[followedCount]", "desc");
-  }
-
-  const normalizedTags = tags.map((t) => t.trim().toLowerCase()).filter(Boolean);
-  const hasEcchi = normalizedTags.includes("ecchi");
-  if (hasEcchi) {
-    params.append("contentRating[]", "suggestive");
-    params.append("contentRating[]", "erotica");
-  } else {
-    params.append("contentRating[]", "safe");
-    params.append("contentRating[]", "suggestive");
-  }
-
-  if (normalizedTags.length > 0) {
-    if (uiLanguage === "en") {
-      params.append("availableTranslatedLanguage[]", "en");
-    } else {
-      params.append("availableTranslatedLanguage[]", "es");
-      params.append("availableTranslatedLanguage[]", "es-la");
-    }
-    const demographics = new Set(["shonen", "shounen", "seinen", "shojo", "shoujo", "josei"]);
-    const tagMap = await getDirectMangaDexTagMap();
-    for (const tag of normalizedTags) {
-      if (tag === "ecchi") continue;
-      if (demographics.has(tag)) {
-        params.append("publicationDemographic[]", tag === "shonen" ? "shounen" : tag === "shojo" ? "shoujo" : tag);
-        continue;
-      }
-      const canonical = CANONICAL_TAG_MAP[tag] ?? tag;
-      const uuid = tagMap.get(canonical);
-      if (uuid) params.append("includedTags[]", uuid);
-    }
-  }
-  params.append("includes[]", "cover_art");
-
-  const payload = await fetchJson<{
-    total?: number;
-    data?: Array<{
-      id: string;
-      attributes?: {
-        title?: Record<string, string>;
-        altTitles?: Array<Record<string, string>>;
-        description?: Record<string, string>;
-        availableTranslatedLanguages?: string[];
-        tags?: Array<{ attributes?: { name?: Record<string, string> } }>;
-      };
-      relationships?: Array<{ type: string; attributes?: { fileName?: string } }>;
-    }>;
-  }>(`${MANGADEX_PUBLIC_API}/manga?${params.toString()}`, undefined, 15000);
-
-  const preferred = uiLanguage === "en" ? ["en", "es", "es-la"] : ["es", "es-la", "en"];
-  const items = (payload.data ?? []).map((manga) => {
-    const attrs = manga.attributes ?? {};
-    const title =
-      pickMdText(attrs.title, preferred) ||
-      attrs.altTitles?.map((alt) => pickMdText(alt, preferred)).find(Boolean) ||
-      manga.id;
-    const coverFile = manga.relationships?.find((r) => r.type === "cover_art")?.attributes?.fileName;
-    return {
-      id: manga.id,
-      provider: "mangadex",
-      title,
-      description: pickMdText(attrs.description, preferred) || null,
-      coverUrl: resolveDirectMdCover(manga.id, coverFile, 256, useProxy),
-      genres: (attrs.tags ?? []).map((t) => pickMdText(t.attributes?.name, ["en", "es"])).filter(Boolean),
-      languages: (attrs.availableTranslatedLanguages ?? []).filter(Boolean),
-    };
-  });
-  const total = payload.total ?? items.length;
-  return {
-    items,
-    hasNext: items.length > 0 && offset + items.length < total,
-  };
-}
-
 export async function webSearchCatalog(
   provider: string,
   query: string,
@@ -513,7 +590,7 @@ export async function webSearchCatalog(
   }
 
   if (cleanedTags.length > 0 || normProvider === "mangadex") {
-    return directMangaDexSearch(trimmed, page, cleanedTags, uiLanguage, caps.v1Supported);
+    return aniListTagSearch(trimmed, page, cleanedTags, uiLanguage);
   }
 
   try {
@@ -611,6 +688,144 @@ export async function webGetForYouRecommendations(
     matchedGenres: [],
     items,
     fallbackPopular: true,
+  };
+}
+
+function normalizeMatchTitle(raw: string): string {
+  return raw
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function buildMangaOniSearchCandidates(meta: AniListSearchMeta | null, fallbackTitle: string): string[] {
+  const rawList = [
+    meta?.english,
+    meta?.romaji,
+    meta?.title,
+    fallbackTitle,
+    ...(meta?.synonyms ?? []).slice(0, 2),
+  ]
+    .map((s) => s?.trim())
+    .filter((s): s is string => Boolean(s));
+
+  const out: string[] = [];
+  const seen = new Set<string>();
+  const push = (candidate: string) => {
+    const cleaned = candidate.trim();
+    const key = cleaned.toLowerCase();
+    if (cleaned.length >= 2 && !seen.has(key)) {
+      seen.add(key);
+      out.push(cleaned);
+    }
+  };
+
+  for (const title of rawList) {
+    push(title);
+    const noPunct = title.replace(/[-:–—/!¡?¿()[\]]+/g, " ").replace(/\s+/g, " ").trim();
+    push(noPunct);
+    const words = noPunct.split(" ").filter(Boolean);
+    if (words.length > 3) {
+      push(words.slice(0, 3).join(" "));
+    }
+  }
+  return out.slice(0, 4);
+}
+
+async function resolveMangaOniSeriesForAniList(
+  meta: AniListSearchMeta | null,
+  fallbackTitle: string,
+): Promise<LegacySeries | null> {
+  const targetNames = [meta?.english, meta?.romaji, meta?.title, fallbackTitle, ...(meta?.synonyms ?? [])]
+    .map((s) => (s ? normalizeMatchTitle(s) : ""))
+    .filter(Boolean);
+  const candidates = buildMangaOniSearchCandidates(meta, fallbackTitle);
+
+  for (const q of candidates) {
+    try {
+      const url = apiUrl("search");
+      url.searchParams.set("q", q);
+      const hits = await fetchJson<LegacySeries[]>(url, undefined, 9000);
+      if (!Array.isArray(hits) || hits.length === 0) continue;
+
+      const exact = hits.find((hit) => targetNames.includes(normalizeMatchTitle(hit.title)));
+      if (exact) return exact;
+
+      const partial = hits.find((hit) => {
+        const normHit = normalizeMatchTitle(hit.title);
+        return targetNames.some((t) => normHit.includes(t) || t.includes(normHit));
+      });
+      if (partial) return partial;
+
+      return hits[0];
+    } catch {
+      // Try next query variation
+    }
+  }
+  return null;
+}
+
+async function fetchLegacyMangaOniDetail(
+  mangaId: string,
+  selection: SeriesSelection,
+  normProvider: string,
+  order: "asc" | "desc",
+  page: number,
+): Promise<SeriesDetailResponse> {
+  const url = apiUrl("series");
+  url.searchParams.set("id", mangaId);
+  const raw = await fetchJson<LegacySeries>(url);
+  const dbState = await getWebMangaChapterState(normProvider, raw.id);
+  const sorted = [...raw.chapters].sort((a, b) => compareChapterNumber(a.number, b.number, order));
+  const offset = (page - 1) * CHAPTERS_PER_PAGE;
+  const sliced = sorted.slice(offset, offset + CHAPTERS_PER_PAGE);
+
+  const chapters: SeriesChapterItem[] = sliced.map((ch) => {
+    const compoundId = normalizeChapterCompoundId(raw.id, ch.id);
+    const saved = dbState.chaptersByKey.get(compoundId) ?? dbState.chaptersByKey.get(ch.id);
+    return {
+      id: compoundId,
+      title: ch.title,
+      chapterNumber: ch.number || "?",
+      volumeNumber: null,
+      language: raw.language || "es",
+      scanlator: "MangaOni",
+      publicationDate: null,
+      isRead: Boolean(saved?.isRead),
+      isDownloaded: false,
+      isAvailableOnline: true,
+      isBookmarked: Boolean(saved?.isBookmarked),
+      bookmarkedPage: saved?.numberPageBookmarked ?? null,
+      offlineFormat: null,
+    };
+  });
+
+  return {
+    id: raw.id,
+    provider: normProvider,
+    providerLabel: providerBadge(normProvider),
+    title: raw.title || selection.title,
+    coverUrl: raw.cover ?? selection.coverUrl ?? null,
+    description: raw.description ?? selection.description ?? null,
+    author: null,
+    artist: null,
+    status: raw.status || "ongoing",
+    genres: raw.genres ?? [],
+    availableLanguages: ["es"],
+    activeLanguage: "es",
+    order,
+    page,
+    totalChapters: sorted.length,
+    hasNextPage: offset + sliced.length < sorted.length,
+    isFavorite: dbState.isFavorite,
+    isOfflineFallback: false,
+    offlineChapterCount: 0,
+    readChapterCount: Array.from(dbState.chaptersByKey.values()).filter((c) => c.isRead).length,
+    nextUnreadChapter: pickNextUnread(chapters),
+    chapters,
+    onlineWarning: null,
   };
 }
 
@@ -841,60 +1056,55 @@ export async function webGetSeriesDetail(
     };
   }
 
-  // Legacy MangaOni worker endpoint (`series?id=...`)
-  const url = apiUrl("series");
-  url.searchParams.set("id", mangaId);
-  const raw = await fetchJson<LegacySeries>(url);
-  const dbState = await getWebMangaChapterState(normProvider, raw.id);
-  const sorted = [...raw.chapters].sort((a, b) => compareChapterNumber(a.number, b.number, order));
-  const offset = (page - 1) * CHAPTERS_PER_PAGE;
-  const sliced = sorted.slice(offset, offset + CHAPTERS_PER_PAGE);
+  if (normProvider === "anilist" || mangaId.startsWith("anilist:")) {
+    const numericId = Number.parseInt(mangaId.replace(/^anilist:/i, ""), 10);
+    const meta =
+      anilistSearchMetaCache.get(mangaId) ??
+      (Number.isFinite(numericId) ? await fetchAniListMediaById(numericId) : null);
 
-  const chapters: SeriesChapterItem[] = sliced.map((ch) => {
-    const compoundId = normalizeChapterCompoundId(raw.id, ch.id);
-    const saved = dbState.chaptersByKey.get(compoundId) ?? dbState.chaptersByKey.get(ch.id);
+    const matched = await resolveMangaOniSeriesForAniList(meta, selection.title);
+    if (matched) {
+      const detail = await fetchLegacyMangaOniDetail(matched.id, selection, "mangaoni", order, page);
+      return {
+        ...detail,
+        title: detail.title || meta?.title || selection.title,
+        coverUrl: meta?.coverUrl || selection.coverUrl || detail.coverUrl,
+        description: meta?.description || detail.description || selection.description || null,
+        genres: detail.genres.length > 0 ? detail.genres : meta?.genres ?? [],
+      };
+    }
+
+    const dbState = await getWebMangaChapterState("anilist", mangaId);
     return {
-      id: compoundId,
-      title: ch.title,
-      chapterNumber: ch.number || "?",
-      volumeNumber: null,
-      language: raw.language || "es",
-      scanlator: "MangaOni",
-      publicationDate: null,
-      isRead: Boolean(saved?.isRead),
-      isDownloaded: false,
-      isAvailableOnline: true,
-      isBookmarked: Boolean(saved?.isBookmarked),
-      bookmarkedPage: saved?.numberPageBookmarked ?? null,
-      offlineFormat: null,
+      id: mangaId,
+      provider: "anilist",
+      providerLabel: "AniList",
+      title: meta?.title || selection.title,
+      coverUrl: meta?.coverUrl || selection.coverUrl || null,
+      description: meta?.description || selection.description || null,
+      author: null,
+      artist: null,
+      status: meta?.status || "ongoing",
+      genres: meta?.genres ?? [],
+      availableLanguages: ["es"],
+      activeLanguage: "es",
+      order,
+      page: 1,
+      totalChapters: 0,
+      hasNextPage: false,
+      isFavorite: dbState.isFavorite,
+      isOfflineFallback: false,
+      offlineChapterCount: 0,
+      readChapterCount: 0,
+      nextUnreadChapter: null,
+      chapters: [],
+      onlineWarning:
+        "Esta serie se encontró en el catálogo de AniList, pero aún no está indexada en MangaOni Web. Usa la app de Mangora para Windows o Android para abrirla en cualquiera de los 7 proveedores.",
     };
-  });
+  }
 
-  return {
-    id: raw.id,
-    provider: normProvider,
-    providerLabel: providerBadge(normProvider),
-    title: raw.title || selection.title,
-    coverUrl: raw.cover ?? selection.coverUrl ?? null,
-    description: raw.description ?? selection.description ?? null,
-    author: null,
-    artist: null,
-    status: raw.status || "ongoing",
-    genres: raw.genres ?? [],
-    availableLanguages: ["es"],
-    activeLanguage: "es",
-    order,
-    page,
-    totalChapters: sorted.length,
-    hasNextPage: offset + sliced.length < sorted.length,
-    isFavorite: dbState.isFavorite,
-    isOfflineFallback: false,
-    offlineChapterCount: 0,
-    readChapterCount: Array.from(dbState.chaptersByKey.values()).filter((c) => c.isRead).length,
-    nextUnreadChapter: pickNextUnread(chapters),
-    chapters,
-    onlineWarning: null,
-  };
+  // Legacy MangaOni worker endpoint (`series?id=...`)
+  return fetchLegacyMangaOniDetail(mangaId, selection, normProvider, order, page);
 }
 
 function registerSessionPages(pages: string[]): string {

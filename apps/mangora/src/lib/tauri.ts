@@ -159,6 +159,30 @@ export function isTauriRuntime(): boolean {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
+function encodeBase64UrlUtf8(raw: string): string {
+  const bytes = new TextEncoder().encode(raw);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 1) {
+    binary += String.fromCharCode(bytes[i]);
+  }
+  return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export function resolveCoverImageUrl(
+  rawUrl: string | null | undefined,
+  provider?: string,
+): string {
+  const trimmed = rawUrl?.trim() ?? "";
+  if (!trimmed) return "";
+  if (isTauriRuntime() && /^https?:\/\//i.test(trimmed)) {
+    const safeProvider =
+      (provider ?? "mangadex").trim().toLowerCase().replace(/[^a-z0-9_-]/g, "") || "mangadex";
+    const encoded = encodeBase64UrlUtf8(trimmed);
+    return convertFileSrc(`cover/${safeProvider}/${encoded}`, "mangora");
+  }
+  return trimmed;
+}
+
 function getWebProviders(): ProviderOption[] {
   return getCachedWebProviders(FALLBACK_PROVIDERS);
 }

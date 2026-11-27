@@ -262,6 +262,7 @@ export interface Translations {
     showLessTags: string;
     activeTagsSummary: (count: number) => string;
     tagsSourceNote: string;
+    tagsAniListSourceNote: string;
     webSourcesTitle: string;
     webSourcesDesc: string;
     webDownloadAppBtn: string;
@@ -756,6 +757,8 @@ const ES: Translations = {
     showLessTags: "Ver menos",
     activeTagsSummary: (count) => (count === 1 ? "1 categoría activa" : `${count} categorías activas`),
     tagsSourceNote: "Búsqueda por categorías consultada vía MangaDex en tu idioma.",
+    tagsAniListSourceNote:
+      "Búsqueda por categorías consultada vía AniList (al abrir una serie se busca automáticamente en MangaOni).",
     webSourcesTitle: "Más fuentes y descargas offline en la app nativa",
     webSourcesDesc:
       "Mangora Web usa el proxy público con MangaOni y MangaDex. Si quieres los 7 proveedores directos sin límites y descargas CBZ/EPUB/PDF/RAW, usa Mangora para Windows o Android.",
@@ -1306,6 +1309,8 @@ const EN: Translations = {
     showLessTags: "Show less",
     activeTagsSummary: (count) => (count === 1 ? "1 active category" : `${count} active categories`),
     tagsSourceNote: "Category search powered by MangaDex in your selected language.",
+    tagsAniListSourceNote:
+      "Category search powered by AniList (opening a series automatically resolves chapters on MangaOni).",
     webSourcesTitle: "More sources & offline downloads in the native app",
     webSourcesDesc:
       "Mangora Web uses the public proxy for MangaOni and MangaDex. For all 7 direct Rust sources without proxy limits and CBZ/EPUB/PDF/RAW offline downloads, get Mangora for Windows or Android.",

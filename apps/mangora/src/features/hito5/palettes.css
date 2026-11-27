@@ -108,19 +108,19 @@
 
 :root,
 [data-mangora-explore-density="comfortable"] {
-  --mangora-explore-min-card: 185px;
-  --mangora-explore-gap: 1.15rem;
-  --mangora-explore-pad: 0.8rem;
+  --mangora-explore-min-card: 215px;
+  --mangora-explore-gap: 1.25rem;
+  --mangora-explore-pad: 0.85rem;
 }
 
 [data-mangora-explore-density="compact"] {
-  --mangora-explore-min-card: 148px;
-  --mangora-explore-gap: 0.75rem;
-  --mangora-explore-pad: 0.55rem;
+  --mangora-explore-min-card: 165px;
+  --mangora-explore-gap: 0.85rem;
+  --mangora-explore-pad: 0.6rem;
 }
 
 [data-mangora-explore-density="spacious"] {
-  --mangora-explore-min-card: 230px;
+  --mangora-explore-min-card: 265px;
   --mangora-explore-gap: 1.5rem;
   --mangora-explore-pad: 1.05rem;
 }

@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { BookOpen, Bookmark, Compass, HardDrive, Heart, RefreshCw, Search } from "lucide-react";
+import { CoverImage } from "./CoverImage";
 import {
   CollectionDisplayToolbar,
   type LibrarySortBy,
@@ -191,7 +192,6 @@ export function LibraryShelf({
           {visibleItems.map((entry) => {
             const isFav =
               entry.isFavorite || favoriteKeys.has(libraryKey(entry.id, entry.provider));
-            const hasCover = Boolean(entry.coverUrl && /^https?:\/\//i.test(entry.coverUrl));
             return (
               <li
                 key={libraryKey(entry.id, entry.provider)}
@@ -210,23 +210,13 @@ export function LibraryShelf({
                   className="group flex w-full min-w-0 flex-1 cursor-pointer touch-manipulation gap-3.5 p-3.5 text-left transition-colors hover:bg-[var(--surface)]/50"
                 >
                   <div className="relative h-28 w-20 shrink-0 overflow-hidden border-2 border-[var(--ink)] bg-[var(--surface)]">
-                    {hasCover ? (
-                      <img
-                        src={entry.coverUrl ?? ""}
-                        alt=""
-                        loading="lazy"
-                        className="h-full w-full object-cover"
-                        onError={(event) => {
-                          event.currentTarget.hidden = true;
-                        }}
-                      />
-                    ) : (
-                      <div className="screentone-bg flex h-full w-full items-center justify-center p-2 text-center">
-                        <span className="border border-[var(--ink)] bg-[var(--paper)] px-1.5 py-0.5 font-mono-editorial text-xs font-bold text-[var(--ink)]">
-                          {entry.title.slice(0, 2).toUpperCase()}
-                        </span>
-                      </div>
-                    )}
+                    <CoverImage
+                      src={entry.coverUrl}
+                      provider={entry.provider}
+                      title={entry.title}
+                      className="h-full w-full"
+                      fallbackTextClassName="px-1.5 py-0.5 font-mono-editorial text-xs font-bold"
+                    />
                   </div>
 
                   <div className="flex min-w-0 flex-1 flex-col justify-between gap-2">

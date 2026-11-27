@@ -522,6 +522,54 @@ pub fn parse_page_route(raw_path: &str) -> Option<(String, usize)> {
     Some((session_id.to_string(), index))
 }
 
+fn decode_base64url(input: &str) -> Option<Vec<u8>> {
+    let trimmed = input.trim().trim_end_matches('=');
+    if trimmed.is_empty() {
+        return None;
+    }
+    let mut out = Vec::with_capacity((trimmed.len() * 3) / 4);
+    let mut buf: u32 = 0;
+    let mut bits: u8 = 0;
+    for b in trimmed.bytes() {
+        let val: u8 = match b {
+            b'A'..=b'Z' => b - b'A',
+            b'a'..=b'z' => b - b'a' + 26,
+            b'0'..=b'9' => b - b'0' + 52,
+            b'-' | b'+' => 62,
+            b'_' | b'/' => 63,
+            _ => return None,
+        };
+        buf = (buf << 6) | u32::from(val);
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push(((buf >> bits) & 0xff) as u8);
+        }
+    }
+    Some(out)
+}
+
+pub fn parse_cover_route(raw_path: &str) -> Option<(String, String)> {
+    let decoded = percent_decode_path(raw_path);
+    let trimmed = decoded.trim_matches('/');
+    let mut parts = trimmed.split('/');
+    if parts.next()? != "cover" {
+        return None;
+    }
+    let provider = parts.next()?.trim();
+    let encoded_url = parts.next()?.trim();
+    if provider.is_empty() || encoded_url.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    let bytes = decode_base64url(encoded_url)?;
+    let target_url = String::from_utf8(bytes).ok()?;
+    let trimmed_url = target_url.trim();
+    if !trimmed_url.starts_with("https://") && !trimmed_url.starts_with("http://") {
+        return None;
+    }
+    Some((provider.to_string(), trimmed_url.to_string()))
+}
+
 async fn load_session_page_bytes(
     session: Arc<ActiveReaderSession>,
     index: usize,
@@ -578,44 +626,92 @@ fn plain_error_response(status: tauri::http::StatusCode, message: &str) -> tauri
         .unwrap_or_else(|_| tauri::http::Response::new(Vec::new()))
 }
 
+async fn load_cover_image_bytes(
+    provider: MangaProviders,
+    target_url: &str,
+) -> Result<(Vec<u8>, &'static str), (tauri::http::StatusCode, String)> {
+    let mut last_err = String::new();
+    for attempt in 0..2u8 {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(150)).await;
+        }
+        match get_raw_image_for_provider(provider, target_url).await.map_err(|e| e.to_string()) {
+            Ok(bytes) if !bytes.is_empty() => {
+                let raw = bytes.to_vec();
+                let mime = detect_image_mime(&raw, target_url);
+                return Ok((raw, mime));
+            },
+            Ok(_) => {
+                last_err = "Empty cover response".to_string();
+            },
+            Err(err_msg) => {
+                last_err = err_msg;
+            },
+        }
+    }
+    Err((tauri::http::StatusCode::BAD_GATEWAY, format!("Failed to fetch cover: {last_err}")))
+}
+
 pub fn handle_mangora_protocol_request<R: Runtime>(
     ctx: UriSchemeContext<'_, R>,
     request: tauri::http::Request<Vec<u8>>,
     responder: UriSchemeResponder,
 ) {
     let raw_path = request.uri().path().to_string();
-    let Some((session_id, page_index)) = parse_page_route(&raw_path) else {
-        responder.respond(plain_error_response(tauri::http::StatusCode::NOT_FOUND, "Invalid mangora page URI"));
+    if let Some((session_id, page_index)) = parse_page_route(&raw_path) {
+        let app_handle = ctx.app_handle().clone();
+        tauri::async_runtime::spawn(async move {
+            let session = {
+                let store = app_handle.state::<ReaderSessionStore>();
+                store.get(&session_id)
+            };
+            let Some(session) = session else {
+                responder.respond(plain_error_response(tauri::http::StatusCode::NOT_FOUND, "Reader session expired"));
+                return;
+            };
+
+            match load_session_page_bytes(session, page_index).await {
+                Ok((bytes, mime)) => {
+                    let response = tauri::http::Response::builder()
+                        .status(tauri::http::StatusCode::OK)
+                        .header(tauri::http::header::CONTENT_TYPE, mime)
+                        .header(tauri::http::header::CACHE_CONTROL, "public, max-age=3600")
+                        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                        .body(bytes)
+                        .unwrap_or_else(|_| plain_error_response(tauri::http::StatusCode::INTERNAL_SERVER_ERROR, "Build error"));
+                    responder.respond(response);
+                },
+                Err((status, message)) => {
+                    responder.respond(plain_error_response(status, &message));
+                },
+            }
+        });
         return;
-    };
+    }
 
-    let app_handle = ctx.app_handle().clone();
-    tauri::async_runtime::spawn(async move {
-        let session = {
-            let store = app_handle.state::<ReaderSessionStore>();
-            store.get(&session_id)
-        };
-        let Some(session) = session else {
-            responder.respond(plain_error_response(tauri::http::StatusCode::NOT_FOUND, "Reader session expired"));
-            return;
-        };
+    if let Some((provider_raw, target_url)) = parse_cover_route(&raw_path) {
+        let provider = MangaProviders::from_str(&provider_raw).unwrap_or(MangaProviders::Mangadex);
+        tauri::async_runtime::spawn(async move {
+            match load_cover_image_bytes(provider, &target_url).await {
+                Ok((bytes, mime)) => {
+                    let response = tauri::http::Response::builder()
+                        .status(tauri::http::StatusCode::OK)
+                        .header(tauri::http::header::CONTENT_TYPE, mime)
+                        .header(tauri::http::header::CACHE_CONTROL, "public, max-age=86400")
+                        .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+                        .body(bytes)
+                        .unwrap_or_else(|_| plain_error_response(tauri::http::StatusCode::INTERNAL_SERVER_ERROR, "Build error"));
+                    responder.respond(response);
+                },
+                Err((status, message)) => {
+                    responder.respond(plain_error_response(status, &message));
+                },
+            }
+        });
+        return;
+    }
 
-        match load_session_page_bytes(session, page_index).await {
-            Ok((bytes, mime)) => {
-                let response = tauri::http::Response::builder()
-                    .status(tauri::http::StatusCode::OK)
-                    .header(tauri::http::header::CONTENT_TYPE, mime)
-                    .header(tauri::http::header::CACHE_CONTROL, "public, max-age=3600")
-                    .header(tauri::http::header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-                    .body(bytes)
-                    .unwrap_or_else(|_| plain_error_response(tauri::http::StatusCode::INTERNAL_SERVER_ERROR, "Build error"));
-                responder.respond(response);
-            },
-            Err((status, message)) => {
-                responder.respond(plain_error_response(status, &message));
-            },
-        }
-    });
+    responder.respond(plain_error_response(tauri::http::StatusCode::NOT_FOUND, "Invalid mangora URI"));
 }
 
 #[cfg(test)]
@@ -691,6 +787,25 @@ mod tests {
         assert_eq!(parse_page_route("/other/rs-1/0"), None);
         assert_eq!(parse_page_route("/page/rs-1/notanumber"), None);
         assert_eq!(parse_page_route("/page//0"), None);
+    }
+
+    #[test]
+    fn parses_and_decodes_mangora_cover_routes() {
+        // https://uploads.mangadex.org/covers/abc/def.512.jpg
+        let encoded = "aHR0cHM6Ly91cGxvYWRzLm1hbmdhZGV4Lm9yZy9jb3ZlcnMvYWJjL2RlZi41MTIuanBn";
+        assert_eq!(
+            parse_cover_route(&format!("/cover/mangadex/{encoded}")),
+            Some(("mangadex".to_string(), "https://uploads.mangadex.org/covers/abc/def.512.jpg".to_string(),)),
+        );
+        assert_eq!(
+            parse_cover_route(&format!("/cover%2Fmangadex%2F{encoded}%3D%3D")),
+            Some(("mangadex".to_string(), "https://uploads.mangadex.org/covers/abc/def.512.jpg".to_string(),)),
+        );
+        // Reject non-http schemes, invalid base64, or missing segments
+        assert_eq!(parse_cover_route("/cover/mangadex/ZmlsZTovLy9ldGMvcGFzc3dk"), None); // file:///etc/passwd
+        assert_eq!(parse_cover_route("/cover/mangadex/amF2YXNjcmlwdDphbGVydCgxKQ"), None); // javascript:alert(1)
+        assert_eq!(parse_cover_route("/cover/mangadex/!!!"), None);
+        assert_eq!(parse_cover_route("/cover/mangadex"), None);
     }
 
     #[tokio::test]

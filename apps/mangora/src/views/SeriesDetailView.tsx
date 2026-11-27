@@ -21,7 +21,7 @@ import {
 } from "lucide-react";
 import { defaultHito5Bridge } from "../features/hito5";
 import { getTranslations } from "../lib/i18n";
-import { getAniListCommunity, getSeriesDetail, isTauriRuntime } from "../lib/tauri";
+import { getAniListCommunity, getSeriesDetail, isTauriRuntime, resolveCoverImageUrl } from "../lib/tauri";
 import type {
   AniListCommunityInfo,
   EnqueueChaptersRequest,
@@ -442,8 +442,9 @@ export function SeriesDetailView({
             <div className="w-36 overflow-hidden border-2 border-[var(--ink)] bg-[var(--surface)] shadow-[4px_4px_0_var(--shadow-color)] md:w-full">
               {displayCover && !coverFailed ? (
                 <img
-                  src={displayCover}
+                  src={resolveCoverImageUrl(displayCover, detail?.provider ?? selection.provider)}
                   alt={displayTitle}
+                  referrerPolicy="no-referrer"
                   className="aspect-[3/4] w-full object-cover"
                   onError={() => setCoverFailed(true)}
                 />

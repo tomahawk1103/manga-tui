@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowRight, Check, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { CatalogSearch } from "../components/CatalogSearch";
 import { ChapterUpdates } from "../components/ChapterUpdates";
+import { CoverImage } from "../components/CoverImage";
 import type {
   ForYouResponse,
   InitialAppState,
@@ -184,23 +185,12 @@ export function ExploreView({
                   }
                   className="group flex h-full w-full cursor-pointer touch-manipulation flex-col text-left hover:bg-[var(--surface)] focus-visible:outline-offset-[-4px]"
                 >
-                  {/^https?:\/\//i.test(item.coverUrl) ? (
-                    <img
-                      src={item.coverUrl}
-                      alt=""
-                      loading="lazy"
-                      className="aspect-[2/3] w-full border-b border-[var(--ink)] object-cover"
-                      onError={(event) => {
-                        event.currentTarget.hidden = true;
-                      }}
-                    />
-                  ) : (
-                    <div className="screentone-bg flex aspect-[2/3] w-full items-center justify-center border-b border-[var(--ink)] p-3">
-                      <span className="border-2 border-[var(--ink)] bg-[var(--paper)] px-2 py-1 font-display text-lg text-[var(--ink)]">
-                        {item.title.slice(0, 2).toUpperCase()}
-                      </span>
-                    </div>
-                  )}
+                  <CoverImage
+                    src={item.coverUrl}
+                    provider={forYou.provider}
+                    title={item.title}
+                    className="aspect-[2/3] w-full border-b-2 border-[var(--ink)] bg-[var(--surface)]"
+                  />
                   <span className="font-display line-clamp-2 block p-2.5 text-sm leading-snug group-hover:text-[var(--red-text)]">
                     {item.title}
                   </span>
