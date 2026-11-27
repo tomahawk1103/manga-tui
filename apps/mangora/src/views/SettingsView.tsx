@@ -774,7 +774,13 @@ export function SettingsView({
                       className="min-h-[42px] border-2 border-[var(--ink)] bg-[var(--paper)] px-3 text-xs font-bold text-[var(--ink)]"
                     >
                       <option value="libraryOnly">{t.settings.cloudModeLibrary}</option>
-                      <option value="fullSync">{t.settings.cloudModeFull}</option>
+                      <option value="fullSync">
+                        {!desktop
+                          ? appState.uiLanguage === "en"
+                            ? "Library + Drive chapters catalog"
+                            : "Biblioteca + Catálogo de capítulos en Drive"
+                          : t.settings.cloudModeFull}
+                      </option>
                     </select>
                     <button
                       type="button"
@@ -817,29 +823,45 @@ export function SettingsView({
                     </button>
                   </div>
 
-                  {showCloudAdvanced && (
+                  {(showCloudAdvanced || (!desktop && !cloud?.hasEmbeddedOauth && !cloud?.savedClientId)) && (
                     <div className="editorial-box-thin space-y-2 p-3">
-                      {!cloud?.hasEmbeddedOauth && !cloud?.savedClientId && (
-                        <p className="text-xs text-[var(--muted)]">{t.settings.cloudMissingClientIdHint}</p>
+                      {!desktop ? (
+                        <p className="text-xs text-[var(--muted)]">
+                          {appState.uiLanguage === "en"
+                            ? `Web OAuth: create a "Web application" Client ID in Google Cloud Console, add ${typeof window !== "undefined" ? window.location.origin : "https://tomahawk1103.github.io"} under Authorized JavaScript origins, and paste the Client ID below.`
+                            : `OAuth Web: en Google Cloud Console crea un ID de cliente tipo «Aplicación web», añade ${typeof window !== "undefined" ? window.location.origin : "https://tomahawk1103.github.io"} en «Orígenes de JavaScript autorizados» y pega aquí el Client ID.`}
+                        </p>
+                      ) : (
+                        !cloud?.hasEmbeddedOauth &&
+                        !cloud?.savedClientId && (
+                          <p className="text-xs text-[var(--muted)]">{t.settings.cloudMissingClientIdHint}</p>
+                        )
                       )}
                       <input
                         type="text"
                         value={googleClientId}
                         onChange={(e) => setGoogleClientId(e.target.value)}
-                        placeholder={cloud?.savedClientId ?? t.settings.cloudClientIdPlaceholder}
+                        placeholder={
+                          cloud?.savedClientId ??
+                          (!desktop
+                            ? "Client ID Web (...apps.googleusercontent.com)"
+                            : t.settings.cloudClientIdPlaceholder)
+                        }
                         className="min-w-0 w-full border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
                       />
-                      <input
-                        type="password"
-                        value={googleClientSecret}
-                        onChange={(e) => setGoogleClientSecret(e.target.value)}
-                        placeholder={t.settings.cloudClientSecretPlaceholder}
-                        className="min-w-0 w-full border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
-                      />
+                      {desktop && (
+                        <input
+                          type="password"
+                          value={googleClientSecret}
+                          onChange={(e) => setGoogleClientSecret(e.target.value)}
+                          placeholder={t.settings.cloudClientSecretPlaceholder}
+                          className="min-w-0 w-full border border-[var(--ink)] bg-[var(--paper)] px-2.5 py-1.5 font-mono-editorial text-xs text-[var(--ink)]"
+                        />
+                      )}
                     </div>
                   )}
 
-                  {cloud && cloud.detectedFolders.length > 0 && (
+                  {desktop && cloud && cloud.detectedFolders.length > 0 && (
                     <div>
                       <div className="mb-1.5 text-xs font-bold text-[var(--muted)]">
                         {t.settings.cloudDetectedFoldersLabel}
@@ -861,7 +883,7 @@ export function SettingsView({
                     </div>
                   )}
 
-                  {!appState.isMobile && (
+                  {desktop && !appState.isMobile && (
                     <div className="flex flex-wrap gap-2">
                       <input
                         type="text"

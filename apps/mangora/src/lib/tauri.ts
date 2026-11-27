@@ -12,6 +12,13 @@ import {
   webSearchCatalog,
 } from "../web/catalog";
 import {
+  connectWebGoogleDrive,
+  disconnectWebGoogleDrive,
+  getWebIntegrationsOverview,
+  listWebDriveOfflineLibrary,
+  runWebCloudSyncNow,
+} from "../web/googleDrive";
+import {
   WEB_BUILD_STAMP,
   buildEmergencyWebAppState,
   exportWebLibraryBackupJson,
@@ -453,7 +460,7 @@ export async function listOfflineLibrary(): Promise<OfflineSeriesItem[]> {
   if (isTauriRuntime()) {
     return invoke<OfflineSeriesItem[]>("list_offline_library");
   }
-  return [];
+  return listWebDriveOfflineLibrary();
 }
 
 export async function subscribeDownloadQueue(
@@ -531,7 +538,7 @@ export async function getIntegrationsOverview(): Promise<IntegrationsOverviewDto
   if (isTauriRuntime()) {
     return invoke<IntegrationsOverviewDto>("get_integrations_overview");
   }
-  return defaultBrowserIntegrationsOverview();
+  return getWebIntegrationsOverview();
 }
 
 export async function connectGoogleDrive(params: {
@@ -539,14 +546,14 @@ export async function connectGoogleDrive(params: {
   clientSecret?: string;
   useDeeplink?: boolean;
 }): Promise<OAuthStartResultDto> {
-  if (!isTauriRuntime()) {
-    throw new Error("Conectar Google Drive requiere la aplicación nativa Mangora.");
+  if (isTauriRuntime()) {
+    return invoke<OAuthStartResultDto>("connect_google_drive", {
+      clientId: params.clientId ?? null,
+      clientSecret: params.clientSecret ?? null,
+      useDeeplink: params.useDeeplink ?? false,
+    });
   }
-  return invoke<OAuthStartResultDto>("connect_google_drive", {
-    clientId: params.clientId ?? null,
-    clientSecret: params.clientSecret ?? null,
-    useDeeplink: params.useDeeplink ?? false,
-  });
+  return connectWebGoogleDrive(params.clientId);
 }
 
 export async function connectLocalCloudFolder(
@@ -565,17 +572,18 @@ export async function connectLocalCloudFolder(
 export async function runCloudSyncNow(
   mode: "libraryOnly" | "fullSync" | "pushDownloads" | "pullDownloads",
 ): Promise<CloudSyncActionResultDto> {
-  if (!isTauriRuntime()) {
-    throw new Error("Sincronizar nube requiere la aplicación nativa Mangora.");
+  if (isTauriRuntime()) {
+    return invoke<CloudSyncActionResultDto>("run_cloud_sync_now", { mode });
   }
-  return invoke<CloudSyncActionResultDto>("run_cloud_sync_now", { mode });
+  const state = await getInitialState();
+  return runWebCloudSyncNow(mode, state.appVersion, getWebProviders());
 }
 
 export async function disconnectCloud(): Promise<IntegrationsOverviewDto> {
   if (isTauriRuntime()) {
     return invoke<IntegrationsOverviewDto>("disconnect_cloud");
   }
-  return defaultBrowserIntegrationsOverview();
+  return disconnectWebGoogleDrive();
 }
 
 export async function saveAnilistCredentials(params: {

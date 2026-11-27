@@ -65,3 +65,15 @@ Para que cualquier persona pueda pulsar **Iniciar sesión con Google Drive** den
    - `MANGA_TUI_GDRIVE_CLIENT_ID`
    - `MANGA_TUI_GDRIVE_CLIENT_SECRET`
 3. Los workflows `nightly.yml` y `release.yml` los leerán automáticamente al generar las próximas builds.
+
+---
+
+## Paso 5: Conectar también Mangora Web (navegador)
+
+Si quieres sincronizar tu biblioteca y **leer tus capítulos `.cbz` / `.epub` guardados en `MangaTUI/downloads/` directamente desde el navegador** en **Mangora Web**:
+
+1. En **Google Cloud Console → Credenciales**, pulsa **+ Crear credenciales → ID de cliente de OAuth**.
+2. En **Tipo de aplicación**, selecciona **Aplicación web** (*Web application*).
+3. En **Orígenes de JavaScript autorizados**, añade la URL desde la que abres Mangora Web (por ejemplo `https://tomahawk1103.github.io`, o `http://localhost:1420` / `http://localhost:5173` en desarrollo).
+4. Copia ese **ID de cliente** (`...apps.googleusercontent.com`), abre **Mangora Web → Ajustes → Nube**, pulsa **Configuración avanzada**, pégalo en **Client ID Web** y pulsa **Conectar Google Drive**.
+5. Una vez conectado, podrás sincronizar `library_sync.json` y abrir los capítulos de `MangaTUI/downloads/` desde la pestaña **Descargas** en tu ordenador, móvil o iPad.

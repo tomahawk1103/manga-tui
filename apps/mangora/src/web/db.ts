@@ -160,7 +160,7 @@ interface MemoryStore {
   nextSessionId: number;
 }
 
-export const WEB_BUILD_STAMP = "2026.11.27-r6";
+export const WEB_BUILD_STAMP = "2026.11.27-r7";
 
 const memoryStore: MemoryStore = {
   kv: new Map(),
@@ -1604,4 +1604,34 @@ export async function computeWebExtendedMetrics(): Promise<ExtendedReaderMetrics
     generated_at: now.toISOString(),
     privacy_local_only: true,
   };
+}
+
+export async function getWebLibraryCoverAndReadStats(): Promise<{
+  byNormalizedTitle: Map<string, { coverUrl: string | null; readCount: number }>;
+  readCountByMangaId: Map<string, number>;
+}> {
+  await ensureMigrated();
+  const [mangas, chapters] = await Promise.all([getAllMangas(), getAllChapters()]);
+
+  const readByMangaKey = new Map<string, number>();
+  const readCountByMangaId = new Map<string, number>();
+  for (const ch of chapters) {
+    if (!ch.isRead) continue;
+    readByMangaKey.set(ch.mangaKey, (readByMangaKey.get(ch.mangaKey) ?? 0) + 1);
+    readCountByMangaId.set(ch.mangaId, (readCountByMangaId.get(ch.mangaId) ?? 0) + 1);
+  }
+
+  const byNormalizedTitle = new Map<string, { coverUrl: string | null; readCount: number }>();
+  for (const m of mangas) {
+    const norm = m.title.trim().toLowerCase();
+    if (!norm) continue;
+    const prev = byNormalizedTitle.get(norm);
+    const readCount = readByMangaKey.get(m.key) ?? 0;
+    byNormalizedTitle.set(norm, {
+      coverUrl: m.coverUrl ?? prev?.coverUrl ?? null,
+      readCount: Math.max(prev?.readCount ?? 0, readCount),
+    });
+  }
+
+  return { byNormalizedTitle, readCountByMangaId };
 }

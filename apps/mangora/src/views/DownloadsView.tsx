@@ -1,5 +1,6 @@
 import {
   CheckCircle2,
+  Cloud,
   FolderOpen,
   HardDrive,
   Pause,
@@ -9,6 +10,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
+import { CoverImage } from "../components/CoverImage";
 import { getTranslations } from "../lib/i18n";
 import { isTauriRuntime, openExternalUrl } from "../lib/tauri";
 import type {
@@ -28,6 +30,8 @@ interface DownloadsViewProps {
   offlineSeries: OfflineSeriesItem[];
   offlineLoading: boolean;
   isMutating: boolean;
+  cloudConnected?: boolean;
+  onOpenCloudSettings?: () => void;
   onOpenDownloadsFolder: () => Promise<void>;
   onChangeDownloadFormat: (format: DownloadFormat) => Promise<void>;
   onControlQueue: (action: DownloadQueueAction, taskId?: string) => Promise<void>;
@@ -49,6 +53,8 @@ export function DownloadsView({
   offlineSeries,
   offlineLoading,
   isMutating,
+  cloudConnected = false,
+  onOpenCloudSettings,
   onOpenDownloadsFolder,
   onChangeDownloadFormat,
   onControlQueue,
@@ -78,16 +84,53 @@ export function DownloadsView({
       {!desktop && (
         <section className="editorial-callout flex flex-col gap-3 p-5 sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0 space-y-1">
-            <h2 className="font-display text-xl">{d.webBannerTitle}</h2>
-            <p className="text-xs text-[var(--muted)]">{d.webBannerDesc}</p>
+            <h2 className="font-display flex items-center gap-2 text-xl">
+              <Cloud className="h-5 w-5 text-[var(--red-text)]" aria-hidden="true" />
+              <span>
+                {cloudConnected
+                  ? appState.uiLanguage === "en"
+                    ? "Google Drive connected · Cloud Reader"
+                    : "Google Drive conectado · Lector en la nube"
+                  : appState.uiLanguage === "en"
+                    ? "Read your Google Drive chapters here"
+                    : "Lee tus capítulos de Google Drive desde la web"}
+              </span>
+            </h2>
+            <p className="text-xs text-[var(--muted)]">
+              {cloudConnected
+                ? appState.uiLanguage === "en"
+                  ? "Browse your MangaTUI/downloads/ library synced from PC/Android and open CBZ or EPUB chapters directly in the browser reader."
+                  : "Explora los capítulos de MangaTUI/downloads/ sincronizados desde tu PC o Android y léelos directamente en el visor web."
+                : d.webBannerDesc}
+            </p>
           </div>
-          <button
-            type="button"
-            onClick={() => void openExternalUrl("https://tomahawk1103.github.io/manga-tui/#descargas")}
-            className="editorial-btn-primary shrink-0 text-xs"
-          >
-            {d.webDownloadAppBtn}
-          </button>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            {onOpenCloudSettings ? (
+              <button
+                type="button"
+                onClick={onOpenCloudSettings}
+                className="editorial-btn-primary text-xs"
+              >
+                <Cloud className="h-3.5 w-3.5" aria-hidden="true" />
+                <span>
+                  {cloudConnected
+                    ? appState.uiLanguage === "en"
+                      ? "Sync / Cloud settings"
+                      : "Sincronizar / Ajustes"
+                    : appState.uiLanguage === "en"
+                      ? "Connect Google Drive"
+                      : "Conectar Google Drive"}
+                </span>
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => void openExternalUrl("https://tomahawk1103.github.io/manga-tui/#descargas")}
+              className="editorial-btn-secondary text-xs"
+            >
+              {d.webDownloadAppBtn}
+            </button>
+          </div>
         </section>
       )}
 
@@ -409,7 +452,6 @@ export function DownloadsView({
         ) : (
           <ul className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {offlineSeries.map((series) => {
-              const hasCover = Boolean(series.coverUrl && /^https?:\/\//i.test(series.coverUrl));
               const openSelection = () =>
                 onOpenSeries({
                   mangaId: series.mangaId,
@@ -429,23 +471,13 @@ export function DownloadsView({
                     className="group flex w-full flex-1 cursor-pointer touch-manipulation gap-3.5 p-3.5 text-left hover:bg-[var(--surface)]/50"
                   >
                     <div className="h-24 w-16 shrink-0 overflow-hidden border-2 border-[var(--ink)] bg-[var(--surface)]">
-                      {hasCover ? (
-                        <img
-                          src={series.coverUrl ?? ""}
-                          alt=""
-                          loading="lazy"
-                          className="h-full w-full object-cover"
-                          onError={(e) => {
-                            e.currentTarget.hidden = true;
-                          }}
-                        />
-                      ) : (
-                        <div className="screentone-bg flex h-full w-full items-center justify-center p-1 text-center">
-                          <span className="border border-[var(--ink)] bg-[var(--paper)] px-1.5 py-0.5 font-mono-editorial text-xs font-bold">
-                            {series.title.slice(0, 2).toUpperCase()}
-                          </span>
-                        </div>
-                      )}
+                      <CoverImage
+                        src={series.coverUrl}
+                        provider={series.provider}
+                        title={series.title}
+                        className="h-full w-full"
+                        fallbackTextClassName="px-1.5 py-0.5 font-mono-editorial text-xs font-bold"
+                      />
                     </div>
 
                     <div className="min-w-0 flex-1 space-y-1.5">

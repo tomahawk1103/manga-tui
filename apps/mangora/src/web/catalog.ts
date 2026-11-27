@@ -12,7 +12,13 @@ import type {
   SeriesSelection,
   UpdateCheckResultDto,
 } from "../types/mangora";
+import { extractImagesFromZipArchive, parseCloudChapterFilename } from "./cbzReader";
 import { getWebMangaChapterState, recordWebChapterOpen } from "./db";
+import {
+  downloadWebDriveChapterBytes,
+  getWebDriveSeriesById,
+  scanWebDriveDownloads,
+} from "./googleDrive";
 
 export interface ChapterUpdate {
   id: string;
@@ -554,6 +560,7 @@ function pickNextUnread(chapters: SeriesChapterItem[]): SeriesChapterItem | null
 function providerBadge(provider: string): string {
   if (provider === "mangadex") return "MangaDex 🌐";
   if (provider === "mangaoni") return "MangaOni 🇪🇸";
+  if (provider === "gdrive") return "Google Drive ☁";
   return provider;
 }
 
@@ -1103,6 +1110,79 @@ export async function webGetSeriesDetail(
     };
   }
 
+  if (normProvider === "gdrive" || mangaId.startsWith("gdrive::")) {
+    let driveSeries = getWebDriveSeriesById(mangaId);
+    if (!driveSeries) {
+      try {
+        const scanned = await scanWebDriveDownloads(true);
+        driveSeries = scanned.find((s) => s.mangaId === mangaId || s.folderId === mangaId) ?? null;
+      } catch {
+        // Non-fatal: handled below if missing
+      }
+    }
+    if (!driveSeries) {
+      throw new Error("Serie no encontrada en MangaTUI/downloads/ de Google Drive.");
+    }
+
+    const dbState = await getWebMangaChapterState("gdrive", driveSeries.mangaId);
+    const sorted = [...driveSeries.chapters].sort((a, b) =>
+      compareChapterNumber(a.chapterNumber, b.chapterNumber, order),
+    );
+    const offset = (page - 1) * CHAPTERS_PER_PAGE;
+    const sliced = sorted.slice(offset, offset + CHAPTERS_PER_PAGE);
+
+    const chapters: SeriesChapterItem[] = sliced.map((ch) => {
+      const compoundId = `gdrive-file::${ch.id}::${ch.fileName}`;
+      const saved =
+        dbState.chaptersByKey.get(compoundId) ??
+        dbState.chaptersByKey.get(ch.id) ??
+        dbState.chaptersByKey.get(ch.fileName);
+      return {
+        id: compoundId,
+        title: ch.title,
+        chapterNumber: ch.chapterNumber || "?",
+        volumeNumber: null,
+        language: "es",
+        scanlator: "Google Drive",
+        publicationDate: ch.modifiedTime ? ch.modifiedTime.slice(0, 10) : null,
+        isRead: Boolean(saved?.isRead),
+        isDownloaded: true,
+        isAvailableOnline: true,
+        isBookmarked: Boolean(saved?.isBookmarked),
+        bookmarkedPage: saved?.numberPageBookmarked ?? null,
+        offlineFormat: ch.format,
+      };
+    });
+
+    return {
+      id: driveSeries.mangaId,
+      provider: "gdrive",
+      providerLabel: providerBadge("gdrive"),
+      title: driveSeries.title || selection.title,
+      coverUrl: selection.coverUrl ?? null,
+      description:
+        selection.description ??
+        "Capítulos almacenados en tu carpeta MangaTUI/downloads/ de Google Drive.",
+      author: null,
+      artist: null,
+      status: "ongoing",
+      genres: [],
+      availableLanguages: ["es"],
+      activeLanguage: "es",
+      order,
+      page,
+      totalChapters: sorted.length,
+      hasNextPage: offset + sliced.length < sorted.length,
+      isFavorite: dbState.isFavorite,
+      isOfflineFallback: true,
+      offlineChapterCount: driveSeries.chapters.length,
+      readChapterCount: Array.from(dbState.chaptersByKey.values()).filter((c) => c.isRead).length,
+      nextUnreadChapter: pickNextUnread(chapters),
+      chapters,
+      onlineWarning: null,
+    };
+  }
+
   // Legacy MangaOni worker endpoint (`series?id=...`)
   return fetchLegacyMangaOniDetail(mangaId, selection, normProvider, order, page);
 }
@@ -1114,7 +1194,21 @@ function registerSessionPages(pages: string[]): string {
   sessionOrder.push(sessionId);
   while (sessionOrder.length > MAX_WEB_SESSIONS) {
     const evicted = sessionOrder.shift();
-    if (evicted) activeWebSessions.delete(evicted);
+    if (evicted) {
+      const evictedPages = activeWebSessions.get(evicted);
+      if (evictedPages) {
+        for (const url of evictedPages) {
+          if (url.startsWith("blob:")) {
+            try {
+              URL.revokeObjectURL(url);
+            } catch {
+              // Ignore object URL revocation failures
+            }
+          }
+        }
+      }
+      activeWebSessions.delete(evicted);
+    }
   }
   return sessionId;
 }
@@ -1161,8 +1255,31 @@ export async function webOpenReaderChapter(request: OpenReaderChapterRequest): P
   let resolvedChapterNumber = request.chapterNumber?.trim() || "";
   let resolvedMangaTitle = request.mangaTitle.trim() || mangaId;
   let resolvedCoverUrl = request.coverUrl ?? null;
+  let isOffline = false;
+  let offlineFormat: string | null = null;
 
-  if (mangaId === "mangora-sample" || normalizedChapterId === "sample-1") {
+  if (normProvider === "gdrive" || normalizedChapterId.startsWith("gdrive-file::")) {
+    const parts = normalizedChapterId.split("::");
+    const fileId = parts.length >= 2 ? parts[1] : normalizedChapterId;
+    const fileName = parts.length >= 3 ? parts.slice(2).join("::") : resolvedChapterTitle || "chapter.cbz";
+    const parsedMeta = parseCloudChapterFilename(fileName);
+    const bytes = await downloadWebDriveChapterBytes(fileId);
+
+    if (parsedMeta.format === "PDF") {
+      const pdfUrl = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+      window.open(pdfUrl, "_blank", "noopener");
+      throw new Error(
+        "Archivo PDF abierto en una pestaña nueva del navegador (el visor integrado admite CBZ y EPUB).",
+      );
+    }
+
+    const blobs = await extractImagesFromZipArchive(bytes);
+    pages = blobs.map((blob) => URL.createObjectURL(blob));
+    resolvedChapterTitle = resolvedChapterTitle || parsedMeta.title;
+    resolvedChapterNumber = resolvedChapterNumber || parsedMeta.chapterNumber;
+    isOffline = true;
+    offlineFormat = parsedMeta.format;
+  } else if (mangaId === "mangora-sample" || normalizedChapterId === "sample-1") {
     const manifestUrl = new URL("./sample-1.json", catalogJsonUrl());
     const manifest = await fetchJson<{ pages: string[] }>(manifestUrl);
     pages = manifest.pages.map((p) => new URL(p, manifestUrl).href);
@@ -1289,8 +1406,8 @@ export async function webOpenReaderChapter(request: OpenReaderChapterRequest): P
     language: request.language ?? "es",
     pageCount: pages.length,
     initialPage,
-    isOffline: false,
-    offlineFormat: null,
+    isOffline,
+    offlineFormat,
     prevChapter,
     nextChapter,
   };

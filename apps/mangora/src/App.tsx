@@ -371,6 +371,7 @@ export function App() {
     if (appState?.onboardingCompleted && activeSection === "downloads") {
       void getDownloadQueueSnapshot().then(setDownloadQueue).catch(() => {});
       void loadOfflineSeries();
+      void getIntegrationsOverview().then(setIntegrationsOverview).catch(() => {});
     }
     if (
       appState?.onboardingCompleted &&
@@ -942,6 +943,8 @@ export function App() {
                     offlineSeries={offlineSeries}
                     offlineLoading={offlineLoading}
                     isMutating={isSaving}
+                    cloudConnected={Boolean(integrationsOverview?.cloud.connected)}
+                    onOpenCloudSettings={() => setActiveSection("settings")}
                     onOpenDownloadsFolder={async () => {
                       try {
                         await openDownloadsFolder();
@@ -987,9 +990,10 @@ export function App() {
                     }}
                     onOverviewChanged={(nextOverview, nextAppState) => {
                       setIntegrationsOverview(nextOverview);
+                      void loadOfflineSeries();
+                      void loadLibrary();
                       if (nextAppState) {
                         setAppState(nextAppState);
-                        void loadLibrary();
                       }
                     }}
                     onBackupImported={(res) => {
