@@ -26,6 +26,8 @@ const GOOGLE_DRIVE_UPLOAD_BASE = "https://www.googleapis.com/upload/drive/v3";
 const STORAGE_SESSION_KEY = "mangora.web.gdrive.session.v1";
 const STORAGE_CATALOG_KEY = "mangora.web.gdrive.catalog.v1";
 const MAX_DOWNLOAD_CACHE_ENTRIES = 3;
+const DEFAULT_WEB_GOOGLE_CLIENT_ID =
+  "316454749861-l20n0r134lbus5dasvbhmr40hk84g9p4.apps.googleusercontent.com";
 
 interface GoogleTokenClient {
   requestAccessToken: (overrideConfig?: { prompt?: string }) => void;
@@ -55,6 +57,7 @@ interface DriveFileEntry {
   name: string;
   mimeType: string;
   size?: string;
+  createdTime?: string;
   modifiedTime?: string;
 }
 
@@ -94,7 +97,7 @@ const chapterBytesOrder: string[] = [];
 
 function getEmbeddedWebClientId(): string | null {
   const val = (import.meta.env.VITE_MANGORA_GDRIVE_WEB_CLIENT_ID as string | undefined)?.trim();
-  return val || null;
+  return val || DEFAULT_WEB_GOOGLE_CLIENT_ID;
 }
 
 function loadSession(): StoredWebDriveSession {
@@ -300,44 +303,167 @@ async function driveFetchAbout(
   };
 }
 
-async function driveFindFolder(
+async function driveListFoldersByName(
   accessToken: string,
   folderName: string,
   parentId?: string,
-): Promise<string | null> {
+): Promise<DriveFileEntry[]> {
   const escaped = folderName.replace(/\\/g, "\\\\").replace(/'/g, "\\'");
-  const query = parentId
-    ? `name='${escaped}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`
-    : `name='${escaped}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
-  const list = await driveJsonFetch<{ files?: Array<{ id: string }> }>(
-    `${GOOGLE_DRIVE_API_BASE}/files?q=${encodeURIComponent(query)}&fields=files(id,name)&pageSize=10`,
-    accessToken,
-  );
-  return list.files?.[0]?.id ?? null;
+  const queries = parentId
+    ? [
+        `name='${escaped}' and mimeType='application/vnd.google-apps.folder' and '${parentId}' in parents and trashed=false`,
+      ]
+    : [
+        `name='${escaped}' and mimeType='application/vnd.google-apps.folder' and 'root' in parents and trashed=false`,
+        `name='${escaped}' and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+      ];
+
+  for (const query of queries) {
+    const list = await driveJsonFetch<{ files?: DriveFileEntry[] }>(
+      `${GOOGLE_DRIVE_API_BASE}/files?q=${encodeURIComponent(query)}&orderBy=${encodeURIComponent("createdTime asc")}&fields=files(id,name,mimeType,createdTime,modifiedTime)&pageSize=100`,
+      accessToken,
+    );
+    if (list.files && list.files.length > 0) {
+      return list.files;
+    }
+  }
+  return [];
 }
 
-async function driveFindOrCreateFolder(
+async function driveMoveFileToFolder(
   accessToken: string,
-  folderName: string,
-  parentId?: string,
-): Promise<string> {
-  const existing = await driveFindFolder(accessToken, folderName, parentId);
-  if (existing) return existing;
-
-  const created = await driveJsonFetch<{ id: string }>(
-    `${GOOGLE_DRIVE_API_BASE}/files?fields=id`,
+  fileId: string,
+  oldParentId: string,
+  newParentId: string,
+): Promise<void> {
+  await driveJsonFetch<{ id: string }>(
+    `${GOOGLE_DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?addParents=${encodeURIComponent(newParentId)}&removeParents=${encodeURIComponent(oldParentId)}&fields=id`,
     accessToken,
     {
-      method: "POST",
+      method: "PATCH",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        name: folderName,
-        mimeType: "application/vnd.google-apps.folder",
-        ...(parentId ? { parents: [parentId] } : {}),
-      }),
+      body: JSON.stringify({}),
     },
   );
-  return created.id;
+}
+
+async function driveTrashFile(accessToken: string, fileId: string): Promise<void> {
+  await driveJsonFetch<{ id: string }>(
+    `${GOOGLE_DRIVE_API_BASE}/files/${encodeURIComponent(fileId)}?fields=id`,
+    accessToken,
+    {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ trashed: true }),
+    },
+  );
+}
+
+async function driveMergeFolderInto(
+  accessToken: string,
+  sourceFolderId: string,
+  targetFolderId: string,
+  isRoot: boolean,
+  extraSnapshots: string[],
+): Promise<void> {
+  const [sourceChildren, targetChildren] = await Promise.all([
+    driveListFolder(accessToken, sourceFolderId),
+    driveListFolder(accessToken, targetFolderId),
+  ]);
+
+  const targetFolders = new Map<string, string>();
+  const targetFiles = new Set<string>();
+  for (const entry of targetChildren) {
+    if (entry.mimeType === "application/vnd.google-apps.folder") {
+      if (!targetFolders.has(entry.name)) targetFolders.set(entry.name, entry.id);
+    } else {
+      targetFiles.add(entry.name);
+    }
+  }
+
+  for (const child of sourceChildren) {
+    if (child.mimeType === "application/vnd.google-apps.folder") {
+      const existingTargetSubId = targetFolders.get(child.name);
+      if (existingTargetSubId) {
+        await driveMergeFolderInto(accessToken, child.id, existingTargetSubId, false, extraSnapshots);
+        await driveTrashFile(accessToken, child.id).catch(() => {});
+      } else {
+        await driveMoveFileToFolder(accessToken, child.id, sourceFolderId, targetFolderId);
+        targetFolders.set(child.name, child.id);
+      }
+    } else if (isRoot && child.name === CLOUD_LIBRARY_JSON_NAME) {
+      try {
+        const text = await driveDownloadText(accessToken, child.id);
+        extraSnapshots.push(text);
+      } catch {
+        // Ignore corrupt/unreadable snapshot in duplicate folder
+      }
+      await driveTrashFile(accessToken, child.id).catch(() => {});
+    } else if (isRoot && child.name === "manga-tui-history.db") {
+      await driveTrashFile(accessToken, child.id).catch(() => {});
+    } else if (targetFiles.has(child.name)) {
+      await driveTrashFile(accessToken, child.id).catch(() => {});
+    } else {
+      await driveMoveFileToFolder(accessToken, child.id, sourceFolderId, targetFolderId);
+      targetFiles.add(child.name);
+    }
+  }
+
+  await driveTrashFile(accessToken, sourceFolderId).catch(() => {});
+}
+
+async function driveFindOrCreateCanonicalRootFolder(accessToken: string): Promise<{
+  id: string;
+  children: DriveFileEntry[];
+  extraSnapshots: string[];
+}> {
+  const folders = await driveListFoldersByName(accessToken, CLOUD_ROOT_FOLDER_NAME);
+  if (folders.length === 0) {
+    const created = await driveJsonFetch<{ id: string }>(
+      `${GOOGLE_DRIVE_API_BASE}/files?fields=id`,
+      accessToken,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: CLOUD_ROOT_FOLDER_NAME,
+          mimeType: "application/vnd.google-apps.folder",
+        }),
+      },
+    );
+    return { id: created.id, children: [], extraSnapshots: [] };
+  }
+
+  if (folders.length === 1) {
+    const children = await driveListFolder(accessToken, folders[0].id);
+    return { id: folders[0].id, children, extraSnapshots: [] };
+  }
+
+  const listings = await Promise.all(folders.map((f) => driveListFolder(accessToken, f.id)));
+  let canonicalIdx = -1;
+  let bestModified = "";
+  listings.forEach((files, idx) => {
+    for (const file of files) {
+      if (file.name === CLOUD_LIBRARY_JSON_NAME && (file.modifiedTime ?? "") >= bestModified) {
+        bestModified = file.modifiedTime ?? "";
+        canonicalIdx = idx;
+      }
+    }
+  });
+  if (canonicalIdx < 0) {
+    canonicalIdx = listings.findIndex((files) => files.length > 0);
+  }
+  if (canonicalIdx < 0) canonicalIdx = 0;
+
+  const canonicalId = folders[canonicalIdx].id;
+  const extraSnapshots: string[] = [];
+  for (let i = 0; i < folders.length; i += 1) {
+    if (i === canonicalIdx) continue;
+    await driveMergeFolderInto(accessToken, folders[i].id, canonicalId, true, extraSnapshots);
+  }
+
+  const children = await driveListFolder(accessToken, canonicalId);
+  return { id: canonicalId, children, extraSnapshots };
 }
 
 async function driveListFolder(accessToken: string, folderId: string): Promise<DriveFileEntry[]> {
@@ -416,24 +542,35 @@ export async function scanWebDriveDownloads(forceRefresh = false): Promise<WebDr
   }
 
   const accessToken = await ensureValidAccessToken(true);
-  const rootId = await driveFindFolder(accessToken, CLOUD_ROOT_FOLDER_NAME);
-  if (!rootId) {
+  const rootFolders = await driveListFoldersByName(accessToken, CLOUD_ROOT_FOLDER_NAME);
+  if (rootFolders.length === 0) {
     saveCachedCatalog([]);
     return [];
   }
 
-  const downloadsId = await driveFindFolder(accessToken, CLOUD_DOWNLOADS_FOLDER_NAME, rootId);
-  if (!downloadsId) {
+  const downloadsFolderIds: string[] = [];
+  for (const rootFolder of rootFolders) {
+    const dlFolders = await driveListFoldersByName(accessToken, CLOUD_DOWNLOADS_FOLDER_NAME, rootFolder.id);
+    for (const dl of dlFolders) {
+      downloadsFolderIds.push(dl.id);
+    }
+  }
+  if (downloadsFolderIds.length === 0) {
     saveCachedCatalog([]);
     return [];
   }
 
-  const children = await driveListFolder(accessToken, downloadsId);
-  const seriesFolders = children.filter(
-    (entry) => entry.mimeType === "application/vnd.google-apps.folder",
-  );
+  const seriesFolders: DriveFileEntry[] = [];
+  for (const downloadsId of downloadsFolderIds) {
+    const children = await driveListFolder(accessToken, downloadsId);
+    for (const entry of children) {
+      if (entry.mimeType === "application/vnd.google-apps.folder") {
+        seriesFolders.push(entry);
+      }
+    }
+  }
 
-  const seriesList: WebDriveSeries[] = [];
+  const seriesByTitle = new Map<string, WebDriveSeries>();
   const batchSize = 4;
   for (let i = 0; i < seriesFolders.length; i += batchSize) {
     const slice = seriesFolders.slice(i, i + batchSize);
@@ -477,10 +614,26 @@ export async function scanWebDriveDownloads(forceRefresh = false): Promise<WebDr
     );
 
     for (const item of results) {
-      if (item) seriesList.push(item);
+      if (!item) continue;
+      const existing = seriesByTitle.get(item.title);
+      if (!existing) {
+        seriesByTitle.set(item.title, item);
+      } else {
+        const seenFiles = new Set(existing.chapters.map((c) => c.fileName));
+        for (const ch of item.chapters) {
+          if (!seenFiles.has(ch.fileName)) {
+            existing.chapters.push(ch);
+            existing.totalSizeBytes += ch.sizeBytes;
+            seenFiles.add(ch.fileName);
+          }
+        }
+        existing.formats = Array.from(new Set([...existing.formats, ...item.formats]));
+        existing.chapters.sort(compareChapterNumberDesc);
+      }
     }
   }
 
+  const seriesList = Array.from(seriesByTitle.values());
   seriesList.sort((a, b) => a.title.localeCompare(b.title));
   saveCachedCatalog(seriesList);
   return seriesList;
@@ -592,18 +745,30 @@ export async function runWebCloudSyncNow(
   availableProviders: ProviderOption[],
 ): Promise<CloudSyncActionResultDto> {
   const accessToken = await ensureValidAccessToken(true);
-  const rootId = await driveFindOrCreateFolder(accessToken, CLOUD_ROOT_FOLDER_NAME);
-  const rootFiles = await driveListFolder(accessToken, rootId);
-  const remoteLibraryFile = rootFiles.find((f) => f.name === CLOUD_LIBRARY_JSON_NAME);
+  const { id: rootId, children: rootFiles, extraSnapshots } = await driveFindOrCreateCanonicalRootFolder(accessToken);
+  const snapshotFiles = rootFiles
+    .filter((f) => f.name === CLOUD_LIBRARY_JSON_NAME)
+    .sort((a, b) => (b.modifiedTime ?? "").localeCompare(a.modifiedTime ?? ""));
+  const remoteLibraryFile = snapshotFiles[0];
 
   let importResult = null;
-  if (remoteLibraryFile) {
+  for (const extraJson of extraSnapshots) {
     try {
-      const remoteJson = await driveDownloadText(accessToken, remoteLibraryFile.id);
+      importResult = await importWebLibraryBackupJson(extraJson, availableProviders);
+    } catch {
+      // Ignore corrupt snapshot from duplicate folder
+    }
+  }
+  for (const file of [...snapshotFiles].reverse()) {
+    try {
+      const remoteJson = await driveDownloadText(accessToken, file.id);
       importResult = await importWebLibraryBackupJson(remoteJson, availableProviders);
     } catch {
-      // If remote JSON is corrupt/empty, proceed with uploading local state
+      // If remote JSON is corrupt/empty, proceed with remaining snapshots or local state
     }
+  }
+  for (const dupFile of snapshotFiles.slice(1)) {
+    await driveTrashFile(accessToken, dupFile.id).catch(() => {});
   }
 
   const mergedJson = await exportWebLibraryBackupJson(appVersion);
