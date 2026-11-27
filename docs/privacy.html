@@ -1,108 +1,391 @@
-<!DOCTYPE html>
-<html lang="es">
+<!doctype html>
+<html lang="es" data-mangora-palette="classic_paper">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f8f7f1" id="meta-theme-color">
   <title>Política de Privacidad / Privacy Policy — Mangora</title>
-  <meta name="description" content="Política de Privacidad de Mangora respecto al uso opcional de Google Drive API (drive.file) y almacenamiento local." />
+  <link rel="icon" type="image/png" href="./images/mangora-icon.png">
+  <link rel="apple-touch-icon" href="./images/mangora-icon.png">
+  <meta name="description" content="Política de Privacidad de Mangora respecto al uso opcional de Google Drive API (drive.file) y almacenamiento local.">
+  <script>
+    (function () {
+      var VALID_PALETTES = {
+        classic_paper: "#f8f7f1",
+        night_ink: "#141413",
+        editorial_sepia: "#f4ecd8",
+        shonen_red: "#fffaf5",
+        sumi_slate: "#1c1f24"
+      };
+      try {
+        var savedPalette = localStorage.getItem("mangora.site.palette");
+        if (savedPalette && VALID_PALETTES[savedPalette]) {
+          document.documentElement.setAttribute("data-mangora-palette", savedPalette);
+          var meta = document.getElementById("meta-theme-color");
+          if (meta) meta.setAttribute("content", VALID_PALETTES[savedPalette]);
+        }
+      } catch (e) {}
+    })();
+  </script>
   <style>
-    :root {
-      --bg: #0f1117;
-      --surface: #171a24;
-      --border: #2a3042;
-      --text: #e6e9f2;
-      --muted: #a1a9c0;
-      --accent: #7aa2f7;
-      --green: #9ece6a;
+    :root,
+    [data-mangora-palette="classic_paper"] {
+      --paper: #f8f7f1;
+      --surface: #ecebe3;
+      --surface-elevated: #ffffff;
+      --ink: #191918;
+      --red: #cb3028;
+      --red-hover: #a1201b;
+      --red-text: #cb3028;
+      --muted: #55554f;
+      --line: #c8c7bc;
+      --focus-ring: #0077b6;
+      --bar-bg: #191918;
+      --bar-fg: #f8f7f1;
+      --bar-accent: #ff8a76;
+      --shadow-color: #191918;
+      color-scheme: light;
     }
-    * { box-sizing: border-box; }
+
+    [data-mangora-palette="night_ink"] {
+      --paper: #141413;
+      --surface: #1f1f1d;
+      --surface-elevated: #262623;
+      --ink: #f8f7f1;
+      --red: #cb3028;
+      --red-hover: #e03d34;
+      --red-text: #ff8a76;
+      --muted: #b6b5ac;
+      --line: #3a3a35;
+      --focus-ring: #38bdf8;
+      --bar-bg: #0c0c0b;
+      --bar-fg: #f8f7f1;
+      --bar-accent: #ff8a76;
+      --shadow-color: #000000;
+      color-scheme: dark;
+    }
+
+    [data-mangora-palette="editorial_sepia"] {
+      --paper: #f4ecd8;
+      --surface: #e7dcc2;
+      --surface-elevated: #fbf6ea;
+      --ink: #2b2118;
+      --red: #a83226;
+      --red-hover: #832218;
+      --red-text: #a83226;
+      --muted: #665746;
+      --line: #cbbba0;
+      --focus-ring: #1d6fa5;
+      --bar-bg: #2b2118;
+      --bar-fg: #f4ecd8;
+      --bar-accent: #ff9c8a;
+      --shadow-color: #2b2118;
+      color-scheme: light;
+    }
+
+    [data-mangora-palette="shonen_red"] {
+      --paper: #fffaf5;
+      --surface: #fcebe6;
+      --surface-elevated: #ffffff;
+      --ink: #171414;
+      --red: #d91e2a;
+      --red-hover: #a6111c;
+      --red-text: #d91e2a;
+      --muted: #5a4c4c;
+      --line: #e3c2bd;
+      --focus-ring: #0077b6;
+      --bar-bg: #171414;
+      --bar-fg: #fffaf5;
+      --bar-accent: #ff8a76;
+      --shadow-color: #171414;
+      color-scheme: light;
+    }
+
+    [data-mangora-palette="sumi_slate"] {
+      --paper: #1c1f24;
+      --surface: #252930;
+      --surface-elevated: #2e333c;
+      --ink: #eff1f5;
+      --red: #d94b3d;
+      --red-hover: #f06553;
+      --red-text: #ff8a76;
+      --muted: #a6adb9;
+      --line: #3b424d;
+      --focus-ring: #66b2ff;
+      --bar-bg: #121417;
+      --bar-fg: #eff1f5;
+      --bar-accent: #ff8a76;
+      --shadow-color: #090b0d;
+      color-scheme: dark;
+    }
+
+    :root {
+      --display: "Arial Black", "Archivo Black", "Helvetica Neue", Arial, sans-serif;
+      --sans: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+      --mono: "Cascadia Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    }
+
+    * { box-sizing: border-box }
     body {
       margin: 0;
-      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-      background: var(--bg);
-      color: var(--text);
-      line-height: 1.65;
+      background: var(--paper);
+      color: var(--ink);
+      font: 1rem/1.65 var(--sans);
+      -webkit-font-smoothing: antialiased;
+      transition: background-color 140ms ease, color 140ms ease;
     }
-    a { color: var(--accent); text-decoration: none; }
-    a:hover { text-decoration: underline; }
-    .container {
-      max-width: 860px;
-      margin: 0 auto;
-      padding: 0 20px;
+    ::selection { background: var(--red); color: #ffffff }
+    a { color: inherit; text-underline-offset: .25em }
+    a:hover { color: var(--red-text) }
+    :focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 4px }
+    code {
+      font-family: var(--mono);
+      font-size: .88em;
+      padding: .1rem .38rem;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+      overflow-wrap: anywhere;
     }
-    header {
-      border-bottom: 1px solid var(--border);
-      background: rgba(23, 26, 36, 0.9);
+
+    .wrap { width: min(960px, 90%); margin-inline: auto }
+
+    .ink-bar {
+      background: var(--bar-bg);
+      color: var(--bar-fg);
+      font-family: var(--mono);
+      border-bottom: 2px solid var(--ink);
     }
-    .nav {
+    .ink-bar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .75rem;
+      padding-block: .52rem;
+      font-size: .78rem;
+    }
+    .ink-bar-left, .ink-bar-right {
+      display: flex;
+      align-items: center;
+      gap: .65rem;
+      min-width: 0;
+    }
+    .dots { display: flex; gap: 5px; align-items: center; flex: none }
+    .dots i { width: 7px; height: 7px; border: 1px solid #e4e3db; border-radius: 50%; display: block }
+    .dots i:first-child { background: #ec554a; border-color: #ec554a }
+    .ink-bar-path { font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis }
+    .theme-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      min-height: 30px;
+      padding: .2rem .65rem;
+      border: 1px solid #55554f;
+      background: transparent;
+      color: var(--bar-fg);
+      font-family: var(--mono);
+      font-size: .72rem;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color 120ms ease, border-color 120ms ease;
+    }
+    .theme-btn:hover { background: var(--red); border-color: var(--red); color: #ffffff }
+
+    header { border-bottom: 2px solid var(--ink); background: var(--paper) }
+    .nav-bar {
       display: flex;
       flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      gap: 12px;
-      padding: 14px 0;
+      gap: 1rem;
+      padding-block: .95rem;
     }
-    .brand { font-weight: 700; font-size: 1.1rem; color: var(--text); }
-    .brand span { color: var(--accent); }
-    .nav-links { display: flex; flex-wrap: wrap; gap: 18px; font-size: 0.95rem; }
-    main { padding: 34px 0 44px; }
-    h1 { margin: 0 0 6px; font-size: clamp(1.7rem, 3.5vw, 2.2rem); }
-    .meta { color: var(--muted); font-size: 0.92rem; margin-bottom: 24px; }
-    .card {
-      background: var(--surface);
-      border: 1px solid var(--border);
-      border-radius: 12px;
-      padding: 22px 24px;
-      margin-bottom: 20px;
+    .brand { display: flex; align-items: center; gap: .75rem; text-decoration: none }
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 2.25rem;
+      height: 2.25rem;
+      background: var(--red);
+      color: #ffffff;
+      border: 2px solid var(--ink);
+      font: 700 1.05rem/1 var(--mono);
+      letter-spacing: -.1em;
+      flex: none;
     }
-    h2 { margin: 0 0 12px; font-size: 1.25rem; color: var(--text); }
-    h3 { margin: 18px 0 8px; font-size: 1.05rem; color: var(--accent); }
-    p, li { color: var(--muted); font-size: 0.96rem; }
-    ul { padding-left: 20px; margin: 8px 0 12px; }
-    li { margin-bottom: 6px; }
-    code {
-      background: rgba(255, 255, 255, 0.06);
-      padding: 2px 6px;
-      border-radius: 5px;
-      color: var(--text);
-      font-size: 0.9em;
-    }
-    .highlight {
-      border-left: 4px solid var(--green);
-      padding-left: 14px;
-      margin: 14px 0;
-    }
-    footer {
-      border-top: 1px solid var(--border);
-      padding: 24px 0 38px;
+    .brand-copy { display: flex; flex-direction: column; line-height: 1.05 }
+    .brand-title { font: 900 1.35rem/1 var(--display); letter-spacing: -.06em }
+    .brand-sub {
+      font-family: var(--mono);
+      font-size: .68rem;
+      font-weight: 700;
+      letter-spacing: .07em;
+      text-transform: uppercase;
       color: var(--muted);
-      font-size: 0.9rem;
+      margin-top: .18rem;
+    }
+    .nav-links {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: clamp(.85rem, 2.5vw, 1.75rem);
+      font-weight: 700;
+      font-size: .94rem;
+    }
+    .nav-links a { text-decoration: none }
+    .nav-pill {
+      border: 2px solid var(--ink);
+      padding: .32rem .75rem;
+      background: var(--surface);
+      box-shadow: 2px 2px 0 var(--shadow-color);
+      font-family: var(--mono);
+      font-size: .8rem;
+    }
+    .nav-pill:hover { background: var(--ink); color: var(--paper) }
+
+    main { padding-block: clamp(2.25rem, 4.5vw, 3.6rem) }
+    .eyebrow {
+      display: inline-flex;
+      align-items: center;
+      gap: .7rem;
+      color: var(--red-text);
+      font-family: var(--mono);
+      font-size: .82rem;
+      font-weight: 700;
+      letter-spacing: .065em;
+      text-transform: uppercase;
+      margin: 0 0 .8rem;
+    }
+    .eyebrow::before { content: ""; width: 1.85rem; height: 3px; background: currentColor }
+    h1 {
+      margin: 0 0 .55rem;
+      font: 900 clamp(2.2rem, 4.5vw, 3.35rem)/1.04 var(--display);
+      letter-spacing: -.06em;
+    }
+    .meta {
+      font-family: var(--mono);
+      color: var(--muted);
+      font-size: .86rem;
+      margin: 0 0 2rem;
+    }
+
+    .editorial-card {
+      border: 2px solid var(--ink);
+      background: var(--paper);
+      box-shadow: 6px 6px 0 var(--shadow-color);
+      padding: clamp(1.25rem, 3vw, 2rem);
+      margin-bottom: 1.85rem;
+    }
+    .editorial-card h2 {
+      margin: 0 0 .9rem;
+      font: 900 clamp(1.35rem, 2.6vw, 1.75rem)/1.1 var(--display);
+      letter-spacing: -.045em;
+    }
+    .editorial-card h3 {
+      margin: 1.35rem 0 .5rem;
+      font-family: var(--mono);
+      font-size: 1rem;
+      font-weight: 700;
+      color: var(--red-text);
+    }
+    .editorial-card p, .editorial-card li {
+      color: var(--muted);
+      font-size: .96rem;
+    }
+    .editorial-card ul { padding-left: 1.25rem; margin: .5rem 0 .85rem }
+    .editorial-card li { margin-bottom: .45rem }
+    .editorial-card strong { color: var(--ink) }
+
+    .editorial-callout {
+      border: 1px solid var(--ink);
+      border-left: .45rem solid var(--red);
+      background: var(--surface);
+      padding: .9rem 1.15rem;
+      margin: 1.1rem 0;
+    }
+    .editorial-callout p { margin: 0 }
+
+    .back-link {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      min-height: 44px;
+      padding: .65rem 1.05rem;
+      border: 2px solid var(--ink);
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow: 3px 3px 0 var(--shadow-color);
+      font-family: var(--mono);
+      font-size: .84rem;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .back-link:hover { background: var(--ink); color: var(--paper) }
+
+    footer {
+      border-top: 2px solid var(--ink);
+      background: var(--surface);
+      padding-block: 1.5rem;
+      font-size: .9rem;
     }
     .footer-inner {
       display: flex;
       flex-wrap: wrap;
       justify-content: space-between;
-      gap: 14px;
+      align-items: center;
+      gap: .85rem 1.25rem;
+      color: var(--muted);
+    }
+    .footer-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      font-family: var(--mono);
+      font-size: .84rem;
     }
   </style>
 </head>
 <body>
+  <div class="ink-bar">
+    <div class="wrap ink-bar-inner">
+      <div class="ink-bar-left">
+        <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="ink-bar-path">&gt;_ mangora / privacidad</span>
+      </div>
+      <div class="ink-bar-right">
+        <button type="button" class="theme-btn" id="privacy-theme-toggle" aria-label="Cambiar paleta">
+          <span id="privacy-theme-icon" aria-hidden="true">☾</span>
+          <span id="privacy-theme-label">Papel Clásico</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <header>
-    <div class="container nav">
-      <a class="brand" href="./index.html"><span>M!</span> Mangora</a>
+    <div class="wrap nav-bar">
+      <a class="brand" href="./index.html">
+        <span class="mark" aria-hidden="true">M!</span>
+        <span class="brand-copy">
+          <span class="brand-title">Mangora</span>
+          <span class="brand-sub">Privacidad &amp; OAuth</span>
+        </span>
+      </a>
       <nav class="nav-links" aria-label="Navegación">
         <a href="./index.html">Inicio</a>
-        <a href="https://github.com/tomahawk1103/manga-tui">GitHub</a>
+        <a href="./mangora-web/">Mangora Web</a>
         <a href="mailto:raum973@gmail.com">Soporte</a>
+        <a class="nav-pill" href="https://github.com/tomahawk1103/manga-tui">GitHub</a>
       </nav>
     </div>
   </header>
 
-  <main class="container">
+  <main class="wrap">
+    <p class="eyebrow">Google Drive OAuth · Almacenamiento local</p>
     <h1>Política de Privacidad / Privacy Policy</h1>
-    <p class="meta">Aplicación: <strong>Mangora</strong> (<code>tomahawk1103/manga-tui</code>) · Licencia MIT · Última actualización: 2026-11-25</p>
+    <p class="meta">Aplicación: <strong>Mangora</strong> (<code>tomahawk1103/manga-tui</code>) · Licencia MIT · Última actualización: 2026-11-27</p>
 
-    <section class="card" lang="es">
+    <section class="editorial-card" lang="es">
       <h2>1. Resumen en Español</h2>
       <p>
         <strong>Mangora</strong> es una aplicación de lectura de manga de código abierto (licencia MIT) que se ejecuta íntegramente en tu propio dispositivo. No disponemos de servidores propios, no recopilamos analíticas ni telemetría, no mostramos publicidad y no vendemos ni compartimos información con terceros.
@@ -129,7 +412,7 @@
         La comunicación se realiza directamente desde tu ordenador o dispositivo móvil hacia los servidores oficiales de Google (<code>accounts.google.com</code>, <code>oauth2.googleapis.com</code> y <code>www.googleapis.com</code>) mediante HTTPS y PKCE. Ningún desarrollador ni servidor intermedio recibe tus credenciales ni tus datos.
       </p>
 
-      <div class="highlight">
+      <div class="editorial-callout">
         <p><strong>Política de Uso Limitado de Datos de Usuario de Google API:</strong> El uso y la transferencia por parte de Mangora de la información recibida de las APIs de Google se ajustan íntegramente a la <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, incluidos los requisitos de Uso Limitado (<em>Limited Use</em>).</p>
       </div>
 
@@ -146,7 +429,7 @@
       </p>
     </section>
 
-    <section class="card" lang="en">
+    <section class="editorial-card" lang="en">
       <h2>2. English Summary &amp; Google API Limited Use Disclosure</h2>
       <p>
         <strong>Mangora</strong> is an open-source manga reader application (MIT License) that runs locally on the user's device. There are no developer-operated backend servers, no telemetry or analytics, no advertisements, and no third-party data sharing.
@@ -160,7 +443,7 @@
         <li><strong>Local token handling:</strong> OAuth 2.0 + PKCE tokens are stored strictly locally on your device and transmitted exclusively over HTTPS directly between your device and Google's official endpoints.</li>
       </ul>
 
-      <div class="highlight">
+      <div class="editorial-callout">
         <p><strong>Google API Services User Data Policy (Limited Use):</strong> Mangora's use and transfer to any other app of information received from Google APIs will adhere to the <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>, including the Limited Use requirements.</p>
       </div>
 
@@ -175,14 +458,55 @@
       </p>
     </section>
 
-    <p><a href="./index.html">← Volver a la página principal / Back to Home</a></p>
+    <a class="back-link" href="./index.html">← Volver a la página principal / Back to Home</a>
   </main>
 
   <footer>
-    <div class="container footer-inner">
-      <div>Mangora · <a href="https://github.com/tomahawk1103/manga-tui">github.com/tomahawk1103/manga-tui</a></div>
-      <div><a href="./index.html">Inicio</a> · <a href="mailto:raum973@gmail.com">raum973@gmail.com</a></div>
+    <div class="wrap footer-inner">
+      <div><strong>Mangora</strong> · <a href="https://github.com/tomahawk1103/manga-tui">github.com/tomahawk1103/manga-tui</a></div>
+      <div class="footer-links">
+        <a href="./index.html">Inicio</a>
+        <a href="./mangora-web/">Mangora Web</a>
+        <a href="mailto:raum973@gmail.com">raum973@gmail.com</a>
+      </div>
     </div>
   </footer>
+
+  <script>
+    (function () {
+      var PALETTE_ORDER = [
+        { id: "classic_paper", label: "Papel Clásico", themeColor: "#f8f7f1", icon: "☾" },
+        { id: "night_ink", label: "Tinta Nocturna", themeColor: "#141413", icon: "☀" },
+        { id: "editorial_sepia", label: "Sepia Editorial", themeColor: "#f4ecd8", icon: "☾" },
+        { id: "shonen_red", label: "Shonen Rojo", themeColor: "#fffaf5", icon: "☾" },
+        { id: "sumi_slate", label: "Sumi Grafito", themeColor: "#1c1f24", icon: "☀" }
+      ];
+
+      function syncUI(paletteId) {
+        var entry = PALETTE_ORDER.find(function (p) { return p.id === paletteId; }) || PALETTE_ORDER[0];
+        document.documentElement.setAttribute("data-mangora-palette", entry.id);
+        var meta = document.getElementById("meta-theme-color");
+        if (meta) meta.setAttribute("content", entry.themeColor);
+        var icon = document.getElementById("privacy-theme-icon");
+        var lbl = document.getElementById("privacy-theme-label");
+        if (icon) icon.textContent = entry.icon;
+        if (lbl) lbl.textContent = entry.label;
+      }
+
+      var current = document.documentElement.getAttribute("data-mangora-palette") || "classic_paper";
+      syncUI(current);
+
+      var btn = document.getElementById("privacy-theme-toggle");
+      if (btn) {
+        btn.addEventListener("click", function () {
+          var idx = PALETTE_ORDER.findIndex(function (p) { return p.id === current; });
+          var next = PALETTE_ORDER[(idx + 1) % PALETTE_ORDER.length];
+          current = next.id;
+          try { localStorage.setItem("mangora.site.palette", current); } catch (e) {}
+          syncUI(current);
+        });
+      }
+    })();
+  </script>
 </body>
 </html>

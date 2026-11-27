@@ -1,211 +1,1116 @@
 ﻿<!doctype html>
-<html lang="es">
+<html lang="es" data-mangora-palette="classic_paper">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="theme-color" content="#f8f7f1">
+  <meta name="theme-color" content="#f8f7f1" id="meta-theme-color">
   <title>Mangora · Lector de manga multiplataforma</title>
   <link rel="icon" type="image/png" href="./images/mangora-icon.png">
   <link rel="apple-touch-icon" href="./images/mangora-icon.png">
-  <meta name="description" content="Busca, descarga y lee manga con Mangora en Windows, Android y Web. Lector HD en cascada o doble página, descargas offline y sincronización opcional.">
+  <meta name="description" content="Busca, descarga y lee manga con Mangora en Windows, Android y Web. Lector HD en cascada o doble página, estadísticas locales de 14 días, 5 paletas editoriales y descargas offline.">
+  <script>
+    (function () {
+      var VALID_PALETTES = {
+        classic_paper: "#f8f7f1",
+        night_ink: "#141413",
+        editorial_sepia: "#f4ecd8",
+        shonen_red: "#fffaf5",
+        sumi_slate: "#1c1f24"
+      };
+      try {
+        var savedPalette = localStorage.getItem("mangora.site.palette");
+        if (savedPalette && VALID_PALETTES[savedPalette]) {
+          document.documentElement.setAttribute("data-mangora-palette", savedPalette);
+          var meta = document.getElementById("meta-theme-color");
+          if (meta) meta.setAttribute("content", VALID_PALETTES[savedPalette]);
+        }
+        var savedLang = localStorage.getItem("mangora.site.lang");
+        if (savedLang === "es" || savedLang === "en") {
+          document.documentElement.lang = savedLang;
+        }
+      } catch (e) {}
+    })();
+  </script>
   <style>
-    :root {
+    :root,
+    [data-mangora-palette="classic_paper"] {
       --paper: #f8f7f1;
+      --surface: #ecebe3;
+      --surface-elevated: #ffffff;
       --ink: #191918;
       --red: #cb3028;
+      --red-hover: #a1201b;
+      --red-text: #cb3028;
       --muted: #55554f;
       --line: #c8c7bc;
-      --display: "Arial Black", "Archivo Black", Arial, sans-serif;
-      --mono: "Cascadia Mono", Consolas, "Courier New", monospace;
+      --focus-ring: #0077b6;
+      --bar-bg: #191918;
+      --bar-fg: #f8f7f1;
+      --bar-accent: #ff8a76;
+      --shadow-color: #191918;
+      --button-fg: #ffffff;
+      --ok: #1b7a43;
+      color-scheme: light;
     }
+
+    [data-mangora-palette="night_ink"] {
+      --paper: #141413;
+      --surface: #1f1f1d;
+      --surface-elevated: #262623;
+      --ink: #f8f7f1;
+      --red: #cb3028;
+      --red-hover: #e03d34;
+      --red-text: #ff8a76;
+      --muted: #b6b5ac;
+      --line: #3a3a35;
+      --focus-ring: #38bdf8;
+      --bar-bg: #0c0c0b;
+      --bar-fg: #f8f7f1;
+      --bar-accent: #ff8a76;
+      --shadow-color: #000000;
+      --button-fg: #ffffff;
+      --ok: #2da660;
+      color-scheme: dark;
+    }
+
+    [data-mangora-palette="editorial_sepia"] {
+      --paper: #f4ecd8;
+      --surface: #e7dcc2;
+      --surface-elevated: #fbf6ea;
+      --ink: #2b2118;
+      --red: #a83226;
+      --red-hover: #832218;
+      --red-text: #a83226;
+      --muted: #665746;
+      --line: #cbbba0;
+      --focus-ring: #1d6fa5;
+      --bar-bg: #2b2118;
+      --bar-fg: #f4ecd8;
+      --bar-accent: #ff9c8a;
+      --shadow-color: #2b2118;
+      --button-fg: #ffffff;
+      --ok: #1b7a43;
+      color-scheme: light;
+    }
+
+    [data-mangora-palette="shonen_red"] {
+      --paper: #fffaf5;
+      --surface: #fcebe6;
+      --surface-elevated: #ffffff;
+      --ink: #171414;
+      --red: #d91e2a;
+      --red-hover: #a6111c;
+      --red-text: #d91e2a;
+      --muted: #5a4c4c;
+      --line: #e3c2bd;
+      --focus-ring: #0077b6;
+      --bar-bg: #171414;
+      --bar-fg: #fffaf5;
+      --bar-accent: #ff8a76;
+      --shadow-color: #171414;
+      --button-fg: #ffffff;
+      --ok: #1b7a43;
+      color-scheme: light;
+    }
+
+    [data-mangora-palette="sumi_slate"] {
+      --paper: #1c1f24;
+      --surface: #252930;
+      --surface-elevated: #2e333c;
+      --ink: #eff1f5;
+      --red: #d94b3d;
+      --red-hover: #f06553;
+      --red-text: #ff8a76;
+      --muted: #a6adb9;
+      --line: #3b424d;
+      --focus-ring: #66b2ff;
+      --bar-bg: #121417;
+      --bar-fg: #eff1f5;
+      --bar-accent: #ff8a76;
+      --shadow-color: #090b0d;
+      --button-fg: #ffffff;
+      --ok: #2da660;
+      color-scheme: dark;
+    }
+
+    :root {
+      --display: "Arial Black", "Archivo Black", "Helvetica Neue", Arial, sans-serif;
+      --sans: "Segoe UI", -apple-system, BlinkMacSystemFont, Roboto, Arial, sans-serif;
+      --mono: "Cascadia Mono", ui-monospace, SFMono-Regular, Menlo, Consolas, "Courier New", monospace;
+    }
+
     * { box-sizing: border-box }
-    body { margin: 0; color: var(--ink); background: var(--paper); font: 1rem/1.55 "Segoe UI", Arial, sans-serif }
+    html { scroll-behavior: smooth }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--paper);
+      font: 1rem/1.55 var(--sans);
+      -webkit-font-smoothing: antialiased;
+      transition: background-color 140ms ease, color 140ms ease;
+    }
+    ::selection { background: var(--red); color: #ffffff }
     a { color: inherit; text-underline-offset: .25em }
-    a:hover { color: var(--red) }
-    :focus-visible { outline: 3px solid #0077b6; outline-offset: 4px }
+    a:hover { color: var(--red-text) }
+    :focus-visible { outline: 3px solid var(--focus-ring); outline-offset: 4px }
+    code {
+      font-family: var(--mono);
+      font-size: .88em;
+      padding: .1rem .35rem;
+      border: 1px solid var(--line);
+      background: var(--surface);
+      color: var(--ink);
+    }
     .wrap { width: min(1200px, 90%); margin-inline: auto }
-    .skip { position: absolute; z-index: 5; background: white; padding: .6em 1em; transform: translateY(-150%) }
+    .skip {
+      position: absolute;
+      z-index: 20;
+      background: var(--paper);
+      color: var(--ink);
+      border: 2px solid var(--ink);
+      padding: .6em 1em;
+      transform: translateY(-160%);
+    }
     .skip:focus { transform: none }
-    header { border-bottom: 1px solid var(--ink) }
-    .bar, nav, .brand, .actions, .reader-bar, .reader-foot, .pager, .platforms, .foot { display: flex; align-items: center }
-    .bar, .foot { justify-content: space-between; gap: 1rem; padding-block: 1.1rem }
-    .brand { gap: .65rem; font: 900 1.35rem/1 var(--display); letter-spacing: -.06em; text-decoration: none }
-    .mark { display: grid; place-items: center; width: 2.15rem; height: 2.15rem; background: var(--red); color: white; font: bold 1.15rem var(--mono); letter-spacing: -.06em; padding-right: 0 }
-    nav { gap: clamp(.9rem, 3vw, 2.6rem); font-weight: 600 }
+    [hidden] { display: none !important }
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
+    /* Top Ink Bar matching TopBar.tsx */
+    .ink-bar {
+      background: var(--bar-bg);
+      color: var(--bar-fg);
+      font-family: var(--mono);
+      border-bottom: 2px solid var(--ink);
+    }
+    .ink-bar-inner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .75rem 1.25rem;
+      padding-block: .52rem;
+      font-size: .78rem;
+    }
+    .ink-bar-left, .ink-bar-right {
+      display: flex;
+      align-items: center;
+      gap: .65rem;
+      min-width: 0;
+    }
+    .ink-bar-path {
+      font-weight: 700;
+      letter-spacing: -.01em;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .ink-pill {
+      border: 1px solid #55554f;
+      padding: .14rem .48rem;
+      font-size: .72rem;
+      color: var(--bar-accent);
+      white-space: nowrap;
+    }
+    .dots { display: flex; gap: 5px; align-items: center; flex: none }
+    .dots i {
+      width: 7px;
+      height: 7px;
+      border: 1px solid #e4e3db;
+      border-radius: 50%;
+      display: block;
+    }
+    .dots i:first-child { background: #ec554a; border-color: #ec554a }
+
+    .lang-group {
+      display: inline-flex;
+      border: 1px solid #55554f;
+      flex: none;
+    }
+    .lang-btn {
+      min-height: 30px;
+      padding: .2rem .55rem;
+      border: 0;
+      background: transparent;
+      color: var(--bar-fg);
+      font-family: var(--mono);
+      font-size: .72rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      cursor: pointer;
+      transition: background-color 120ms ease;
+    }
+    .lang-btn:hover { background: rgba(255, 255, 255, 0.1) }
+    .lang-btn[aria-pressed="true"] { background: var(--red); color: #ffffff }
+
+    .theme-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: .4rem;
+      min-height: 30px;
+      padding: .2rem .6rem;
+      border: 1px solid #55554f;
+      background: transparent;
+      color: var(--bar-fg);
+      font-family: var(--mono);
+      font-size: .72rem;
+      font-weight: 700;
+      cursor: pointer;
+      white-space: nowrap;
+      transition: background-color 120ms ease, border-color 120ms ease;
+    }
+    .theme-btn:hover { background: var(--red); border-color: var(--red); color: #ffffff }
+
+    /* Main Header matching Sidebar brand lockup */
+    header {
+      border-bottom: 2px solid var(--ink);
+      background: var(--paper);
+    }
+    .bar, nav, .brand, .actions, .reader-bar, .reader-foot, .pager, .platforms, .foot {
+      display: flex;
+      align-items: center;
+    }
+    .bar, .foot { justify-content: space-between; gap: 1rem; padding-block: .95rem }
+    .brand {
+      gap: .75rem;
+      text-decoration: none;
+      flex: none;
+    }
+    .brand-copy { display: flex; flex-direction: column; line-height: 1.05 }
+    .brand-title {
+      font: 900 1.4rem/1 var(--display);
+      letter-spacing: -.06em;
+      color: var(--ink);
+    }
+    .brand-sub {
+      font-family: var(--mono);
+      font-size: .68rem;
+      font-weight: 700;
+      letter-spacing: .07em;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-top: .18rem;
+    }
+    .mark {
+      display: grid;
+      place-items: center;
+      width: 2.25rem;
+      height: 2.25rem;
+      background: var(--red);
+      color: #ffffff;
+      border: 2px solid var(--ink);
+      font: 700 1.05rem/1 var(--mono);
+      letter-spacing: -.1em;
+      flex: none;
+    }
+    nav {
+      gap: clamp(.75rem, 2.2vw, 1.85rem);
+      font-weight: 700;
+      font-size: .94rem;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
     nav a { text-decoration: none }
-    .repo { border: 1px solid var(--ink); padding: .4em .95em }
-    .hero { display: grid; grid-template-columns: 1fr 1fr; align-items: center; gap: clamp(2rem, 5vw, 5rem); padding-block: clamp(3rem, 6vw, 6rem) }
+    .nav-pill {
+      border: 2px solid var(--ink);
+      padding: .35rem .8rem;
+      background: var(--surface);
+      box-shadow: 2px 2px 0 var(--shadow-color);
+      font-family: var(--mono);
+      font-size: .8rem;
+      transition: transform 90ms ease, box-shadow 90ms ease, background-color 120ms ease, color 120ms ease;
+    }
+    .nav-pill:hover { background: var(--ink); color: var(--paper) }
+    .nav-pill:active { transform: translate(1px, 1px); box-shadow: 1px 1px 0 var(--shadow-color) }
+
+    /* Hero */
+    .hero {
+      display: grid;
+      grid-template-columns: 1.05fr 0.95fr;
+      align-items: center;
+      gap: clamp(2rem, 5vw, 4.5rem);
+      padding-block: clamp(2.8rem, 5.5vw, 5.2rem);
+    }
     .hero > div { min-width: 0 }
-    .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0 }
     .eyebrow, .meta, .reader-bar, .reader-foot, .platforms, .ribbon, .tag { font-family: var(--mono) }
-    .eyebrow { display: flex; align-items: center; gap: .7rem; color: var(--red); font-size: .84rem; font-weight: 700; letter-spacing: .065em; text-transform: uppercase }
-    .eyebrow::before { content: ""; width: 2rem; height: 3px; background: currentColor }
+    .eyebrow {
+      display: flex;
+      align-items: center;
+      gap: .7rem;
+      color: var(--red-text);
+      font-size: .82rem;
+      font-weight: 700;
+      letter-spacing: .065em;
+      text-transform: uppercase;
+    }
+    .eyebrow::before { content: ""; width: 2rem; height: 3px; background: currentColor; flex: none }
     h1, h2, h3, p, figure { margin: 0 }
-    h1, h2, h3 { font-family: var(--display); letter-spacing: -.065em; line-height: 1.04 }
-    h1 { margin: 1.2rem 0; font-size: clamp(4rem, 6.5vw, 6.5rem); font-weight: 900 }
-    h1 em { display: block; color: var(--red); font-style: normal }
-    .intro { max-width: 42ch; font-size: clamp(1.06rem, 1.45vw, 1.25rem); color: var(--muted) }
-    .actions { flex-wrap: wrap; gap: .9rem 1.4rem; margin-top: 1.85rem }
-    .button { display: inline-flex; align-items: center; gap: .65rem; padding: .8rem 1.25rem; border: 2px solid var(--ink); background: var(--red); box-shadow: 3px 3px var(--ink); color: #fff; font-weight: 700; text-decoration: none }
-    .button:hover { background: #a1201b; color: white }
-    .secondary { padding: .8rem 1.05rem; border: 2px solid var(--ink); background: var(--paper); color: var(--ink); font: inherit; font-weight: 700; cursor: pointer }
+    h1, h2, h3 { font-family: var(--display); letter-spacing: -.06em; line-height: 1.04 }
+    h1 { margin: 1.05rem 0; font-size: clamp(3.4rem, 6vw, 5.8rem); font-weight: 900 }
+    h1 em { display: block; color: var(--red-text); font-style: normal }
+    .intro { max-width: 44ch; font-size: clamp(1.04rem, 1.4vw, 1.2rem); color: var(--muted) }
+    .actions { flex-wrap: wrap; gap: .85rem 1.05rem; margin-top: 1.7rem }
+
+    .button {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .6rem;
+      min-height: 44px;
+      padding: .75rem 1.2rem;
+      border: 2px solid var(--ink);
+      background: var(--red);
+      box-shadow: 3px 3px 0 var(--shadow-color);
+      color: var(--button-fg);
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      transition: transform 90ms ease, box-shadow 90ms ease, background-color 120ms ease;
+    }
+    .button:hover { background: var(--red-hover); color: var(--button-fg) }
+    .button:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--shadow-color) }
+
+    .secondary {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      gap: .5rem;
+      min-height: 44px;
+      padding: .75rem 1.05rem;
+      border: 2px solid var(--ink);
+      background: var(--paper);
+      color: var(--ink);
+      box-shadow: 3px 3px 0 var(--shadow-color);
+      font: inherit;
+      font-weight: 700;
+      text-decoration: none;
+      cursor: pointer;
+      transition: transform 90ms ease, box-shadow 90ms ease, background-color 120ms ease, color 120ms ease;
+    }
     .secondary:hover { background: var(--ink); color: var(--paper) }
-    .quick-cmd { margin-top: 1.15rem; max-width: 34rem }
-    .cmd-bar { display: flex; align-items: center; gap: .6rem; padding: .45rem .5rem .45rem .8rem; border: 2px solid var(--ink); background: var(--ink); color: var(--paper); box-shadow: 3px 3px var(--ink) }
-    .cmd-prompt { font-family: var(--mono); font-size: .84rem; font-weight: 700; color: #ff8a76; flex: none; user-select: none }
-    .cmd-code { font-family: var(--mono); font-size: .84rem; white-space: nowrap; overflow-x: auto; flex: 1; min-width: 0; padding-block: .15rem }
-    .copy-btn { flex: none; padding: .42rem .75rem; border: 1px solid #e4e3db; background: var(--red); color: #fff; font-family: var(--mono); font-size: .78rem; font-weight: 700; cursor: pointer }
-    .copy-btn:hover { background: #a1201b }
-    .copy-btn.copied { background: #1b7a43; border-color: #1b7a43 }
+    .secondary:active { transform: translate(2px, 2px); box-shadow: 1px 1px 0 var(--shadow-color) }
+
+    .quick-cmd { margin-top: 1.15rem; max-width: 35rem }
+    .cmd-bar {
+      display: flex;
+      align-items: center;
+      gap: .6rem;
+      padding: .45rem .5rem .45rem .8rem;
+      border: 2px solid var(--ink);
+      background: var(--bar-bg);
+      color: var(--bar-fg);
+      box-shadow: 3px 3px 0 var(--shadow-color);
+    }
+    .cmd-prompt { font-family: var(--mono); font-size: .84rem; font-weight: 700; color: var(--bar-accent); flex: none; user-select: none }
+    .cmd-code {
+      font-family: var(--mono);
+      font-size: .84rem;
+      white-space: nowrap;
+      overflow-x: auto;
+      flex: 1;
+      min-width: 0;
+      padding-block: .15rem;
+      border: 0;
+      background: transparent;
+      color: var(--bar-fg);
+    }
+    .copy-btn {
+      flex: none;
+      padding: .42rem .75rem;
+      border: 1px solid #e4e3db;
+      background: var(--red);
+      color: #ffffff;
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .copy-btn:hover { background: var(--red-hover) }
+    .copy-btn.copied { background: var(--ok); border-color: var(--ok) }
     .cmd-caption { margin-top: .45rem; font-family: var(--mono); font-size: .78rem; color: var(--muted) }
     .cmd-caption a { font-weight: 700 }
-    .platforms { gap: .65rem; flex-wrap: wrap; color: var(--muted); font-size: .82rem; margin-top: 1.35rem }
-    .platforms span + span::before { content: "/"; margin-right: .65rem; color: #88877b }
+    .platforms { gap: .65rem; flex-wrap: wrap; color: var(--muted); font-size: .82rem; margin-top: 1.3rem }
+    .platforms span + span::before { content: "/"; margin-right: .65rem; color: var(--line) }
     .platforms a { text-decoration: none }
+
+    /* Sample Manga Stage */
     .stage { position: relative; min-width: 0; padding: 1.3rem .95rem 1.3rem 1rem; isolation: isolate }
-    .stage::before { content: ""; position: absolute; inset: 0 0 0 8%; border: 1px solid var(--ink); transform: rotate(2deg); background: radial-gradient(var(--red) 1px, transparent 1.4px) 0 0/6px 6px; z-index: -1 }
-    figure { border: 2px solid var(--ink); background: var(--paper); box-shadow: 6px 6px var(--ink) }
+    .stage::before {
+      content: "";
+      position: absolute;
+      inset: 0 0 0 8%;
+      border: 1px solid var(--ink);
+      transform: rotate(2deg);
+      background: radial-gradient(var(--red) 1px, transparent 1.4px) 0 0/6px 6px;
+      z-index: -1;
+    }
+    figure {
+      border: 2px solid var(--ink);
+      background: var(--paper);
+      box-shadow: 6px 6px 0 var(--shadow-color);
+    }
     .reader-bar, .reader-foot { justify-content: space-between; gap: 1rem; padding: .55rem .95rem; font-size: .82rem }
-    .reader-bar { background: var(--ink); color: white }
-    .dots { display: flex; gap: 5px }
-    .dots i { width: 7px; height: 7px; border: 1px solid #e4e3db; border-radius: 50% }
-    .dots i:first-child { background: #ec554a; border-color: #ec554a }
-    .panel { display: block; overflow: hidden; border-bottom: 2px solid var(--ink); background: white; cursor: zoom-in }
+    .reader-bar { background: var(--bar-bg); color: var(--bar-fg); border-bottom: 2px solid var(--ink) }
+    .panel { display: block; overflow: hidden; border-bottom: 2px solid var(--ink); background: #ffffff; cursor: zoom-in }
     .panel img { width: 100%; aspect-ratio: 1.45; object-fit: cover; object-position: center 64%; display: block }
-    .reader-foot { min-height: 3.2rem; font-weight: bold }
+    .reader-foot { min-height: 3.2rem; font-weight: 700; background: var(--paper); color: var(--ink) }
     .pager { gap: .4rem }
-    [hidden] { display: none !important }
-    .pager button { width: 2.5rem; height: 2.25rem; border: 1px solid var(--ink); background: transparent; color: var(--ink); cursor: pointer; font-size: 1.2rem }
-    .pager button:hover:enabled { color: white; background: var(--ink) }
+    .pager button {
+      width: 2.5rem;
+      height: 2.25rem;
+      border: 1px solid var(--ink);
+      background: transparent;
+      color: var(--ink);
+      cursor: pointer;
+      font-size: 1.2rem;
+    }
+    .pager button:hover:enabled { color: var(--paper); background: var(--ink) }
     .pager button:disabled { opacity: .32; cursor: default }
-    .ribbon { border-block: 1px solid var(--ink); color: var(--paper); background: var(--ink) }
-    .ribbon .wrap { display: flex; justify-content: space-between; align-items: center; gap: 1rem; padding-block: .95rem; font-size: .9rem }
-    .ribbon b { color: #ff8a76; font-weight: 500 }
-    .features { padding-block: clamp(3rem, 5.5vw, 5rem) }
-    h2 { font-size: clamp(2.25rem, 4vw, 3.8rem); margin-bottom: 1.75rem }
-    .grid { display: grid; grid-template-columns: repeat(3, 1fr); border-block: 2px solid var(--ink) }
-    .features .grid { grid-template-columns: repeat(4, minmax(0, 1fr)) }
-    .downloads .grid { grid-template-columns: repeat(3, minmax(0, 1fr)) }
-    .downloads .grid article:nth-child(3n+1) { border-left: 0; padding-left: 0 }
-    .downloads .grid article:nth-child(n+4) { border-top: 1px solid var(--line) }
-    .grid article { padding: 1.65rem clamp(1rem, 2.4vw, 2.5rem) 1.85rem }
-    .grid article:first-child { padding-left: 0 }
-    .grid article + article { border-left: 1px solid var(--line) }
-    .glyph { display: block; font: bold 1.55rem/1 var(--mono); color: var(--red); margin-bottom: 1rem }
-    h3 { font-size: 1.55rem; margin-bottom: .7rem; letter-spacing: -.045em }
+
+    /* Dark Ribbon */
+    .ribbon {
+      border-block: 2px solid var(--ink);
+      color: var(--bar-fg);
+      background: var(--bar-bg);
+    }
+    .ribbon .wrap {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: .65rem 1.25rem;
+      padding-block: .9rem;
+      font-size: .88rem;
+    }
+    .ribbon b { color: var(--bar-accent); font-weight: 700 }
+    .ribbon-tags { display: flex; flex-wrap: wrap; gap: .55rem 1.2rem }
+
+    /* Palette Quick Strip & Interactive App Preview (#app-preview) */
+    .app-showcase { padding-block: clamp(3rem, 5.5vw, 5rem) }
+    .section-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: flex-end;
+      justify-content: space-between;
+      gap: 1rem 2rem;
+      margin-bottom: 1.75rem;
+    }
+    .section-head h2 { margin-bottom: 0 }
+    .section-sub { max-width: 52ch; color: var(--muted); font-size: .98rem }
+
+    .palette-quick-bar {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: .75rem 1rem;
+      padding: .85rem 1rem;
+      margin-bottom: 1.5rem;
+      border: 2px solid var(--ink);
+      background: var(--surface);
+      box-shadow: 4px 4px 0 var(--shadow-color);
+    }
+    .palette-quick-label {
+      font-family: var(--mono);
+      font-size: .8rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    .palette-chips { display: flex; flex-wrap: wrap; gap: .5rem }
+    .palette-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: .45rem;
+      padding: .38rem .7rem;
+      border: 2px solid var(--ink);
+      background: var(--paper);
+      color: var(--ink);
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: transform 90ms ease, background-color 120ms ease, color 120ms ease;
+    }
+    .palette-chip:hover { background: var(--surface-elevated) }
+    .palette-chip[aria-pressed="true"] {
+      background: var(--ink);
+      color: var(--paper);
+      box-shadow: 2px 2px 0 var(--red);
+    }
+    .swatch-dot {
+      width: 11px;
+      height: 11px;
+      border: 1px solid currentColor;
+      display: inline-block;
+      flex: none;
+    }
+
+    .app-shell-wrap { position: relative; isolation: isolate }
+    .app-shell-wrap::before {
+      content: "";
+      position: absolute;
+      inset: .75rem -.6rem -.6rem .9rem;
+      border: 1px solid var(--ink);
+      background: radial-gradient(var(--red) 1px, transparent 1.4px) 0 0/6px 6px;
+      z-index: -1;
+      pointer-events: none;
+    }
+    .app-shell {
+      border: 2px solid var(--ink);
+      background: var(--paper);
+      box-shadow: 6px 6px 0 var(--shadow-color);
+      overflow: hidden;
+    }
+    .app-body {
+      display: grid;
+      grid-template-columns: 235px minmax(0, 1fr);
+      min-height: 410px;
+    }
+    .app-sidebar {
+      border-right: 2px solid var(--ink);
+      background: var(--surface);
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+    }
+    .app-sidebar-brand {
+      display: flex;
+      align-items: center;
+      gap: .65rem;
+      padding: .95rem 1rem;
+      border-bottom: 2px solid var(--ink);
+      background: var(--paper);
+    }
+    .app-sidebar-brand strong { font: 900 1.15rem/1 var(--display); letter-spacing: -.05em; display: block }
+    .app-sidebar-brand span { font-family: var(--mono); font-size: .68rem; color: var(--muted); text-transform: uppercase }
+    .app-tabs {
+      display: flex;
+      flex-direction: column;
+      gap: .5rem;
+      padding: .95rem;
+    }
+    .app-tab-btn {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .5rem;
+      width: 100%;
+      min-height: 42px;
+      padding: .55rem .8rem;
+      border: 2px solid var(--ink);
+      background: var(--paper);
+      color: var(--ink);
+      font: 700 .86rem var(--sans);
+      text-align: left;
+      cursor: pointer;
+      transition: background-color 110ms ease, color 110ms ease;
+    }
+    .app-tab-btn:hover { background: var(--ink); color: var(--paper) }
+    .app-tab-btn[aria-selected="true"] {
+      background: var(--ink);
+      color: var(--paper);
+      box-shadow: 3px 3px 0 var(--red);
+    }
+    .app-tab-tag {
+      font-family: var(--mono);
+      font-size: .7rem;
+      opacity: .78;
+    }
+    .app-sidebar-foot {
+      border-top: 2px solid var(--ink);
+      background: var(--paper);
+      padding: .85rem .95rem;
+      font-family: var(--mono);
+      font-size: .72rem;
+      color: var(--muted);
+    }
+    .app-stage { padding: clamp(1.1rem, 2.5vw, 1.75rem); min-width: 0 }
+    .app-panel-head {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: .6rem 1rem;
+      margin-bottom: 1.15rem;
+    }
+    .app-panel-head h3 { font-size: clamp(1.35rem, 2.4vw, 1.75rem); margin: 0 }
+    .mono-badge {
+      display: inline-block;
+      border: 1px solid var(--ink);
+      background: var(--surface);
+      padding: .2rem .55rem;
+      font-family: var(--mono);
+      font-size: .74rem;
+      font-weight: 700;
+    }
+
+    /* Tab 1: Library */
+    .kpi-frame {
+      border: 2px solid var(--ink);
+      background: var(--paper);
+      box-shadow: 4px 4px 0 var(--shadow-color);
+      overflow: hidden;
+      margin-bottom: 1.15rem;
+    }
+    .kpi-grid {
+      display: grid;
+      grid-template-columns: repeat(4, minmax(0, 1fr));
+      border-bottom: 1px solid var(--line);
+    }
+    .kpi-cell {
+      padding: .85rem 1rem;
+      border-right: 1px solid var(--line);
+    }
+    .kpi-cell:last-child { border-right: 0 }
+    .kpi-num { font: 900 1.75rem/1.05 var(--display); letter-spacing: -.05em }
+    .kpi-lbl { font-family: var(--mono); font-size: .74rem; color: var(--muted); margin-top: .25rem }
+    .kpi-foot {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: .5rem;
+      padding: .65rem 1rem;
+      background: var(--surface);
+      font-size: .84rem;
+    }
+    .shelf-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: .95rem;
+    }
+    .shelf-card {
+      border: 2px solid var(--ink);
+      background: var(--surface);
+      padding: .9rem 1rem;
+      display: flex;
+      flex-direction: column;
+      gap: .55rem;
+    }
+    .shelf-card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: .5rem }
+    .shelf-card-title { font-weight: 800; font-size: .98rem; line-height: 1.25 }
+    .shelf-badge {
+      font-family: var(--mono);
+      font-size: .68rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      padding: .15rem .45rem;
+      border: 1px solid var(--ink);
+      background: var(--paper);
+      white-space: nowrap;
+    }
+    .shelf-badge.accent { background: var(--red); color: #ffffff }
+    .progress-track {
+      height: 10px;
+      border: 1px solid var(--ink);
+      background: var(--paper);
+      overflow: hidden;
+    }
+    .progress-fill { height: 100%; background: var(--red) }
+    .shelf-meta { font-family: var(--mono); font-size: .74rem; color: var(--muted) }
+
+    /* Tab 2: Explore & Updates */
+    .explore-mock-bar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .55rem;
+      margin-bottom: .9rem;
+    }
+    .mock-input {
+      flex: 1;
+      min-width: 190px;
+      border: 2px solid var(--ink);
+      background: var(--surface);
+      padding: .55rem .8rem;
+      font-family: var(--mono);
+      font-size: .82rem;
+      color: var(--ink);
+    }
+    .tag-row { display: flex; flex-wrap: wrap; gap: .45rem; margin-bottom: 1.1rem }
+    .cat-tag {
+      border: 1px solid var(--ink);
+      background: var(--paper);
+      color: var(--ink);
+      padding: .28rem .65rem;
+      font-family: var(--mono);
+      font-size: .75rem;
+      font-weight: 700;
+    }
+    .cat-tag.active {
+      background: var(--red);
+      color: #ffffff;
+      box-shadow: 2px 2px 0 var(--shadow-color);
+    }
+    .updates-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: .85rem;
+    }
+    .update-card {
+      border: 2px solid var(--ink);
+      background: var(--surface);
+      padding: .85rem .95rem;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: .6rem;
+    }
+    .update-date { font-family: var(--mono); font-size: .72rem; color: var(--muted) }
+    .update-title { font-weight: 800; font-size: .95rem; line-height: 1.25 }
+    .update-btn {
+      display: inline-block;
+      align-self: flex-start;
+      border: 1px solid var(--ink);
+      background: var(--red);
+      color: #ffffff;
+      font-family: var(--mono);
+      font-size: .75rem;
+      font-weight: 700;
+      padding: .3rem .65rem;
+    }
+
+    /* Tab 3: Stats 14d */
+    .stats-kpis {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: .85rem;
+      margin-bottom: 1.1rem;
+    }
+    .stat-box {
+      border: 2px solid var(--ink);
+      background: var(--surface);
+      padding: .85rem 1rem;
+      box-shadow: 3px 3px 0 var(--shadow-color);
+    }
+    .stat-box .kpi-num { color: var(--red-text) }
+    .chart-box {
+      border: 2px solid var(--ink);
+      background: var(--surface);
+      padding: 1rem;
+      margin-bottom: 1rem;
+    }
+    .chart-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: .5rem;
+      margin-bottom: .75rem;
+      font-family: var(--mono);
+      font-size: .78rem;
+      font-weight: 700;
+    }
+    .activity-bars {
+      display: grid;
+      grid-template-columns: repeat(14, minmax(0, 1fr));
+      align-items: end;
+      gap: .35rem;
+      height: 92px;
+      border-bottom: 2px solid var(--ink);
+      padding-bottom: 4px;
+    }
+    .activity-bar {
+      background: var(--red);
+      border: 1px solid var(--ink);
+      min-height: 6px;
+    }
+    .activity-bar.low { background: var(--line) }
+    .editorial-callout {
+      border: 1px solid var(--ink);
+      border-left: .45rem solid var(--red);
+      background: var(--surface);
+      padding: .8rem 1rem;
+      font-size: .88rem;
+      color: var(--muted);
+    }
+
+    /* Tab 4: 5 Palettes Grid */
+    .palette-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(175px, 1fr));
+      gap: .85rem;
+    }
+    .palette-card {
+      display: flex;
+      flex-direction: column;
+      gap: .55rem;
+      text-align: left;
+      padding: .85rem;
+      border: 2px solid var(--ink);
+      background: var(--surface);
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .palette-card[aria-pressed="true"] {
+      border-color: var(--red);
+      background: var(--paper);
+      box-shadow: 4px 4px 0 var(--shadow-color);
+    }
+    .palette-swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 3px }
+    .palette-swatches span { height: 14px; border: 1px solid rgba(0, 0, 0, .25); display: block }
+    .palette-card strong { font-size: .92rem }
+    .palette-card small { font-family: var(--mono); font-size: .72rem; color: var(--muted) }
+
+    /* Features Grid (6 cards) */
+    .features { padding-block: clamp(2.5rem, 5vw, 4.5rem) }
+    h2 { font-size: clamp(2.15rem, 4vw, 3.6rem); margin-bottom: 1.65rem }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); border-block: 2px solid var(--ink) }
+    .grid article { padding: 1.65rem clamp(1rem, 2.2vw, 2.1rem) 1.85rem }
+    .grid article:nth-child(3n+1) { padding-left: 0; border-left: 0 }
+    .grid article:not(:nth-child(3n+1)) { border-left: 1px solid var(--line) }
+    .grid article:nth-child(n+4) { border-top: 1px solid var(--line) }
+    .glyph { display: block; font: 700 1.45rem/1 var(--mono); color: var(--red-text); margin-bottom: .9rem }
+    h3 { font-size: 1.45rem; margin-bottom: .65rem; letter-spacing: -.045em }
     article p, .privacy p { color: var(--muted); max-width: 65ch }
-    .privacy { display: grid; grid-template-columns: 1fr 1.4fr; gap: 2rem; align-items: start; border-left: .4rem solid var(--red); padding: clamp(1.25rem, 3vw, 2.8rem); background: #ecebe3; margin-bottom: 4rem }
-    .privacy h2 { font-size: clamp(2rem, 3vw, 3rem); margin: 0 }
+
+    /* Privacy Callout */
+    .privacy {
+      display: grid;
+      grid-template-columns: 1fr 1.4fr;
+      gap: 2rem;
+      align-items: start;
+      border: 1px solid var(--ink);
+      border-left: .45rem solid var(--red);
+      padding: clamp(1.25rem, 3vw, 2.6rem);
+      background: var(--surface);
+      box-shadow: 4px 4px 0 var(--shadow-color);
+      margin-bottom: 4rem;
+    }
+    .privacy h2 { font-size: clamp(1.9rem, 3vw, 2.8rem); margin: 0 }
     .privacy a { display: inline-block; margin-top: .8rem; font-weight: 700 }
+
+    /* Downloads */
     .downloads { padding-bottom: clamp(3rem, 5.5vw, 5rem) }
     .downloads h2 { margin-bottom: .5rem }
     .release-meta { font-family: var(--mono); font-size: .88rem; color: var(--muted); margin-bottom: 1.75rem }
-    .install-banner { border: 2px solid var(--ink); background: #ecebe3; box-shadow: 4px 4px var(--ink); padding: 1.15rem 1.25rem; margin-bottom: 1.75rem }
-    .install-banner-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .5rem 1rem; margin-bottom: .75rem; font-family: var(--mono); font-size: .86rem }
-    .install-banner-head strong { color: var(--red); text-transform: uppercase; letter-spacing: .04em }
+    .install-banner {
+      border: 2px solid var(--ink);
+      background: var(--surface);
+      box-shadow: 4px 4px 0 var(--shadow-color);
+      padding: 1.15rem 1.25rem;
+      margin-bottom: 1.75rem;
+    }
+    .install-banner-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: .5rem 1rem;
+      margin-bottom: .75rem;
+      font-family: var(--mono);
+      font-size: .86rem;
+    }
+    .install-banner-head strong { color: var(--red-text); text-transform: uppercase; letter-spacing: .04em }
     .install-banner-head a { font-weight: 700 }
     .install-banner .cmd-bar { box-shadow: none }
     .install-banner p { margin-top: .65rem; font-size: .92rem; color: var(--muted) }
     .dl-actions { display: flex; flex-direction: column; align-items: flex-start; gap: .65rem; margin-top: 1.15rem }
     .dl-link { font-weight: 700 }
     .dl-hint { margin-top: .75rem; font-size: .84rem; color: var(--muted) }
-    details.smartscreen-note { margin-top: 1.5rem; border: 1px solid var(--ink); border-left: .4rem solid var(--ink); background: #ecebe3; padding: .9rem 1.15rem }
+    details.smartscreen-note {
+      margin-top: 1.5rem;
+      border: 1px solid var(--ink);
+      border-left: .4rem solid var(--ink);
+      background: var(--surface);
+      padding: .9rem 1.15rem;
+    }
     details.smartscreen-note summary { font-family: var(--mono); font-size: .88rem; font-weight: 700; cursor: pointer }
-    details.smartscreen-note summary:hover { color: var(--red) }
+    details.smartscreen-note summary:hover { color: var(--red-text) }
     details.smartscreen-note .note-body { margin-top: .8rem; color: var(--muted); font-size: .92rem }
     details.smartscreen-note ol { margin: .6rem 0; padding-left: 1.35rem }
     details.smartscreen-note li + li { margin-top: .35rem }
     .release-foot { margin-top: 1.25rem; font-family: var(--mono); font-size: .86rem; color: var(--muted) }
-    dialog.lightbox { padding: 0; border: 2px solid var(--ink); background: var(--paper); box-shadow: 8px 8px var(--ink); width: min(920px, 94vw); max-height: 92vh; overflow: hidden; color: var(--ink) }
+
+    /* Lightbox */
+    dialog.lightbox {
+      padding: 0;
+      border: 2px solid var(--ink);
+      background: var(--paper);
+      box-shadow: 8px 8px 0 var(--shadow-color);
+      width: min(920px, 94vw);
+      max-height: 92vh;
+      overflow: hidden;
+      color: var(--ink);
+    }
     dialog.lightbox[open] { display: flex; flex-direction: column }
-    dialog.lightbox::backdrop { background: rgba(25, 25, 24, .82); backdrop-filter: blur(2px) }
-    .modal-close { border: 1px solid #e4e3db; background: transparent; color: white; font: inherit; font-weight: 700; padding: .2rem .55rem; cursor: pointer }
-    .modal-close:hover { background: var(--red); border-color: var(--red) }
-    .lightbox-body { flex: 1; min-height: 0; display: grid; place-items: center; background: #141413; overflow: auto; padding: .75rem; border-bottom: 2px solid var(--ink) }
-    .lightbox-body img { max-width: 100%; max-height: calc(92vh - 7.5rem); width: auto; height: auto; object-fit: contain; display: block; background: white }
+    dialog.lightbox::backdrop { background: rgba(12, 12, 11, .84) }
+    .modal-close {
+      border: 1px solid #e4e3db;
+      background: transparent;
+      color: var(--bar-fg);
+      font: inherit;
+      font-weight: 700;
+      padding: .2rem .55rem;
+      cursor: pointer;
+    }
+    .modal-close:hover { background: var(--red); border-color: var(--red); color: #ffffff }
+    .lightbox-body {
+      flex: 1;
+      min-height: 0;
+      display: grid;
+      place-items: center;
+      background: #141413;
+      overflow: auto;
+      padding: .75rem;
+      border-bottom: 2px solid var(--ink);
+    }
+    .lightbox-body img {
+      max-width: 100%;
+      max-height: calc(92vh - 7.5rem);
+      width: auto;
+      height: auto;
+      object-fit: contain;
+      display: block;
+      background: #ffffff;
+    }
     .modal-hint { font-weight: 400; color: var(--muted); font-size: .78rem }
-    .raw-link { display: inline-flex; align-items: center; height: 2.25rem; padding-inline: .65rem; border: 1px solid var(--ink); font-size: .8rem; font-weight: 650; text-decoration: none }
-    .raw-link:hover { background: var(--ink); color: white }
-    footer { border-top: 1px solid var(--ink) }
+    .raw-link {
+      display: inline-flex;
+      align-items: center;
+      height: 2.25rem;
+      padding-inline: .65rem;
+      border: 1px solid var(--ink);
+      font-size: .8rem;
+      font-weight: 700;
+      text-decoration: none;
+    }
+    .raw-link:hover { background: var(--ink); color: var(--paper) }
+
+    /* Footer */
+    footer { border-top: 2px solid var(--ink); background: var(--surface) }
     .foot { flex-wrap: wrap; padding-block: 1.5rem; font-size: .9rem }
     .foot p { color: var(--muted) }
-    .foot-links { display: flex; flex-wrap: wrap; gap: 1rem }
+    .foot-links { display: flex; flex-wrap: wrap; gap: 1rem; font-family: var(--mono); font-size: .84rem }
+
     @media (max-width: 980px) {
-      .downloads .grid, .features .grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
-      .downloads .grid article:nth-child(3n+1) { border-left: 1px solid var(--line); padding-left: clamp(1rem, 2.4vw, 2.5rem) }
-      .downloads .grid article:nth-child(odd), .features .grid article:nth-child(odd) { border-left: 0; padding-left: 0 }
-      .downloads .grid article:nth-child(n+3), .features .grid article:nth-child(n+3) { border-top: 1px solid var(--line) }
+      .grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+      .grid article:nth-child(3n+1) { padding-left: clamp(1rem, 2.2vw, 2.1rem); border-left: 1px solid var(--line) }
+      .grid article:nth-child(odd) { padding-left: 0; border-left: 0 }
+      .grid article:nth-child(n+3) { border-top: 1px solid var(--line) }
+      .app-body { grid-template-columns: 1fr }
+      .app-sidebar { border-right: 0; border-bottom: 2px solid var(--ink) }
+      .app-tabs { flex-direction: row; flex-wrap: wrap }
+      .app-tab-btn { width: auto; flex: 1 1 160px }
+      .app-sidebar-foot { display: none }
     }
+
     @media (max-width: 780px) {
       .hero { grid-template-columns: 1fr; gap: 1.8rem }
       .intro { max-width: 50ch }
       .quick-cmd { max-width: 100% }
       .stage { width: min(100%, 560px); justify-self: center }
-      .grid, .features .grid, .downloads .grid, .privacy { grid-template-columns: 1fr }
-      .grid article, .grid article:first-child, .downloads .grid article:nth-child(n) { padding: 1.35rem 0; border-left: 0 }
-      .grid article + article, .downloads .grid article + article { border-left: 0; border-top: 1px solid var(--line) }
+      .grid, .privacy, .shelf-grid, .updates-grid, .stats-kpis { grid-template-columns: 1fr }
+      .grid article, .grid article:nth-child(n) { padding: 1.35rem 0; border-left: 0 }
+      .grid article + article { border-top: 1px solid var(--line) }
+      .kpi-grid { grid-template-columns: repeat(2, minmax(0, 1fr)) }
+      .kpi-cell:nth-child(2n) { border-right: 0 }
+      .kpi-cell:nth-child(n+3) { border-top: 1px solid var(--line) }
       .privacy { gap: 1rem }
-      .ribbon .wrap { flex-wrap: wrap; justify-content: flex-start; gap: .5rem 1.5rem }
     }
+
     @media (max-width: 640px) {
-      .modal-hint { display: none }
+      .modal-hint, .ink-pill { display: none }
     }
-    @media (max-width: 520px) {
+
+    @media (max-width: 560px) {
       .bar { flex-wrap: wrap; padding-block: .85rem }
-      nav { font-size: .92rem }
-      .repo { border: 0; padding: 0 }
-      .hero { padding-block: 2.25rem }
-      h1 { font-size: clamp(3.2rem, 13vw, 4.2rem) }
+      nav { gap: .65rem .9rem; font-size: .88rem }
+      .nav-pill { padding: .28rem .6rem }
+      .hero { padding-block: 2.2rem }
+      h1 { font-size: clamp(2.85rem, 12vw, 3.8rem) }
       .install-banner { padding: .95rem }
       .stage { padding: .6rem .5rem .6rem 0 }
+      .theme-label { display: none }
     }
   </style>
 </head>
 <body>
-  <a class="skip" href="#contenido">Saltar al contenido</a>
+  <a class="skip" href="#contenido" data-i18n="skip">Saltar al contenido</a>
+
+  <div class="ink-bar">
+    <div class="wrap ink-bar-inner">
+      <div class="ink-bar-left">
+        <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+        <span class="ink-bar-path" data-i18n="topbarPath">&gt;_ mangora / inicio</span>
+        <span class="ink-pill" id="topbar-version">v0.1.1</span>
+      </div>
+      <div class="ink-bar-right">
+        <div class="lang-group" role="group" aria-label="Idioma">
+          <button type="button" class="lang-btn" id="lang-es" data-lang="es" aria-pressed="true">ES</button>
+          <button type="button" class="lang-btn" id="lang-en" data-lang="en" aria-pressed="false">EN</button>
+        </div>
+        <button type="button" class="theme-btn" id="quick-theme-toggle" aria-label="Cambiar entre papel y tinta">
+          <span id="quick-theme-icon" aria-hidden="true">☾</span>
+          <span class="theme-label" id="quick-theme-label">Papel</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
   <header>
     <div class="wrap bar">
-      <a class="brand" href="./index.html"><span class="mark" aria-hidden="true">M!</span>Mangora</a>
+      <a class="brand" href="./index.html">
+        <span class="mark" aria-hidden="true">M!</span>
+        <span class="brand-copy">
+          <span class="brand-title">Mangora</span>
+          <span class="brand-sub" data-i18n="brandSub">Edición editorial</span>
+        </span>
+      </a>
       <nav aria-label="Navegación principal">
-        <a href="#descargas">Descargas</a>
-        <a href="#funciones">Funciones</a>
-        <a href="./privacy.html">Privacidad</a>
-        <a class="repo" href="https://github.com/tomahawk1103/manga-tui">GitHub</a>
+        <a href="#app-preview" data-i18n="navApp">La app</a>
+        <a href="#funciones" data-i18n="navFeatures">Funciones</a>
+        <a href="#descargas" data-i18n="navDownloads">Descargas</a>
+        <a href="./privacy.html" data-i18n="navPrivacy">Privacidad</a>
+        <a href="./mangora-web/">Mangora Web</a>
+        <a class="nav-pill" href="https://github.com/tomahawk1103/manga-tui">GitHub</a>
       </nav>
     </div>
   </header>
+
   <main id="contenido">
     <section class="hero wrap" aria-labelledby="portada">
       <div>
         <p class="eyebrow" id="eyebrow-version">Mangora · Lector multiplataforma · v0.1.1</p>
-        <h1 id="portada">Tu manga,<em>en papel y tinta.</em></h1>
-        <p class="intro">Encuentra tu próxima serie en español o inglés, lee en cascada o doble página HD, descarga capítulos sin conexión y sincroniza tu progreso entre Windows, Android y Web.</p>
+        <h1 id="portada" data-i18n-html="heroTitle">Tu manga,<em>en papel y tinta.</em></h1>
+        <p class="intro" data-i18n="heroIntro">Encuentra tu próxima serie por género o nombre en español e inglés, lee en cascada o página completa HD, consulta tus estadísticas locales de 14 días y sincroniza entre Windows, Android y Web.</p>
         <div class="actions">
           <a class="button" id="download-btn" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora_0.1.1_x64-setup.exe">
             <span aria-hidden="true">↓</span>
-            <span id="download-btn-label">Descargar Mangora para Windows</span>
+            <span id="download-btn-label" data-i18n="heroDownloadWin">Descargar Mangora para Windows</span>
           </a>
-          <button class="secondary" id="open-sample" type="button">Ver muestra</button>
-          <a class="secondary" href="./mangora-web/">Probar Mangora Web</a>
+          <button class="secondary" id="open-sample" type="button" data-i18n="heroSample">Ver muestra</button>
+          <a class="secondary" href="./mangora-web/" data-i18n="heroTryWeb">Probar Mangora Web</a>
         </div>
         <div class="quick-cmd" id="hero-cmd">
           <div class="cmd-bar">
             <span class="cmd-prompt" aria-hidden="true">PS&gt;</span>
             <code class="cmd-code">irm https://tomahawk1103.github.io/manga-tui/install.ps1 | iex</code>
-            <button class="copy-btn" type="button" data-copy="irm https://tomahawk1103.github.io/manga-tui/install.ps1 | iex">Copiar</button>
+            <button class="copy-btn" type="button" data-copy="irm https://tomahawk1103.github.io/manga-tui/install.ps1 | iex" data-i18n="copyBtn">Copiar</button>
           </div>
-          <p class="cmd-caption">Instalación rápida de Mangora en Windows · Verifica SHA-256 · <a href="./install.ps1">Ver script ↗</a></p>
+          <p class="cmd-caption" data-i18n-html="heroCmdCaption">Instalación rápida de Mangora en Windows · Verifica SHA-256 · <a href="./install.ps1">Ver script ↗</a></p>
         </div>
         <p class="platforms">
           <span><a href="#descargas">Windows (.exe / .msi / PowerShell)</a></span>
           <span><a href="#descargas">Android (.apk ARM64)</a></span>
-          <span><a href="./mangora-web/">Web (Navegador)</a></span>
-          <span><a href="https://github.com/tomahawk1103/manga-tui">Código abierto (MIT)</a></span>
+          <span><a href="./mangora-web/" data-i18n="platformWeb">Web (Navegador)</a></span>
+          <span><a href="https://github.com/tomahawk1103/manga-tui" data-i18n="platformMit">Código abierto (MIT)</a></span>
         </p>
       </div>
+
       <div class="stage" id="muestra">
         <figure aria-label="Lector de muestra">
-          <div class="reader-bar"><span>M! mangora / lector</span><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span></div>
+          <div class="reader-bar">
+            <span data-i18n="sampleBar">&gt;_ mangora / lector</span>
+            <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+          </div>
           <a class="panel" id="full-page" href="images/pagina-2.jpg" aria-label="Abrir página completa">
             <img id="art" src="images/pagina-2.jpg" alt="Una joven sonríe con las manos levantadas en una viñeta en blanco y negro.">
           </a>
@@ -219,321 +1124,1014 @@
         </figure>
       </div>
     </section>
+
     <div class="ribbon">
-      <div class="wrap"><b>Formatos de descarga</b><span>CBZ</span><span>EPUB</span><span>PDF</span><span>Imágenes RAW</span></div>
+      <div class="wrap">
+        <b data-i18n="ribbonLabel">Formatos y sincronización</b>
+        <div class="ribbon-tags">
+          <span>CBZ</span>
+          <span>EPUB</span>
+          <span>PDF</span>
+          <span data-i18n="ribbonRaw">Imágenes RAW</span>
+          <span>AniList · MAL · Google Drive</span>
+        </div>
+      </div>
     </div>
-    <section id="funciones" class="wrap features">
-      <h2>Del catálogo a la viñeta.</h2>
-      <div class="grid">
-        <article><span class="glyph" aria-hidden="true">[M!]</span><h3>Catálogo en español e inglés</h3><p>Explora InManga, MangaDex, MangaOni, LeerCapítulo, WeebCentral, MangaPill y Comizy desde una sola biblioteca unificada.</p></article>
-        <article><span class="glyph" aria-hidden="true">[HD]</span><h3>Lector editorial a medida</h3><p>Lee en cascada vertical, página simple o doble página RTL/LTR con zoom fluido y modos Papel y Tinta.</p></article>
-        <article><span class="glyph" aria-hidden="true">[↓]</span><h3>Descargas 100 % sin conexión</h3><p>Guarda capítulos en CBZ, EPUB, PDF o imágenes RAW con cola en segundo plano para leer cuando estés sin internet.</p></article>
-        <article><span class="glyph" aria-hidden="true">[☁]</span><h3>Sincronización y trackers</h3><p>Conecta AniList, MyAnimeList, Google Drive o carpetas locales y lleva tu progreso entre PC y móvil con <code>library_sync.json</code>.</p></article>
+
+    <section id="app-preview" class="wrap app-showcase" aria-labelledby="app-preview-title">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow" data-i18n="appPreviewEyebrow">Así es Mangora por dentro</p>
+          <h2 id="app-preview-title" data-i18n="appPreviewTitle">La interfaz de escritorio, en vivo.</h2>
+        </div>
+        <p class="section-sub" data-i18n="appPreviewSub">Cambia de pestaña para explorar las vistas reales de la app o prueba cualquiera de las 5 paletas editoriales sobre esta misma web.</p>
+      </div>
+
+      <div class="palette-quick-bar" id="paletas">
+        <span class="palette-quick-label" data-i18n="quickPalettesLabel">Paleta activa:</span>
+        <div class="palette-chips" role="group" aria-label="Paletas de Mangora">
+          <button type="button" class="palette-chip" data-palette-set="classic_paper" aria-pressed="true"><span class="swatch-dot" style="background:#f8f7f1"></span><span data-i18n="palClassic">Papel Clásico</span></button>
+          <button type="button" class="palette-chip" data-palette-set="night_ink" aria-pressed="false"><span class="swatch-dot" style="background:#141413"></span><span data-i18n="palNight">Tinta Nocturna</span></button>
+          <button type="button" class="palette-chip" data-palette-set="editorial_sepia" aria-pressed="false"><span class="swatch-dot" style="background:#f4ecd8"></span><span data-i18n="palSepia">Sepia Editorial</span></button>
+          <button type="button" class="palette-chip" data-palette-set="shonen_red" aria-pressed="false"><span class="swatch-dot" style="background:#d91e2a"></span><span data-i18n="palShonen">Shonen Rojo</span></button>
+          <button type="button" class="palette-chip" data-palette-set="sumi_slate" aria-pressed="false"><span class="swatch-dot" style="background:#1c1f24"></span><span data-i18n="palSumi">Sumi Grafito</span></button>
+        </div>
+      </div>
+
+      <div class="app-shell-wrap">
+        <div class="app-shell">
+          <div class="ink-bar">
+            <div class="ink-bar-inner" style="padding-inline: 1rem;">
+              <div class="ink-bar-left">
+                <span class="dots" aria-hidden="true"><i></i><i></i><i></i></span>
+                <span class="ink-bar-path" id="shell-bar-path">&gt;_ mangora / biblioteca</span>
+              </div>
+              <span class="ink-pill" id="shell-provider-pill">MangaOni · ES</span>
+            </div>
+          </div>
+
+          <div class="app-body">
+            <aside class="app-sidebar" aria-label="Secciones de muestra de Mangora">
+              <div>
+                <div class="app-sidebar-brand">
+                  <span class="mark" aria-hidden="true">M!</span>
+                  <div>
+                    <strong>Mangora</strong>
+                    <span data-i18n="shellSubtitle">Edición papel y tinta</span>
+                  </div>
+                </div>
+                <div class="app-tabs" role="tablist" aria-label="Vistas de Mangora">
+                  <button type="button" role="tab" class="app-tab-btn" data-app-tab="library" aria-selected="true">
+                    <span data-i18n="tabLibrary">Biblioteca</span>
+                    <span class="app-tab-tag">[01]</span>
+                  </button>
+                  <button type="button" role="tab" class="app-tab-btn" data-app-tab="explore" aria-selected="false">
+                    <span data-i18n="tabExplore">Explorar</span>
+                    <span class="app-tab-tag">[02]</span>
+                  </button>
+                  <button type="button" role="tab" class="app-tab-btn" data-app-tab="stats" aria-selected="false">
+                    <span data-i18n="tabStats">Estadísticas 14d</span>
+                    <span class="app-tab-tag">[03]</span>
+                  </button>
+                  <button type="button" role="tab" class="app-tab-btn" data-app-tab="palettes" aria-selected="false">
+                    <span data-i18n="tabPalettes">5 Paletas</span>
+                    <span class="app-tab-tag">[04]</span>
+                  </button>
+                </div>
+              </div>
+              <div class="app-sidebar-foot" data-i18n="shellFoot">
+                SQLite / IndexedDB · 100 % local
+              </div>
+            </aside>
+
+            <div class="app-stage">
+              <!-- TAB 1: Biblioteca -->
+              <div role="tabpanel" id="panel-library">
+                <div class="app-panel-head">
+                  <h3 data-i18n="panelLibTitle">Tu estantería compartida</h3>
+                  <span class="mono-badge" data-i18n="panelLibBadge">SQLite · manga-tui-history.db</span>
+                </div>
+                <div class="kpi-frame">
+                  <div class="kpi-grid">
+                    <div class="kpi-cell">
+                      <div class="kpi-num">102</div>
+                      <div class="kpi-lbl" data-i18n="kpiSeries">Series</div>
+                    </div>
+                    <div class="kpi-cell">
+                      <div class="kpi-num">1 977</div>
+                      <div class="kpi-lbl" data-i18n="kpiChapters">Capítulos leídos</div>
+                    </div>
+                    <div class="kpi-cell">
+                      <div class="kpi-num">16</div>
+                      <div class="kpi-lbl" data-i18n="kpiFavs">Favoritos</div>
+                    </div>
+                    <div class="kpi-cell">
+                      <div class="kpi-num">31</div>
+                      <div class="kpi-lbl" data-i18n="kpiOffline">Series offline</div>
+                    </div>
+                  </div>
+                  <div class="kpi-foot">
+                    <span data-i18n-html="kpiPagesFoot"><strong>18 420</strong> páginas leídas registradas localmente</span>
+                    <span class="mono-badge" data-i18n="kpiLastRead">Última lectura: Cap. 214</span>
+                  </div>
+                </div>
+                <div class="shelf-grid">
+                  <article class="shelf-card">
+                    <div class="shelf-card-top">
+                      <div class="shelf-card-title">Dandadan</div>
+                      <span class="shelf-badge accent" data-i18n="badgeReading">Leyendo</span>
+                    </div>
+                    <div class="progress-track"><div class="progress-fill" style="width: 78%"></div></div>
+                    <div class="shelf-meta" data-i18n="shelfMeta1">Cap. 168 / 215 · Progreso sincronizado</div>
+                  </article>
+                  <article class="shelf-card">
+                    <div class="shelf-card-top">
+                      <div class="shelf-card-title">Sakamoto Days</div>
+                      <span class="shelf-badge" data-i18n="badgeOffline">CBZ Offline</span>
+                    </div>
+                    <div class="progress-track"><div class="progress-fill" style="width: 92%"></div></div>
+                    <div class="shelf-meta" data-i18n="shelfMeta2">18 capítulos descargados · Sin conexión</div>
+                  </article>
+                </div>
+              </div>
+
+              <!-- TAB 2: Explorar y Novedades -->
+              <div role="tabpanel" id="panel-explore" hidden>
+                <div class="app-panel-head">
+                  <h3 data-i18n="panelExpTitle">Explorar por categorías y Novedades</h3>
+                  <span class="mono-badge" data-i18n="panelExpBadge">Scroll infinito activo</span>
+                </div>
+                <div class="explore-mock-bar">
+                  <div class="mock-input" data-i18n="mockSearchText">Buscar por título o filtrar por categoría...</div>
+                  <span class="mono-badge" style="display:inline-flex;align-items:center;" data-i18n="mockFilterBtn">Filtrar tags</span>
+                </div>
+                <div class="tag-row" aria-label="Categorías populares">
+                  <span class="cat-tag active">Shonen</span>
+                  <span class="cat-tag">Seinen</span>
+                  <span class="cat-tag">Ecchi</span>
+                  <span class="cat-tag" data-i18n="tagAction">Acción</span>
+                  <span class="cat-tag" data-i18n="tagFantasy">Fantasía</span>
+                  <span class="cat-tag">Isekai</span>
+                  <span class="cat-tag">Romance</span>
+                </div>
+                <div class="updates-grid">
+                  <article class="update-card">
+                    <div>
+                      <div class="update-date" data-i18n="updDate1">Hoy · MangaOni · En español</div>
+                      <div class="update-title">Kagurabachi</div>
+                    </div>
+                    <span class="update-btn" data-i18n="updChap1">Capítulo 68 →</span>
+                  </article>
+                  <article class="update-card">
+                    <div>
+                      <div class="update-date" data-i18n="updDate2">Hoy · MangaDex · Inglés / Español</div>
+                      <div class="update-title">Gachiakuta</div>
+                    </div>
+                    <span class="update-btn" data-i18n="updChap2">Capítulo 124 →</span>
+                  </article>
+                </div>
+              </div>
+
+              <!-- TAB 3: Estadísticas 14d -->
+              <div role="tabpanel" id="panel-stats" hidden>
+                <div class="app-panel-head">
+                  <h3 data-i18n="panelStatsTitle">Métricas de lectura (últimos 14 días)</h3>
+                  <span class="mono-badge" data-i18n="panelStatsBadge">Exportable SVG / PNG</span>
+                </div>
+                <div class="stats-kpis">
+                  <div class="stat-box">
+                    <div class="kpi-num">42</div>
+                    <div class="kpi-lbl" data-i18n="stat14Chap">Capítulos · Últimos 14d</div>
+                  </div>
+                  <div class="stat-box">
+                    <div class="kpi-num">918</div>
+                    <div class="kpi-lbl" data-i18n="stat14Pages">Páginas · Últimos 14d</div>
+                  </div>
+                  <div class="stat-box">
+                    <div class="kpi-num">9 d</div>
+                    <div class="kpi-lbl" data-i18n="statStreak">Racha activa</div>
+                  </div>
+                </div>
+                <div class="chart-box">
+                  <div class="chart-head">
+                    <span data-i18n="chartTitle">Actividad diaria · Últimos 14 días</span>
+                    <span data-i18n="chartPeak">Pico: 112 páginas</span>
+                  </div>
+                  <div class="activity-bars" aria-hidden="true">
+                    <div class="activity-bar low" style="height:22%"></div>
+                    <div class="activity-bar" style="height:48%"></div>
+                    <div class="activity-bar" style="height:64%"></div>
+                    <div class="activity-bar low" style="height:18%"></div>
+                    <div class="activity-bar" style="height:75%"></div>
+                    <div class="activity-bar" style="height:56%"></div>
+                    <div class="activity-bar" style="height:88%"></div>
+                    <div class="activity-bar" style="height:42%"></div>
+                    <div class="activity-bar" style="height:70%"></div>
+                    <div class="activity-bar" style="height:95%"></div>
+                    <div class="activity-bar" style="height:62%"></div>
+                    <div class="activity-bar" style="height:78%"></div>
+                    <div class="activity-bar" style="height:52%"></div>
+                    <div class="activity-bar" style="height:84%"></div>
+                  </div>
+                </div>
+                <div class="editorial-callout" data-i18n="statsCallout">
+                  Solo se contabilizan páginas nuevas al avanzar; retroceder no infla tus estadísticas. 100 % privado en tu dispositivo, sin analíticas externas.
+                </div>
+              </div>
+
+              <!-- TAB 4: 5 Paletas -->
+              <div role="tabpanel" id="panel-palettes" hidden>
+                <div class="app-panel-head">
+                  <h3 data-i18n="panelPalTitle">Elige una de las 5 paletas de Mangora</h3>
+                  <span class="mono-badge" data-i18n="panelPalBadge">Sincronizada en privacidad</span>
+                </div>
+                <div class="palette-grid">
+                  <button type="button" class="palette-card" data-palette-set="classic_paper" aria-pressed="true">
+                    <div class="palette-swatches"><span style="background:#f8f7f1"></span><span style="background:#ecebe3"></span><span style="background:#191918"></span><span style="background:#cb3028"></span></div>
+                    <strong data-i18n="palClassic">Papel Clásico</strong>
+                    <small data-i18n="palClassicDesc">Papel cálido y tinta negra</small>
+                  </button>
+                  <button type="button" class="palette-card" data-palette-set="night_ink" aria-pressed="false">
+                    <div class="palette-swatches"><span style="background:#141413"></span><span style="background:#1f1f1d"></span><span style="background:#f8f7f1"></span><span style="background:#cb3028"></span></div>
+                    <strong data-i18n="palNight">Tinta Nocturna</strong>
+                    <small data-i18n="palNightDesc">Oscuro mate para leer de noche</small>
+                  </button>
+                  <button type="button" class="palette-card" data-palette-set="editorial_sepia" aria-pressed="false">
+                    <div class="palette-swatches"><span style="background:#f4ecd8"></span><span style="background:#e7dcc2"></span><span style="background:#2b2118"></span><span style="background:#a83226"></span></div>
+                    <strong data-i18n="palSepia">Sepia Editorial</strong>
+                    <small data-i18n="palSepiaDesc">Papel de tomo vintage suave</small>
+                  </button>
+                  <button type="button" class="palette-card" data-palette-set="shonen_red" aria-pressed="false">
+                    <div class="palette-swatches"><span style="background:#fffaf5"></span><span style="background:#fcebe6"></span><span style="background:#171414"></span><span style="background:#d91e2a"></span></div>
+                    <strong data-i18n="palShonen">Shonen Rojo</strong>
+                    <small data-i18n="palShonenDesc">Blanco puro y acento vivo</small>
+                  </button>
+                  <button type="button" class="palette-card" data-palette-set="sumi_slate" aria-pressed="false">
+                    <div class="palette-swatches"><span style="background:#1c1f24"></span><span style="background:#252930"></span><span style="background:#eff1f5"></span><span style="background:#d94b3d"></span></div>
+                    <strong data-i18n="palSumi">Sumi Grafito</strong>
+                    <small data-i18n="palSumiDesc">Pizarra fría y contraste alto</small>
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
+
+    <section id="funciones" class="wrap features">
+      <h2 data-i18n="featuresTitle">Del catálogo a la viñeta.</h2>
+      <div class="grid">
+        <article>
+          <span class="glyph" aria-hidden="true">[M!]</span>
+          <h3 data-i18n="feat1Title">Catálogo y categorías</h3>
+          <p data-i18n="feat1Desc">Explora InManga, MangaDex, MangaOni, LeerCapítulo, WeebCentral, MangaPill y Comizy. Filtra por Shonen, Seinen o Ecchi y sigue Novedades con scroll infinito.</p>
+        </article>
+        <article>
+          <span class="glyph" aria-hidden="true">[HD]</span>
+          <h3 data-i18n="feat2Title">Lector editorial a medida</h3>
+          <p data-i18n="feat2Desc">Cascada vertical, página completa de un solo vistazo, doble página RTL/LTR, 7 fondos sutiles para el lienzo y gestos táctiles fluidos.</p>
+        </article>
+        <article>
+          <span class="glyph" aria-hidden="true">[14d]</span>
+          <h3 data-i18n="feat3Title">Estadísticas 100 % locales</h3>
+          <p data-i18n="feat3Desc">Consulta capítulos y páginas leídas en los últimos 14 días, tu racha diaria y genera una tarjeta resumen exportable en SVG o PNG sin telemetría.</p>
+        </article>
+        <article>
+          <span class="glyph" aria-hidden="true">[■]</span>
+          <h3 data-i18n="feat4Title">5 paletas de papel y tinta</h3>
+          <p data-i18n="feat4Desc">Alterna al vuelo entre Papel Clásico, Tinta Nocturna, Sepia Editorial, Shonen Rojo y Sumi Grafito, además de elegir la densidad de tus tarjetas.</p>
+        </article>
+        <article>
+          <span class="glyph" aria-hidden="true">[↓]</span>
+          <h3 data-i18n="feat5Title">Descargas sin conexión</h3>
+          <p data-i18n="feat5Desc">Guarda capítulos en CBZ, EPUB, PDF o imágenes RAW con cola en segundo plano para leer en avión, metro o cualquier lugar sin internet.</p>
+        </article>
+        <article>
+          <span class="glyph" aria-hidden="true">[☁]</span>
+          <h3 data-i18n="feat6Title">Sincronización y trackers</h3>
+          <p data-i18n-html="feat6Desc">Conecta AniList, MyAnimeList, Google Drive o carpetas locales y lleva tu progreso entre PC y móvil con <code>library_sync.json</code>.</p>
+        </article>
+      </div>
+    </section>
+
     <section id="descargas" class="wrap downloads" aria-labelledby="descargas-titulo">
-      <h2 id="descargas-titulo">Descarga Mangora.</h2>
+      <h2 id="descargas-titulo" data-i18n="dlTitle">Descarga Mangora.</h2>
       <p class="release-meta" id="release-meta">Versión mangora-v0.1.1 · Instaladores oficiales para Windows y Android.</p>
       <div class="install-banner">
         <div class="install-banner-head">
-          <strong>Recomendado en Windows · PowerShell</strong>
-          <a href="./install.ps1">Ver código del script ↗</a>
+          <strong data-i18n="psBannerTitle">Recomendado en Windows · PowerShell</strong>
+          <a href="./install.ps1" data-i18n="psBannerLink">Ver código del script ↗</a>
         </div>
         <div class="cmd-bar">
           <span class="cmd-prompt" aria-hidden="true">PS&gt;</span>
           <code class="cmd-code">irm https://tomahawk1103.github.io/manga-tui/install.ps1 | iex</code>
-          <button class="copy-btn" type="button" data-copy="irm https://tomahawk1103.github.io/manga-tui/install.ps1 | iex">Copiar</button>
+          <button class="copy-btn" type="button" data-copy="irm https://tomahawk1103.github.io/manga-tui/install.ps1 | iex" data-i18n="copyBtn">Copiar</button>
         </div>
-        <p>Abre PowerShell o Windows Terminal, pega el comando y pulsa Enter. Descarga el instalador oficial de Mangora desde GitHub, comprueba su hash en <code>SHA256SUMS.txt</code> y abre el asistente sin avisos de Edge.</p>
+        <p data-i18n-html="psBannerDesc">Abre PowerShell o Windows Terminal, pega el comando y pulsa Enter. Descarga el instalador oficial de Mangora desde GitHub, comprueba su hash en <code>SHA256SUMS.txt</code> y abre el asistente sin avisos de Edge.</p>
       </div>
       <div class="grid">
         <article>
           <span class="glyph" aria-hidden="true">[WIN]</span>
-          <h3>Windows (64 bits)</h3>
-          <p>Aplicación nativa de escritorio para Windows 10/11 con lector HD, biblioteca local y sincronización automática.</p>
+          <h3 data-i18n="dlWinTitle">Windows (64 bits)</h3>
+          <p data-i18n="dlWinDesc">Aplicación nativa de escritorio para Windows 10/11 con lector HD, biblioteca SQLite compartida y sincronización automática.</p>
           <div class="dl-actions">
             <a class="button" id="dl-win-installer" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora_0.1.1_x64-setup.exe">↓ Instalador Mangora (.exe)</a>
-            <a class="dl-link" id="dl-win-msi" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora_0.1.1_x64_en-US.msi">Paquete MSI (.msi)</a>
+            <a class="dl-link" id="dl-win-msi" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora_0.1.1_x64_en-US.msi" data-i18n="dlWinMsi">Paquete MSI (.msi)</a>
           </div>
-          <p class="dl-hint">Si Edge marca el <code>.exe</code> como no seguro, usa el comando de PowerShell de arriba o abre la nota inferior.</p>
+          <p class="dl-hint" data-i18n-html="dlWinHint">Si Edge marca el <code>.exe</code> como no seguro, usa el comando de PowerShell de arriba o abre la nota inferior.</p>
         </article>
         <article>
           <span class="glyph" aria-hidden="true">[APK]</span>
           <h3>Android</h3>
-          <p>App táctil Mangora con el mismo motor Rust, lector en cascada, descargas CBZ offline y sincronización con PC.</p>
+          <p data-i18n="dlAndroidDesc">App táctil Mangora con el mismo motor Rust, lector en cascada y página completa, descargas CBZ offline y sincronización con PC.</p>
           <div class="dl-actions">
             <a class="button" id="dl-android-apk" href="https://github.com/tomahawk1103/manga-tui/releases/download/mangora-v0.1.1/Mangora-0.1.1-android-arm64-v8a.apk">↓ Descargar Mangora APK (ARM64)</a>
           </div>
-          <p class="dl-hint">Instalación directa firmada (Android 7.0+ · ARM64). Compatible con Obtainium.</p>
+          <p class="dl-hint" data-i18n="dlAndroidHint">Instalación directa firmada (Android 7.0+ · ARM64). Compatible con Obtainium.</p>
         </article>
         <article>
           <span class="glyph" aria-hidden="true">[WEB]</span>
           <h3>Mangora Web</h3>
-          <p>Lector directo desde el navegador sin instalar nada. Ideal para leer al instante desde iPhone, iPad, macOS, Linux o cualquier equipo.</p>
+          <p data-i18n="dlWebDesc">Lector directo desde el navegador sin instalar nada. Ideal para leer al instante desde iPhone, iPad, macOS, Linux o cualquier equipo.</p>
           <div class="dl-actions">
-            <a class="button" href="./mangora-web/">Abrir Mangora Web →</a>
+            <a class="button" href="./mangora-web/" data-i18n="dlWebBtn">Abrir Mangora Web →</a>
           </div>
-          <p class="dl-hint">Funciona en cualquier navegador moderno · Sin cuentas ni instalación.</p>
+          <p class="dl-hint" data-i18n="dlWebHint">Funciona en cualquier navegador moderno · Sin cuentas ni instalación.</p>
         </article>
       </div>
       <details class="smartscreen-note">
-        <summary>¿Edge muestra «no se descarga habitualmente» o «no seguro» al bajar el .exe de Mangora?</summary>
+        <summary data-i18n="smartSummary">¿Edge muestra «no se descarga habitualmente» o «no seguro» al bajar el .exe de Mangora?</summary>
         <div class="note-body">
-          <p>Mangora es código abierto bajo licencia MIT y se compila de forma pública en <a href="https://github.com/tomahawk1103/manga-tui/actions">GitHub Actions</a>. Como todavía no incluye un certificado comercial Authenticode, Microsoft Defender SmartScreen suele advertir en descargas directas de archivos <code>.exe</code> nuevos.</p>
+          <p data-i18n-html="smartP1">Mangora es código abierto bajo licencia MIT y se compila de forma pública en <a href="https://github.com/tomahawk1103/manga-tui/actions">GitHub Actions</a>. Como todavía no incluye un certificado comercial Authenticode, Microsoft Defender SmartScreen suele advertir en descargas directas de archivos <code>.exe</code> nuevos.</p>
           <ol>
-            <li><strong>Opción más rápida:</strong> usa el instalador de PowerShell de arriba (verifica automáticamente el checksum en <code>SHA256SUMS.txt</code>).</li>
-            <li><strong>Si prefieres descargarlo en Edge (<code>Ctrl + J</code>):</strong> pulsa <code>⋯</code> junto al archivo → <strong>Conservar</strong> → <strong>Mostrar más</strong> → <strong>Mantener de todos modos</strong>.</li>
-            <li><strong>Si aparece «Windows protegió su PC» al abrirlo:</strong> pulsa <strong>Más información</strong> → <strong>Ejecutar de todas formas</strong>.</li>
+            <li data-i18n-html="smartLi1"><strong>Opción más rápida:</strong> usa el instalador de PowerShell de arriba (verifica automáticamente el checksum en <code>SHA256SUMS.txt</code>).</li>
+            <li data-i18n-html="smartLi2"><strong>Si prefieres descargarlo en Edge (<code>Ctrl + J</code>):</strong> pulsa <code>⋯</code> junto al archivo → <strong>Conservar</strong> → <strong>Mostrar más</strong> → <strong>Mantener de todos modos</strong>.</li>
+            <li data-i18n-html="smartLi3"><strong>Si aparece «Windows protegió su PC» al abrirlo:</strong> pulsa <strong>Más información</strong> → <strong>Ejecutar de todas formas</strong>.</li>
           </ol>
-          <p>También puedes comprobar la integridad del archivo comparando su hash con <code>SHA256SUMS.txt</code> en <a href="https://github.com/tomahawk1103/manga-tui/releases">GitHub Releases ↗</a>.</p>
+          <p data-i18n-html="smartP2">También puedes comprobar la integridad del archivo comparando su hash con <code>SHA256SUMS.txt</code> en <a href="https://github.com/tomahawk1103/manga-tui/releases">GitHub Releases ↗</a>.</p>
         </div>
       </details>
-      <p class="release-foot"><a id="all-releases-link" href="https://github.com/tomahawk1103/manga-tui/releases">Ver todas las versiones de Mangora, notas de cambio y checksums SHA-256 en GitHub ↗</a></p>
+      <p class="release-foot"><a id="all-releases-link" href="https://github.com/tomahawk1103/manga-tui/releases" data-i18n="allReleases">Ver todas las versiones de Mangora, notas de cambio y checksums SHA-256 en GitHub ↗</a></p>
       <span id="copy-status" class="sr-only" aria-live="polite"></span>
     </section>
+
     <section class="wrap privacy" aria-labelledby="privacidad">
-      <h2 id="privacidad">Tu progreso,<br>en tus manos.</h2>
-      <div><p>Tu biblioteca en Mangora se guarda en tu equipo. Si quieres continuar en otro dispositivo, puedes sincronizar el progreso con una carpeta local de nube o con Google Drive. La integración usa el permiso <code>drive.file</code> para gestionar su propia carpeta <code>MangaTUI</code>.</p>
-        <a href="./privacy.html">Política de privacidad / Privacy Policy</a>
+      <h2 id="privacidad" data-i18n-html="privacyTitle">Tu progreso,<br>en tus manos.</h2>
+      <div>
+        <p data-i18n-html="privacyBody">Tu biblioteca y tus métricas en Mangora se guardan exclusivamente en tu equipo. Si quieres continuar en otro dispositivo, puedes sincronizar el progreso con una carpeta local de nube o con Google Drive. La integración usa el permiso <code>drive.file</code> para gestionar únicamente su propia carpeta <code>MangaTUI</code>.</p>
+        <a href="./privacy.html" data-i18n="privacyLink">Política de privacidad / Privacy Policy</a>
       </div>
     </section>
   </main>
-  <footer><div class="wrap foot">
-    <p><strong>Mangora</strong> · Licencia MIT · tomahawk1103 &amp; drodri22</p>
-    <div class="foot-links"><a href="https://github.com/tomahawk1103/manga-tui/issues">Soporte técnico</a><a href="mailto:raum973@gmail.com">Contacto</a></div>
-  </div></footer>
+
+  <footer>
+    <div class="wrap foot">
+      <p><strong>Mangora</strong> · <span data-i18n="footerMit">Licencia MIT</span> · tomahawk1103 &amp; drodri22</p>
+      <div class="foot-links">
+        <a href="https://github.com/tomahawk1103/manga-tui/issues" data-i18n="footerSupport">Soporte técnico</a>
+        <a href="https://github.com/sponsors/tomahawk1103" data-i18n="footerSponsors">Patrocinar</a>
+        <a href="./privacy.html" data-i18n="footerPrivacy">Privacidad</a>
+        <a href="mailto:raum973@gmail.com" data-i18n="footerContact">Contacto</a>
+      </div>
+    </div>
+  </footer>
+
   <dialog id="sample-modal" class="lightbox" aria-labelledby="modal-title">
     <div class="reader-bar">
-      <span id="modal-title">M! mangora / visor de muestra</span>
-      <button type="button" class="modal-close" id="modal-close" aria-label="Cerrar muestra">Cerrar ✕</button>
+      <span id="modal-title" data-i18n="modalBar">&gt;_ mangora / visor de muestra</span>
+      <button type="button" class="modal-close" id="modal-close" aria-label="Cerrar muestra" data-i18n="modalClose">Cerrar ✕</button>
     </div>
     <div class="lightbox-body">
       <img id="modal-art" src="images/pagina-2.jpg" alt="Una joven sonríe con las manos levantadas en una viñeta en blanco y negro.">
     </div>
     <div class="reader-foot">
       <span id="modal-page-label" aria-live="polite" aria-atomic="true">Página 2 de 3</span>
-      <span class="modal-hint">← → cambiar · Esc cerrar</span>
+      <span class="modal-hint" data-i18n="modalHint">← → cambiar · Esc cerrar</span>
       <span class="pager">
-        <a class="raw-link" id="modal-raw" href="images/pagina-2.jpg" target="_blank" rel="noopener">Original ↗</a>
+        <a class="raw-link" id="modal-raw" href="images/pagina-2.jpg" target="_blank" rel="noopener" data-i18n="modalRaw">Original ↗</a>
         <button id="modal-prev" type="button" aria-label="Página anterior">‹</button>
         <button id="modal-next" type="button" aria-label="Página siguiente">›</button>
       </span>
     </div>
   </dialog>
+
   <script>
-    const descriptions = [
-      'Una casa y varios personajes en una secuencia de viñetas.',
-      'Una joven sonríe con las manos levantadas en una viñeta en blanco y negro.',
-      'Un joven con gafas conversa en una secuencia de primeros planos.'
-    ];
-    const art = document.querySelector('#art');
-    const fullPage = document.querySelector('#full-page');
-    const label = document.querySelector('#page-label');
-    const previous = document.querySelector('#prev');
-    const next = document.querySelector('#next');
+    const PALETTE_META = {
+      classic_paper: { themeColor: "#f8f7f1", isDark: false },
+      night_ink: { themeColor: "#141413", isDark: true },
+      editorial_sepia: { themeColor: "#f4ecd8", isDark: false },
+      shonen_red: { themeColor: "#fffaf5", isDark: false },
+      sumi_slate: { themeColor: "#1c1f24", isDark: true }
+    };
 
-    const modal = document.querySelector('#sample-modal');
-    const modalArt = document.querySelector('#modal-art');
-    const modalRaw = document.querySelector('#modal-raw');
-    const modalLabel = document.querySelector('#modal-page-label');
-    const modalPrev = document.querySelector('#modal-prev');
-    const modalNext = document.querySelector('#modal-next');
-    const openSample = document.querySelector('#open-sample');
-    const closeSample = document.querySelector('#modal-close');
+    const I18N = {
+      es: {
+        skip: "Saltar al contenido",
+        topbarPath: ">_ mangora / inicio",
+        brandSub: "Edición editorial",
+        navApp: "La app",
+        navFeatures: "Funciones",
+        navDownloads: "Descargas",
+        navPrivacy: "Privacidad",
+        heroTitle: "Tu manga,<em>en papel y tinta.</em>",
+        heroIntro: "Encuentra tu próxima serie por género o nombre en español e inglés, lee en cascada o página completa HD, consulta tus estadísticas locales de 14 días y sincroniza entre Windows, Android y Web.",
+        heroDownloadWin: "Descargar Mangora para Windows",
+        heroDownloadAndroid: "Descargar Mangora APK (Android)",
+        heroDownloadOther: "Ver descargas de Mangora",
+        heroOpenWeb: "Abrir Mangora Web",
+        heroSample: "Ver muestra",
+        heroTryWeb: "Probar Mangora Web",
+        copyBtn: "Copiar",
+        copiedBtn: "Copiado ✓",
+        copyDone: "Copiado al portapapeles.",
+        heroCmdCaption: 'Instalación rápida de Mangora en Windows · Verifica SHA-256 · <a href="./install.ps1">Ver script ↗</a>',
+        platformWeb: "Web (Navegador)",
+        platformMit: "Código abierto (MIT)",
+        sampleBar: ">_ mangora / lector",
+        pageCounter: (p, n) => "Página " + p + " de " + n,
+        ribbonLabel: "Formatos y sincronización",
+        ribbonRaw: "Imágenes RAW",
+        appPreviewEyebrow: "Así es Mangora por dentro",
+        appPreviewTitle: "La interfaz de escritorio, en vivo.",
+        appPreviewSub: "Cambia de pestaña para explorar las vistas reales de la app o prueba cualquiera de las 5 paletas editoriales sobre esta misma web.",
+        quickPalettesLabel: "Paleta activa:",
+        palClassic: "Papel Clásico",
+        palClassicDesc: "Papel cálido y tinta negra",
+        palNight: "Tinta Nocturna",
+        palNightDesc: "Oscuro mate para leer de noche",
+        palSepia: "Sepia Editorial",
+        palSepiaDesc: "Papel de tomo vintage suave",
+        palShonen: "Shonen Rojo",
+        palShonenDesc: "Blanco puro y acento vivo",
+        palSumi: "Sumi Grafito",
+        palSumiDesc: "Pizarra fría y contraste alto",
+        shellSubtitle: "Edición papel y tinta",
+        shellFoot: "SQLite / IndexedDB · 100 % local",
+        tabLibrary: "Biblioteca",
+        tabExplore: "Explorar",
+        tabStats: "Estadísticas 14d",
+        tabPalettes: "5 Paletas",
+        panelLibTitle: "Tu estantería compartida",
+        panelLibBadge: "SQLite · manga-tui-history.db",
+        kpiSeries: "Series",
+        kpiChapters: "Capítulos leídos",
+        kpiFavs: "Favoritos",
+        kpiOffline: "Series offline",
+        kpiPagesFoot: "<strong>18 420</strong> páginas leídas registradas localmente",
+        kpiLastRead: "Última lectura: Cap. 214",
+        badgeReading: "Leyendo",
+        badgeOffline: "CBZ Offline",
+        shelfMeta1: "Cap. 168 / 215 · Progreso sincronizado",
+        shelfMeta2: "18 capítulos descargados · Sin conexión",
+        panelExpTitle: "Explorar por categorías y Novedades",
+        panelExpBadge: "Scroll infinito activo",
+        mockSearchText: "Buscar por título o filtrar por categoría...",
+        mockFilterBtn: "Filtrar tags",
+        tagAction: "Acción",
+        tagFantasy: "Fantasía",
+        updDate1: "Hoy · MangaOni · En español",
+        updChap1: "Capítulo 68 →",
+        updDate2: "Hoy · MangaDex · Inglés / Español",
+        updChap2: "Capítulo 124 →",
+        panelStatsTitle: "Métricas de lectura (últimos 14 días)",
+        panelStatsBadge: "Exportable SVG / PNG",
+        stat14Chap: "Capítulos · Últimos 14d",
+        stat14Pages: "Páginas · Últimos 14d",
+        statStreak: "Racha activa",
+        chartTitle: "Actividad diaria · Últimos 14 días",
+        chartPeak: "Pico: 112 páginas",
+        statsCallout: "Solo se contabilizan páginas nuevas al avanzar; retroceder no infla tus estadísticas. 100 % privado en tu dispositivo, sin analíticas externas.",
+        panelPalTitle: "Elige una de las 5 paletas de Mangora",
+        panelPalBadge: "Sincronizada en privacidad",
+        featuresTitle: "Del catálogo a la viñeta.",
+        feat1Title: "Catálogo y categorías",
+        feat1Desc: "Explora InManga, MangaDex, MangaOni, LeerCapítulo, WeebCentral, MangaPill y Comizy. Filtra por Shonen, Seinen o Ecchi y sigue Novedades con scroll infinito.",
+        feat2Title: "Lector editorial a medida",
+        feat2Desc: "Cascada vertical, página completa de un solo vistazo, doble página RTL/LTR, 7 fondos sutiles para el lienzo y gestos táctiles fluidos.",
+        feat3Title: "Estadísticas 100 % locales",
+        feat3Desc: "Consulta capítulos y páginas leídas en los últimos 14 días, tu racha diaria y genera una tarjeta resumen exportable en SVG o PNG sin telemetría.",
+        feat4Title: "5 paletas de papel y tinta",
+        feat4Desc: "Alterna al vuelo entre Papel Clásico, Tinta Nocturna, Sepia Editorial, Shonen Rojo y Sumi Grafito, además de elegir la densidad de tus tarjetas.",
+        feat5Title: "Descargas sin conexión",
+        feat5Desc: "Guarda capítulos en CBZ, EPUB, PDF o imágenes RAW con cola en segundo plano para leer en avión, metro o cualquier lugar sin internet.",
+        feat6Title: "Sincronización y trackers",
+        feat6Desc: "Conecta AniList, MyAnimeList, Google Drive o carpetas locales y lleva tu progreso entre PC y móvil con <code>library_sync.json</code>.",
+        dlTitle: "Descarga Mangora.",
+        psBannerTitle: "Recomendado en Windows · PowerShell",
+        psBannerLink: "Ver código del script ↗",
+        psBannerDesc: "Abre PowerShell o Windows Terminal, pega el comando y pulsa Enter. Descarga el instalador oficial de Mangora desde GitHub, comprueba su hash en <code>SHA256SUMS.txt</code> y abre el asistente sin avisos de Edge.",
+        dlWinTitle: "Windows (64 bits)",
+        dlWinDesc: "Aplicación nativa de escritorio para Windows 10/11 con lector HD, biblioteca SQLite compartida y sincronización automática.",
+        dlWinMsi: "Paquete MSI (.msi)",
+        dlWinHint: "Si Edge marca el <code>.exe</code> como no seguro, usa el comando de PowerShell de arriba o abre la nota inferior.",
+        dlAndroidDesc: "App táctil Mangora con el mismo motor Rust, lector en cascada y página completa, descargas CBZ offline y sincronización con PC.",
+        dlAndroidHint: "Instalación directa firmada (Android 7.0+ · ARM64). Compatible con Obtainium.",
+        dlWebDesc: "Lector directo desde el navegador sin instalar nada. Ideal para leer al instante desde iPhone, iPad, macOS, Linux o cualquier equipo.",
+        dlWebBtn: "Abrir Mangora Web →",
+        dlWebHint: "Funciona en cualquier navegador moderno · Sin cuentas ni instalación.",
+        smartSummary: "¿Edge muestra «no se descarga habitualmente» o «no seguro» al bajar el .exe de Mangora?",
+        smartP1: 'Mangora es código abierto bajo licencia MIT y se compila de forma pública en <a href="https://github.com/tomahawk1103/manga-tui/actions">GitHub Actions</a>. Como todavía no incluye un certificado comercial Authenticode, Microsoft Defender SmartScreen suele advertir en descargas directas de archivos <code>.exe</code> nuevos.',
+        smartLi1: "<strong>Opción más rápida:</strong> usa el instalador de PowerShell de arriba (verifica automáticamente el checksum en <code>SHA256SUMS.txt</code>).",
+        smartLi2: "<strong>Si prefieres descargarlo en Edge (<code>Ctrl + J</code>):</strong> pulsa <code>⋯</code> junto al archivo → <strong>Conservar</strong> → <strong>Mostrar más</strong> → <strong>Mantener de todos modos</strong>.",
+        smartLi3: "<strong>Si aparece «Windows protegió su PC» al abrirlo:</strong> pulsa <strong>Más información</strong> → <strong>Ejecutar de todas formas</strong>.",
+        smartP2: 'También puedes comprobar la integridad del archivo comparando su hash con <code>SHA256SUMS.txt</code> en <a href="https://github.com/tomahawk1103/manga-tui/releases">GitHub Releases ↗</a>.',
+        allReleases: "Ver todas las versiones de Mangora, notas de cambio y checksums SHA-256 en GitHub ↗",
+        privacyTitle: "Tu progreso,<br>en tus manos.",
+        privacyBody: "Tu biblioteca y tus métricas en Mangora se guardan exclusivamente en tu equipo. Si quieres continuar en otro dispositivo, puedes sincronizar el progreso con una carpeta local de nube o con Google Drive. La integración usa el permiso <code>drive.file</code> para gestionar únicamente su propia carpeta <code>MangaTUI</code>.",
+        privacyLink: "Política de privacidad / Privacy Policy",
+        footerMit: "Licencia MIT",
+        footerSupport: "Soporte técnico",
+        footerSponsors: "Patrocinar",
+        footerPrivacy: "Privacidad",
+        footerContact: "Contacto",
+        modalBar: ">_ mangora / visor de muestra",
+        modalClose: "Cerrar ✕",
+        modalHint: "← → cambiar · Esc cerrar",
+        modalRaw: "Original ↗",
+        themePaper: "Papel",
+        themeInk: "Tinta",
+        eyebrowFmt: (ver) => "Mangora · Lector multiplataforma · " + ver,
+        releaseMetaFmt: (tag) => "Versión " + tag + " · Instaladores oficiales para Windows y Android.",
+        shellPaths: {
+          library: ">_ mangora / biblioteca",
+          explore: ">_ mangora / explorar",
+          stats: ">_ mangora / estadisticas",
+          palettes: ">_ mangora / ajustes"
+        },
+        descriptions: [
+          "Una casa y varios personajes en una secuencia de viñetas.",
+          "Una joven sonríe con las manos levantadas en una viñeta en blanco y negro.",
+          "Un joven con gafas conversa en una secuencia de primeros planos."
+        ]
+      },
+      en: {
+        skip: "Skip to content",
+        topbarPath: ">_ mangora / home",
+        brandSub: "Editorial edition",
+        navApp: "Inside the app",
+        navFeatures: "Features",
+        navDownloads: "Downloads",
+        navPrivacy: "Privacy",
+        heroTitle: "Your manga,<em>in paper and ink.</em>",
+        heroIntro: "Discover series by genre or title in Spanish and English, read in HD cascade or fit-to-screen single page, track your local 14-day reading stats, and sync across Windows, Android, and Web.",
+        heroDownloadWin: "Download Mangora for Windows",
+        heroDownloadAndroid: "Download Mangora APK (Android)",
+        heroDownloadOther: "View Mangora downloads",
+        heroOpenWeb: "Open Mangora Web",
+        heroSample: "View sample",
+        heroTryWeb: "Try Mangora Web",
+        copyBtn: "Copy",
+        copiedBtn: "Copied ✓",
+        copyDone: "Copied to clipboard.",
+        heroCmdCaption: 'Quick Windows install for Mangora · Verifies SHA-256 · <a href="./install.ps1">View script ↗</a>',
+        platformWeb: "Web (Browser)",
+        platformMit: "Open source (MIT)",
+        sampleBar: ">_ mangora / reader",
+        pageCounter: (p, n) => "Page " + p + " of " + n,
+        ribbonLabel: "Formats & sync",
+        ribbonRaw: "RAW Images",
+        appPreviewEyebrow: "Inside Mangora",
+        appPreviewTitle: "The desktop interface, live.",
+        appPreviewSub: "Switch tabs to inspect real app screens or test any of the 5 editorial palettes live on this page.",
+        quickPalettesLabel: "Active palette:",
+        palClassic: "Classic Paper",
+        palClassicDesc: "Warm paper and crisp black ink",
+        palNight: "Night Ink",
+        palNightDesc: "Matte dark mode for night reading",
+        palSepia: "Editorial Sepia",
+        palSepiaDesc: "Soft vintage tankobon tone",
+        palShonen: "Shonen Red",
+        palShonenDesc: "Clean white with vivid crimson",
+        palSumi: "Sumi Slate",
+        palSumiDesc: "Cool slate with high contrast",
+        shellSubtitle: "Paper & ink edition",
+        shellFoot: "SQLite / IndexedDB · 100% local",
+        tabLibrary: "Library",
+        tabExplore: "Explore",
+        tabStats: "14d Stats",
+        tabPalettes: "5 Palettes",
+        panelLibTitle: "Your shared bookshelf",
+        panelLibBadge: "SQLite · manga-tui-history.db",
+        kpiSeries: "Series",
+        kpiChapters: "Chapters read",
+        kpiFavs: "Favorites",
+        kpiOffline: "Offline series",
+        kpiPagesFoot: "<strong>18,420</strong> pages read stored locally",
+        kpiLastRead: "Last read: Ch. 214",
+        badgeReading: "Reading",
+        badgeOffline: "CBZ Offline",
+        shelfMeta1: "Ch. 168 / 215 · Synced progress",
+        shelfMeta2: "18 downloaded chapters · Available offline",
+        panelExpTitle: "Category tags & Latest updates",
+        panelExpBadge: "Infinite scroll enabled",
+        mockSearchText: "Search by title or filter by category...",
+        mockFilterBtn: "Filter tags",
+        tagAction: "Action",
+        tagFantasy: "Fantasy",
+        updDate1: "Today · MangaOni · Spanish",
+        updChap1: "Chapter 68 →",
+        updDate2: "Today · MangaDex · English / Spanish",
+        updChap2: "Chapter 124 →",
+        panelStatsTitle: "Reading metrics (last 14 days)",
+        panelStatsBadge: "SVG / PNG export",
+        stat14Chap: "Chapters · Last 14d",
+        stat14Pages: "Pages · Last 14d",
+        statStreak: "Active streak",
+        chartTitle: "Daily activity · Last 14 days",
+        chartPeak: "Peak: 112 pages",
+        statsCallout: "Only newly read pages are counted when advancing; flipping back never inflates your totals. 100% private on your device, zero telemetry.",
+        panelPalTitle: "Choose one of Mangora's 5 palettes",
+        panelPalBadge: "Synced to Privacy page",
+        featuresTitle: "From catalog to panel.",
+        feat1Title: "Catalog & category tags",
+        feat1Desc: "Browse InManga, MangaDex, MangaOni, LeerCapítulo, WeebCentral, MangaPill, and Comizy. Filter by Shonen, Seinen, or Ecchi and scroll endless Latest Updates.",
+        feat2Title: "Tailored editorial reader",
+        feat2Desc: "Vertical cascade, single page fit-at-a-glance, RTL/LTR double spread, 7 subtle reader canvas backgrounds, and responsive touch gestures.",
+        feat3Title: "100% local reading stats",
+        feat3Desc: "Track chapters and pages across the last 14 days, keep your daily streak, and export a shareable SVG or PNG summary card with zero telemetry.",
+        feat4Title: "5 paper & ink palettes",
+        feat4Desc: "Switch instantly between Classic Paper, Night Ink, Editorial Sepia, Shonen Red, and Sumi Slate, plus customizable library card density.",
+        feat5Title: "Offline chapter downloads",
+        feat5Desc: "Save chapters in CBZ, EPUB, PDF, or RAW images with a background download queue so you can read anywhere without an internet connection.",
+        feat6Title: "Cloud sync & trackers",
+        feat6Desc: "Connect AniList, MyAnimeList, Google Drive, or local sync folders to keep progress aligned across PC and mobile with <code>library_sync.json</code>.",
+        dlTitle: "Download Mangora.",
+        psBannerTitle: "Recommended on Windows · PowerShell",
+        psBannerLink: "Inspect script source ↗",
+        psBannerDesc: "Open PowerShell or Windows Terminal, paste the command, and press Enter. Fetches the official Mangora installer from GitHub, verifies <code>SHA256SUMS.txt</code>, and launches setup cleanly.",
+        dlWinTitle: "Windows (64-bit)",
+        dlWinDesc: "Native desktop application for Windows 10/11 featuring the HD reader, shared SQLite library, and automatic sync.",
+        dlWinMsi: "MSI package (.msi)",
+        dlWinHint: "If Edge warns on the direct <code>.exe</code>, use the PowerShell command above or expand the note below.",
+        dlAndroidDesc: "Touch-first Mangora Android app with the same Rust core, cascade & fit-page reader, offline CBZ downloads, and PC sync.",
+        dlAndroidHint: "Signed direct install (Android 7.0+ · ARM64). Compatible with Obtainium.",
+        dlWebDesc: "Instant browser reader with no install needed. Great for iPhone, iPad, macOS, Linux, or quick reading on any device.",
+        dlWebBtn: "Open Mangora Web →",
+        dlWebHint: "Works in any modern browser · No accounts or install required.",
+        smartSummary: "Does Edge warn that the Mangora .exe isn't commonly downloaded?",
+        smartP1: 'Mangora is MIT-licensed open source software built publicly via <a href="https://github.com/tomahawk1103/manga-tui/actions">GitHub Actions</a>. Without a commercial Authenticode certificate yet, Microsoft Defender SmartScreen may warn on direct <code>.exe</code> downloads.',
+        smartLi1: "<strong>Fastest option:</strong> run the PowerShell installer above (it verifies checksums against <code>SHA256SUMS.txt</code> automatically).",
+        smartLi2: "<strong>If downloading via Edge (<code>Ctrl + J</code>):</strong> click <code>⋯</code> next to the file → <strong>Keep</strong> → <strong>Show more</strong> → <strong>Keep anyway</strong>.",
+        smartLi3: "<strong>If Windows protected your PC pops up:</strong> click <strong>More info</strong> → <strong>Run anyway</strong>.",
+        smartP2: 'You can also verify file integrity manually against <code>SHA256SUMS.txt</code> on <a href="https://github.com/tomahawk1103/manga-tui/releases">GitHub Releases ↗</a>.',
+        allReleases: "View all Mangora releases, changelogs, and SHA-256 checksums on GitHub ↗",
+        privacyTitle: "Your progress,<br>in your hands.",
+        privacyBody: "Your library and metrics in Mangora live strictly on your own device. If you want to sync across devices, you can connect a local cloud folder or Google Drive. The integration uses only the <code>drive.file</code> scope for its own <code>MangaTUI</code> folder.",
+        privacyLink: "Privacy Policy / Política de privacidad",
+        footerMit: "MIT License",
+        footerSupport: "Support & Issues",
+        footerSponsors: "Sponsor",
+        footerPrivacy: "Privacy",
+        footerContact: "Contact",
+        modalBar: ">_ mangora / sample viewer",
+        modalClose: "Close ✕",
+        modalHint: "← → switch · Esc close",
+        modalRaw: "Original ↗",
+        themePaper: "Paper",
+        themeInk: "Ink",
+        eyebrowFmt: (ver) => "Mangora · Multiplatform reader · " + ver,
+        releaseMetaFmt: (tag) => "Release " + tag + " · Official Windows & Android installers.",
+        shellPaths: {
+          library: ">_ mangora / library",
+          explore: ">_ mangora / explore",
+          stats: ">_ mangora / metrics",
+          palettes: ">_ mangora / settings"
+        },
+        descriptions: [
+          "A house and several characters across a comic panel sequence.",
+          "A young woman smiles with raised hands in a black-and-white manga panel.",
+          "A young man wearing glasses talks through a close-up sequence."
+        ]
+      }
+    };
 
+    let currentLang = document.documentElement.lang === "en" ? "en" : "es";
+    let currentPalette = document.documentElement.getAttribute("data-mangora-palette") || "classic_paper";
+    let activeAppTab = "library";
+    let activeVersionClean = "v0.1.1";
+    let activeReleaseTag = "mangora-v0.1.1";
+    let heroCtaKind = "win";
+    let heroCtaSizeSuffix = "";
     let page = 2;
 
+    const art = document.querySelector("#art");
+    const fullPage = document.querySelector("#full-page");
+    const label = document.querySelector("#page-label");
+    const previous = document.querySelector("#prev");
+    const next = document.querySelector("#next");
+    const modal = document.querySelector("#sample-modal");
+    const modalArt = document.querySelector("#modal-art");
+    const modalRaw = document.querySelector("#modal-raw");
+    const modalLabel = document.querySelector("#modal-page-label");
+    const modalPrev = document.querySelector("#modal-prev");
+    const modalNext = document.querySelector("#modal-next");
+    const openSample = document.querySelector("#open-sample");
+    const closeSample = document.querySelector("#modal-close");
+
+    function updateThemeToggleLabel() {
+      const t = I18N[currentLang];
+      const meta = PALETTE_META[currentPalette] || PALETTE_META.classic_paper;
+      const iconEl = document.getElementById("quick-theme-icon");
+      const labelEl = document.getElementById("quick-theme-label");
+      if (iconEl) iconEl.textContent = meta.isDark ? "☀" : "☾";
+      if (labelEl) labelEl.textContent = meta.isDark ? t.themeInk : t.themePaper;
+    }
+
+    function applyPalette(paletteId) {
+      if (!PALETTE_META[paletteId]) return;
+      currentPalette = paletteId;
+      document.documentElement.setAttribute("data-mangora-palette", paletteId);
+      const metaTag = document.getElementById("meta-theme-color");
+      if (metaTag) metaTag.setAttribute("content", PALETTE_META[paletteId].themeColor);
+      try { localStorage.setItem("mangora.site.palette", paletteId); } catch (e) {}
+      document.querySelectorAll("[data-palette-set]").forEach((btn) => {
+        btn.setAttribute("aria-pressed", String(btn.getAttribute("data-palette-set") === paletteId));
+      });
+      updateThemeToggleLabel();
+    }
+
     function showPage(number) {
-      if (number < 1 || number > descriptions.length) return;
+      const t = I18N[currentLang];
+      const total = t.descriptions.length;
+      if (number < 1 || number > total) return;
       page = number;
-      const path = 'images/pagina-' + page + '.jpg';
-      const desc = descriptions[page - 1];
-      const text = 'Página ' + page + ' de ' + descriptions.length;
+      const path = "images/pagina-" + page + ".jpg";
+      const desc = t.descriptions[page - 1];
+      const text = t.pageCounter(page, total);
 
       art.src = path;
       art.alt = desc;
       fullPage.href = path;
       label.textContent = text;
       previous.disabled = page === 1;
-      next.disabled = page === descriptions.length;
+      next.disabled = page === total;
 
       modalArt.src = path;
       modalArt.alt = desc;
       modalRaw.href = path;
       modalLabel.textContent = text;
       modalPrev.disabled = page === 1;
-      modalNext.disabled = page === descriptions.length;
+      modalNext.disabled = page === total;
     }
 
-    function openLightbox() {
-      showPage(page);
-      if (typeof modal.showModal === 'function') {
-        modal.showModal();
-      } else {
-        window.open(fullPage.href, '_blank', 'noopener');
+    function setActiveAppTab(tabId) {
+      activeAppTab = tabId;
+      document.querySelectorAll("[data-app-tab]").forEach((btn) => {
+        btn.setAttribute("aria-selected", String(btn.getAttribute("data-app-tab") === tabId));
+      });
+      ["library", "explore", "stats", "palettes"].forEach((id) => {
+        const panel = document.getElementById("panel-" + id);
+        if (panel) panel.hidden = id !== tabId;
+      });
+      const pathEl = document.getElementById("shell-bar-path");
+      if (pathEl) {
+        pathEl.textContent = I18N[currentLang].shellPaths[tabId] || ">_ mangora / " + tabId;
       }
     }
 
-    previous.addEventListener('click', () => showPage(page - 1));
-    next.addEventListener('click', () => showPage(page + 1));
-    modalPrev.addEventListener('click', () => showPage(page - 1));
-    modalNext.addEventListener('click', () => showPage(page + 1));
+    function syncDynamicVersionCopy() {
+      const t = I18N[currentLang];
+      const eyebrow = document.querySelector("#eyebrow-version");
+      const meta = document.querySelector("#release-meta");
+      const heroLabel = document.querySelector("#download-btn-label");
+      if (eyebrow) eyebrow.textContent = t.eyebrowFmt(activeVersionClean);
+      if (meta) meta.textContent = t.releaseMetaFmt(activeReleaseTag);
+      if (heroLabel) {
+        if (heroCtaKind === "ios") heroLabel.textContent = t.heroOpenWeb;
+        else if (heroCtaKind === "android") heroLabel.textContent = t.heroDownloadAndroid + heroCtaSizeSuffix;
+        else if (heroCtaKind === "other") heroLabel.textContent = t.heroDownloadOther;
+        else heroLabel.textContent = t.heroDownloadWin + heroCtaSizeSuffix;
+      }
+    }
 
-    openSample.addEventListener('click', openLightbox);
-    fullPage.addEventListener('click', (event) => {
+    function applyLanguage(lang) {
+      if (lang !== "es" && lang !== "en") return;
+      currentLang = lang;
+      document.documentElement.lang = lang;
+      try { localStorage.setItem("mangora.site.lang", lang); } catch (e) {}
+
+      const t = I18N[lang];
+      document.querySelectorAll("[data-lang]").forEach((btn) => {
+        btn.setAttribute("aria-pressed", String(btn.getAttribute("data-lang") === lang));
+      });
+      document.querySelectorAll("[data-i18n]").forEach((el) => {
+        const key = el.getAttribute("data-i18n");
+        if (key && typeof t[key] === "string") {
+          el.textContent = t[key];
+          if (el.classList.contains("copy-btn")) {
+            el.dataset.origLabel = t[key];
+          }
+        }
+      });
+      document.querySelectorAll("[data-i18n-html]").forEach((el) => {
+        const key = el.getAttribute("data-i18n-html");
+        if (key && typeof t[key] === "string") {
+          el.innerHTML = t[key];
+        }
+      });
+      updateThemeToggleLabel();
+      showPage(page);
+      setActiveAppTab(activeAppTab);
+      syncDynamicVersionCopy();
+    }
+
+    document.querySelectorAll("[data-palette-set]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        applyPalette(btn.getAttribute("data-palette-set"));
+      });
+    });
+
+    const quickThemeBtn = document.getElementById("quick-theme-toggle");
+    if (quickThemeBtn) {
+      quickThemeBtn.addEventListener("click", () => {
+        const meta = PALETTE_META[currentPalette] || PALETTE_META.classic_paper;
+        applyPalette(meta.isDark ? "classic_paper" : "night_ink");
+      });
+    }
+
+    document.querySelectorAll("[data-lang]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        applyLanguage(btn.getAttribute("data-lang"));
+      });
+    });
+
+    document.querySelectorAll("[data-app-tab]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        setActiveAppTab(btn.getAttribute("data-app-tab"));
+      });
+    });
+
+    function openLightbox() {
+      showPage(page);
+      if (typeof modal.showModal === "function") {
+        modal.showModal();
+      } else {
+        window.open(fullPage.href, "_blank", "noopener");
+      }
+    }
+
+    previous.addEventListener("click", () => showPage(page - 1));
+    next.addEventListener("click", () => showPage(page + 1));
+    modalPrev.addEventListener("click", () => showPage(page - 1));
+    modalNext.addEventListener("click", () => showPage(page + 1));
+
+    openSample.addEventListener("click", openLightbox);
+    fullPage.addEventListener("click", (event) => {
       event.preventDefault();
       openLightbox();
     });
-    closeSample.addEventListener('click', () => modal.close());
-    modal.addEventListener('click', (event) => {
+    closeSample.addEventListener("click", () => modal.close());
+    modal.addEventListener("click", (event) => {
       if (event.target === modal) modal.close();
     });
-    modal.addEventListener('keydown', (event) => {
-      if (event.key === 'ArrowLeft') {
+    modal.addEventListener("keydown", (event) => {
+      if (event.key === "ArrowLeft") {
         event.preventDefault();
         showPage(page - 1);
-      } else if (event.key === 'ArrowRight') {
+      } else if (event.key === "ArrowRight") {
         event.preventDefault();
         showPage(page + 1);
       }
     });
 
-    document.querySelector('.pager').hidden = false;
-    showPage(page);
+    document.querySelector(".pager").hidden = false;
+    applyPalette(currentPalette);
+    applyLanguage(currentLang);
 
-    const copyStatus = document.querySelector('#copy-status');
+    const copyStatus = document.querySelector("#copy-status");
     const copyTimers = new WeakMap();
 
     async function copyCommandText(text) {
-      if (navigator.clipboard && typeof navigator.clipboard.writeText === 'function') {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
         try {
           await navigator.clipboard.writeText(text);
           return true;
         } catch {}
       }
-      const ta = document.createElement('textarea');
+      const ta = document.createElement("textarea");
       ta.value = text;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
+      ta.setAttribute("readonly", "");
+      ta.style.position = "fixed";
+      ta.style.left = "-9999px";
       document.body.appendChild(ta);
       ta.select();
       let copied = false;
       try {
-        copied = document.execCommand('copy');
+        copied = document.execCommand("copy");
       } catch {}
       document.body.removeChild(ta);
       return copied;
     }
 
-    document.querySelectorAll('.copy-btn').forEach((btn) => {
+    document.querySelectorAll(".copy-btn").forEach((btn) => {
       if (!btn.dataset.origLabel) {
-        btn.dataset.origLabel = btn.textContent || 'Copiar';
+        btn.dataset.origLabel = btn.textContent || I18N[currentLang].copyBtn;
       }
-      btn.addEventListener('click', async () => {
-        const text = btn.getAttribute('data-copy');
+      btn.addEventListener("click", async () => {
+        const text = btn.getAttribute("data-copy");
         if (!text) return;
         const ok = await copyCommandText(text);
         if (!ok) return;
+        const t = I18N[currentLang];
         const prevTimer = copyTimers.get(btn);
         if (prevTimer) clearTimeout(prevTimer);
-        btn.textContent = 'Copiado ✓';
-        btn.classList.add('copied');
+        btn.textContent = t.copiedBtn;
+        btn.classList.add("copied");
         if (copyStatus) {
-          copyStatus.textContent = 'Copiado al portapapeles.';
+          copyStatus.textContent = t.copyDone;
         }
         const timer = setTimeout(() => {
-          btn.textContent = btn.dataset.origLabel || 'Copiar';
-          btn.classList.remove('copied');
+          btn.textContent = btn.dataset.origLabel || t.copyBtn;
+          btn.classList.remove("copied");
         }, 2000);
         copyTimers.set(btn, timer);
       });
     });
 
-    const ua = navigator.userAgent || '';
+    const ua = navigator.userAgent || "";
     const isAndroid = /Android/i.test(ua);
-    const isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
+    const isIOS = /iPhone|iPad|iPod/i.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
     const isLinux = /Linux/i.test(ua) && !isAndroid;
     const isMac = /Macintosh|Mac OS X/i.test(ua) && !isIOS;
-    const heroBtn = document.querySelector('#download-btn');
-    const heroLabel = document.querySelector('#download-btn-label');
-    const heroCmd = document.querySelector('#hero-cmd');
+    const heroBtn = document.querySelector("#download-btn");
+    const heroCmd = document.querySelector("#hero-cmd");
 
     if (isIOS) {
       if (heroCmd) heroCmd.hidden = true;
-      heroBtn.href = './mangora-web/';
-      heroLabel.textContent = 'Abrir Mangora Web';
+      heroBtn.href = "./mangora-web/";
+      heroCtaKind = "ios";
     } else if (isAndroid) {
       if (heroCmd) heroCmd.hidden = true;
-      heroBtn.href = '#descargas';
-      heroLabel.textContent = 'Descargar Mangora APK (Android)';
+      heroBtn.href = "#descargas";
+      heroCtaKind = "android";
     } else if (isLinux || isMac) {
       if (heroCmd) heroCmd.hidden = true;
-      heroBtn.href = '#descargas';
-      heroLabel.textContent = 'Ver descargas de Mangora';
+      heroBtn.href = "#descargas";
+      heroCtaKind = "other";
     }
+    syncDynamicVersionCopy();
 
     (async function hydrateReleases() {
       try {
-        const res = await fetch('https://api.github.com/repos/tomahawk1103/manga-tui/releases?per_page=20', {
-          headers: { Accept: 'application/vnd.github+json' }
+        const res = await fetch("https://api.github.com/repos/tomahawk1103/manga-tui/releases?per_page=20", {
+          headers: { Accept: "application/vnd.github+json" }
         });
         if (!res.ok) return;
         const releases = await res.json();
         if (!Array.isArray(releases)) return;
 
         const isMangoraRelease = (r) =>
-          !r.draft && r.tag_name && r.tag_name.toLowerCase().startsWith('mangora-v') && Array.isArray(r.assets) && r.assets.length > 0;
+          !r.draft && r.tag_name && r.tag_name.toLowerCase().startsWith("mangora-v") && Array.isArray(r.assets) && r.assets.length > 0;
         const mangoraStable = releases.find((r) => isMangoraRelease(r) && !r.prerelease);
         const mangoraAny = releases.find(isMangoraRelease);
         const active = mangoraStable || mangoraAny;
         if (!active) return;
 
         const findAsset = (rel, test) => (rel && Array.isArray(rel.assets) ? rel.assets.find((a) => a.name && test(a.name.toLowerCase())) : null);
-        const fmtSize = (asset) => (asset && asset.size ? ' · ' + (asset.size / (1024 * 1024)).toFixed(1) + ' MB' : '');
-        const cleanVer = (tag) => String(tag || '').replace(/^mangora-/i, '');
+        const fmtSize = (asset) => (asset && asset.size ? " · " + (asset.size / (1024 * 1024)).toFixed(1) + " MB" : "");
+        const cleanVer = (tag) => String(tag || "").replace(/^mangora-/i, "");
 
-        const winExe = findAsset(active, (n) => n.startsWith('mangora') && n.endsWith('-setup.exe'));
-        const winMsi = findAsset(active, (n) => n.startsWith('mangora') && n.endsWith('.msi'));
+        const winExe = findAsset(active, (n) => n.startsWith("mangora") && n.endsWith("-setup.exe"));
+        const winMsi = findAsset(active, (n) => n.startsWith("mangora") && n.endsWith(".msi"));
 
-        const dlWinExe = document.querySelector('#dl-win-installer');
-        const dlWinMsi = document.querySelector('#dl-win-msi');
-        const dlAndroidApk = document.querySelector('#dl-android-apk');
-        const eyebrow = document.querySelector('#eyebrow-version');
-        const meta = document.querySelector('#release-meta');
-        const allLink = document.querySelector('#all-releases-link');
+        const dlWinExe = document.querySelector("#dl-win-installer");
+        const dlWinMsi = document.querySelector("#dl-win-msi");
+        const dlAndroidApk = document.querySelector("#dl-android-apk");
+        const topbarVer = document.querySelector("#topbar-version");
+        const allLink = document.querySelector("#all-releases-link");
 
-        const apkRelease = releases.find((r) => isMangoraRelease(r) && findAsset(r, (n) => n.endsWith('.apk')));
-        const androidApk = findAsset(apkRelease, (n) => n.endsWith('-android-arm64-v8a.apk')) || findAsset(apkRelease, (n) => n.endsWith('.apk'));
+        const apkRelease = releases.find((r) => isMangoraRelease(r) && findAsset(r, (n) => n.endsWith(".apk")));
+        const androidApk = findAsset(apkRelease, (n) => n.endsWith("-android-arm64-v8a.apk")) || findAsset(apkRelease, (n) => n.endsWith(".apk"));
 
         if (dlAndroidApk && androidApk) {
           dlAndroidApk.href = androidApk.browser_download_url;
-          dlAndroidApk.textContent = '↓ Mangora APK (' + cleanVer(apkRelease.tag_name) + fmtSize(androidApk) + ')';
+          dlAndroidApk.textContent = "↓ Mangora APK (" + cleanVer(apkRelease.tag_name) + fmtSize(androidApk) + ")";
         }
         if (isAndroid && androidApk) {
           heroBtn.href = androidApk.browser_download_url;
-          heroLabel.textContent = 'Descargar Mangora APK' + fmtSize(androidApk);
+          heroCtaKind = "android";
+          heroCtaSizeSuffix = fmtSize(androidApk);
         }
 
         if (dlWinExe && winExe) {
           dlWinExe.href = winExe.browser_download_url;
-          dlWinExe.textContent = '↓ Instalador Mangora (.exe' + fmtSize(winExe) + ')';
+          dlWinExe.textContent = "↓ Instalador Mangora (.exe" + fmtSize(winExe) + ")";
           if (!isAndroid && !isIOS && !isLinux && !isMac) {
             heroBtn.href = winExe.browser_download_url;
-            heroLabel.textContent = 'Descargar Mangora para Windows' + fmtSize(winExe);
+            heroCtaKind = "win";
+            heroCtaSizeSuffix = fmtSize(winExe);
           }
         }
         if (dlWinMsi && winMsi) {
           dlWinMsi.href = winMsi.browser_download_url;
-          dlWinMsi.textContent = 'Paquete MSI (.msi' + fmtSize(winMsi) + ')';
+          dlWinMsi.textContent = (currentLang === "en" ? "MSI package (.msi" : "Paquete MSI (.msi") + fmtSize(winMsi) + ")";
         }
 
-        if (eyebrow) {
-          eyebrow.textContent = 'Mangora · Lector multiplataforma · ' + cleanVer(active.tag_name);
-        }
-        if (meta) {
-          meta.textContent = 'Versión ' + active.tag_name + ' · Instaladores oficiales para Windows y Android.';
-        }
+        activeVersionClean = cleanVer(active.tag_name);
+        activeReleaseTag = active.tag_name;
+        if (topbarVer) topbarVer.textContent = activeVersionClean;
+        syncDynamicVersionCopy();
         if (allLink && active.html_url) {
           allLink.href = active.html_url;
         }
