@@ -10,14 +10,18 @@ use manga_core::backend::manga_provider::{
     Chapter, ChapterFilters, ChapterOrderBy, Languages, Manga, MangaProviders, MangaStatus, Pagination,
 };
 use manga_core::backend::multi_provider::{
-    get_chapters_for_provider, get_manga_by_id_for_provider, get_popular_mangas_for_provider, search_mangas_with_tags_for_provider,
+    get_chapters_for_provider, get_manga_by_id_for_provider, get_popular_mangas_for_provider, search_mangas_for_provider,
+    search_mangas_with_exact_tags_for_provider, search_mangas_with_tags_for_provider,
 };
 use manga_core::backend::offline::{OfflineChapter, OfflineManga, find_offline_manga_in_dir};
 use serde::{Deserialize, Serialize};
 use tauri::State;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::anilist::{AniListCommunityInfo, fetch_anilist_community};
+use crate::anilist::{
+    AniListCommunityInfo, AniListMediaSummary, cache_resolved_series, fetch_anilist_community, fetch_anilist_media_by_id,
+    get_cached_anilist_media, get_cached_resolved_series, search_anilist_by_tags,
+};
 use crate::downloads::{
     DownloadQueueControlRequest, DownloadQueueSnapshotDto, EnqueueChaptersRequest, OfflineSeriesItemDto, SetDownloadFormatResult,
     apply_queue_control, enqueue_chapters, map_queue_snapshot, parse_download_type, scan_offline_series,
@@ -138,15 +142,64 @@ pub async fn search_catalog(provider: String, query: String, page: u32, tags: Op
     }
     pagination.current_page = page;
     let end_offset = page * pagination.items_per_page;
-    let (response, effective_provider) = tokio::time::timeout(
+
+    if cleaned_tags.is_empty() {
+        let (response, effective_provider) = tokio::time::timeout(
+            Duration::from_secs(20),
+            search_mangas_with_tags_for_provider(provider, term, &cleaned_tags, pagination),
+        )
+        .await
+        .map_err(|_| "Catalog request timed out")?
+        .map_err(|err| err.to_string())?;
+        return Ok(map_catalog_response(response, effective_provider, end_offset));
+    }
+
+    let opt_query = term.as_ref().map(|t| t.get().to_string());
+    let exact_attempt = tokio::time::timeout(
         Duration::from_secs(20),
-        search_mangas_with_tags_for_provider(provider, term, &cleaned_tags, pagination),
+        search_mangas_with_exact_tags_for_provider(provider, term, &cleaned_tags, pagination),
     )
     .await
-    .map_err(|_| "Catalog request timed out")?
-    .map_err(|err| err.to_string())?;
-    let effective_provider_id = effective_provider.to_string();
+    .ok()
+    .and_then(|res| res.ok())
+    .flatten();
+
+    if let Some((response, effective_provider)) = exact_attempt
+        && (!response.mangas.is_empty() || page > 1)
+    {
+        return Ok(map_catalog_response(response, effective_provider, end_offset));
+    }
+
+    let anilist_page =
+        tokio::time::timeout(Duration::from_secs(15), search_anilist_by_tags(opt_query.as_deref(), &cleaned_tags, page))
+            .await
+            .map_err(|_| "Catalog request timed out")??;
+
     Ok(CatalogPage {
+        has_next: anilist_page.has_next && !anilist_page.items.is_empty(),
+        items: anilist_page
+            .items
+            .into_iter()
+            .map(|item| CatalogItem {
+                id: format!("anilist:{}", item.id),
+                provider: Some("anilist".to_string()),
+                title: item.title,
+                description: item.description,
+                cover_url: item.cover_url,
+                genres: item.genres,
+                languages: Vec::new(),
+            })
+            .collect(),
+    })
+}
+
+fn map_catalog_response(
+    response: manga_core::backend::manga_provider::GetMangasResponse,
+    effective_provider: MangaProviders,
+    end_offset: u32,
+) -> CatalogPage {
+    let effective_provider_id = effective_provider.to_string();
+    CatalogPage {
         has_next: response.next_page
             && !response.mangas.is_empty()
             && (effective_provider != MangaProviders::Mangadex || end_offset < response.total_mangas),
@@ -169,21 +222,161 @@ pub async fn search_catalog(provider: String, query: String, page: u32, tags: Op
                     .collect(),
             })
             .collect(),
-    })
+    }
+}
+
+fn normalize_title_for_match(raw: &str) -> String {
+    let mut out = String::with_capacity(raw.len());
+    let mut last_space = true;
+    for ch in raw.chars() {
+        if ch.is_alphanumeric() {
+            for lower in ch.to_lowercase() {
+                out.push(lower);
+            }
+            last_space = false;
+        } else if !last_space {
+            out.push(' ');
+            last_space = true;
+        }
+    }
+    out.trim().to_string()
+}
+
+fn build_anilist_search_candidates(meta: Option<&AniListMediaSummary>, fallback_title: Option<&str>) -> Vec<String> {
+    let mut raw_list: Vec<String> = Vec::new();
+    if let Some(m) = meta {
+        for opt in [&m.english, &m.romaji] {
+            if let Some(val) = opt.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+                raw_list.push(val.to_string());
+            }
+        }
+        if !m.title.trim().is_empty() {
+            raw_list.push(m.title.trim().to_string());
+        }
+        for syn in m.synonyms.iter().take(2) {
+            if !syn.trim().is_empty() {
+                raw_list.push(syn.trim().to_string());
+            }
+        }
+    }
+    if let Some(fb) = fallback_title.map(str::trim).filter(|s| !s.is_empty()) {
+        raw_list.push(fb.to_string());
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    let mut seen: HashSet<String> = HashSet::new();
+    let mut push = |candidate: &str| {
+        let cleaned = candidate.trim();
+        let key = cleaned.to_ascii_lowercase();
+        if cleaned.chars().count() >= 2 && seen.insert(key) {
+            out.push(cleaned.to_string());
+        }
+    };
+
+    for title in raw_list {
+        push(&title);
+        let no_punct: String = title
+            .chars()
+            .map(|c| {
+                if matches!(c, '-' | ':' | '–' | '—' | '/' | '!' | '¡' | '?' | '¿' | '(' | ')' | '[' | ']') { ' ' } else { c }
+            })
+            .collect();
+        let collapsed = no_punct.split_whitespace().collect::<Vec<_>>().join(" ");
+        push(&collapsed);
+        let words: Vec<&str> = collapsed.split_whitespace().collect();
+        if words.len() > 3 {
+            push(&words[..3].join(" "));
+        }
+    }
+
+    out.truncate(4);
+    out
+}
+
+async fn resolve_anilist_series_on_providers(
+    preferred_provider: MangaProviders,
+    meta: Option<&AniListMediaSummary>,
+    fallback_title: Option<&str>,
+) -> Option<(MangaProviders, String)> {
+    let mut target_names: Vec<String> = Vec::new();
+    if let Some(m) = meta {
+        for opt in [m.english.as_deref(), m.romaji.as_deref(), Some(m.title.as_str())] {
+            if let Some(norm) = opt.map(normalize_title_for_match).filter(|s| !s.is_empty()) {
+                target_names.push(norm);
+            }
+        }
+        for syn in &m.synonyms {
+            let norm = normalize_title_for_match(syn);
+            if !norm.is_empty() {
+                target_names.push(norm);
+            }
+        }
+    }
+    if let Some(fb) = fallback_title.map(normalize_title_for_match).filter(|s| !s.is_empty()) {
+        target_names.push(fb);
+    }
+
+    let candidates = build_anilist_search_candidates(meta, fallback_title);
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let mut providers_to_try = vec![preferred_provider];
+    if preferred_provider != MangaProviders::Mangadex {
+        providers_to_try.push(MangaProviders::Mangadex);
+    }
+
+    for provider in providers_to_try {
+        for (idx, candidate) in candidates.iter().enumerate() {
+            let Some(term) = SearchTerm::trimmed(candidate) else {
+                continue;
+            };
+            let res = tokio::time::timeout(
+                Duration::from_secs(8),
+                search_mangas_for_provider(provider, Some(term), Pagination::default()),
+            )
+            .await;
+
+            let Ok(Ok(page)) = res else {
+                continue;
+            };
+            if page.mangas.is_empty() {
+                continue;
+            }
+
+            if let Some(exact) = page
+                .mangas
+                .iter()
+                .find(|hit| target_names.iter().any(|t| t == &normalize_title_for_match(&hit.title)))
+            {
+                return Some((exact.provider.unwrap_or(provider), exact.id.clone()));
+            }
+
+            if let Some(partial) = page.mangas.iter().find(|hit| {
+                let norm_hit = normalize_title_for_match(&hit.title);
+                !norm_hit.is_empty() && target_names.iter().any(|t| norm_hit.contains(t) || t.contains(&norm_hit))
+            }) {
+                return Some((partial.provider.unwrap_or(provider), partial.id.clone()));
+            }
+
+            if idx == 0 {
+                let first = &page.mangas[0];
+                return Some((first.provider.unwrap_or(provider), first.id.clone()));
+            }
+        }
+    }
+
+    None
 }
 
 #[tauri::command]
 pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetailRequest) -> Result<SeriesDetailResponse, String> {
-    let manga_id = request.manga_id.trim().to_string();
+    let mut manga_id = request.manga_id.trim().to_string();
     if manga_id.is_empty() {
         return Err("Missing manga identifier".into());
     }
     let is_offline_only = manga_id.starts_with("offline::");
-    let provider = match MangaProviders::from_str(request.provider.trim()) {
-        Ok(p) => p,
-        Err(_) if is_offline_only => MangaProviders::default(),
-        Err(_) => return Err("Unknown catalog source".into()),
-    };
+    let is_anilist = request.provider.trim().eq_ignore_ascii_case("anilist") || manga_id.starts_with("anilist:");
 
     let page = request.page.unwrap_or(1);
     const CHAPTERS_PER_PAGE: u32 = 50;
@@ -200,6 +393,121 @@ pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetail
         .filter(|s| !s.is_empty())
         .and_then(Languages::from_str_lenient);
     let mut active_lang = requested_lang.unwrap_or(default_chapter_lang);
+
+    let mut anilist_meta: Option<AniListMediaSummary> = None;
+    let mut fallback_title = request.fallback_title.clone();
+    let mut fallback_cover_url = request.fallback_cover_url.clone();
+    let mut fallback_description = request.fallback_description.clone();
+
+    let provider = if is_anilist {
+        let anilist_id = manga_id
+            .strip_prefix("anilist:")
+            .or_else(|| manga_id.strip_prefix("ANILIST:"))
+            .and_then(|s| s.trim().parse::<u64>().ok());
+        anilist_meta = if let Some(id) = anilist_id {
+            match get_cached_anilist_media(id) {
+                Some(cached) => Some(cached),
+                None => fetch_anilist_media_by_id(id).await,
+            }
+        } else {
+            None
+        };
+
+        let snapshot = state.snapshot().ok();
+        let active_provider_id = snapshot
+            .as_ref()
+            .map(|s| s.active_provider.clone())
+            .unwrap_or_else(|| "mangadex".to_string());
+        let preferred_provider = MangaProviders::from_str(&active_provider_id).unwrap_or(MangaProviders::Mangadex);
+
+        let cached_resolution = anilist_id.and_then(|id| {
+            get_cached_resolved_series(id, &active_provider_id)
+                .and_then(|(prov_str, resolved_id)| MangaProviders::from_str(&prov_str).ok().map(|p| (p, resolved_id)))
+        });
+
+        let resolved = match cached_resolution {
+            Some(hit) => Some(hit),
+            None => {
+                let hit =
+                    resolve_anilist_series_on_providers(preferred_provider, anilist_meta.as_ref(), fallback_title.as_deref()).await;
+                if let (Some(id), Some((resolved_prov, resolved_id))) = (anilist_id, hit.as_ref()) {
+                    cache_resolved_series(id, &active_provider_id, &resolved_prov.to_string(), resolved_id);
+                }
+                hit
+            },
+        };
+
+        if let Some((resolved_provider, resolved_id)) = resolved {
+            manga_id = resolved_id;
+            if fallback_title.as_deref().map(str::trim).unwrap_or("").is_empty() {
+                fallback_title = anilist_meta.as_ref().map(|m| m.title.clone());
+            }
+            if fallback_cover_url.as_deref().map(str::trim).unwrap_or("").is_empty() {
+                fallback_cover_url = anilist_meta.as_ref().map(|m| m.cover_url.clone()).filter(|u| !u.is_empty());
+            }
+            if fallback_description.as_deref().map(str::trim).unwrap_or("").is_empty() {
+                fallback_description = anilist_meta.as_ref().and_then(|m| m.description.clone());
+            }
+            resolved_provider
+        } else {
+            let resolved_title = anilist_meta
+                .as_ref()
+                .map(|m| m.title.clone())
+                .or_else(|| fallback_title.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned))
+                .unwrap_or_else(|| manga_id.clone());
+            let resolved_cover = anilist_meta
+                .as_ref()
+                .map(|m| m.cover_url.clone())
+                .filter(|s| !s.is_empty())
+                .or_else(|| fallback_cover_url.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned));
+            let resolved_desc = anilist_meta.as_ref().and_then(|m| m.description.clone()).or_else(|| {
+                fallback_description
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(str::to_owned)
+            });
+            let active_code = active_lang.as_iso_code().to_string();
+            let notice = format!(
+                "Esta serie se encontró en AniList, pero no pudimos encontrarla automáticamente en {} ni en MangaDex. Prueba a buscarla manualmente por otro título o cambiar de fuente.",
+                preferred_provider.badge_label()
+            );
+            return Ok(SeriesDetailResponse {
+                id: manga_id,
+                provider: "anilist".to_string(),
+                provider_label: "AniList".to_string(),
+                title: resolved_title,
+                cover_url: resolved_cover,
+                description: resolved_desc,
+                author: None,
+                artist: None,
+                status: anilist_meta.as_ref().map(|m| m.status.clone()).unwrap_or_else(|| "unknown".to_string()),
+                genres: anilist_meta.as_ref().map(|m| m.genres.clone()).unwrap_or_default(),
+                available_languages: vec![active_code.clone()],
+                active_language: active_code,
+                order: match order {
+                    ChapterOrderBy::Ascending => "asc".to_string(),
+                    ChapterOrderBy::Descending => "desc".to_string(),
+                },
+                page: 1,
+                total_chapters: 0,
+                has_next_page: false,
+                is_favorite: false,
+                is_offline_fallback: false,
+                offline_chapter_count: 0,
+                read_chapter_count: 0,
+                next_unread_chapter: None,
+                chapters: Vec::new(),
+                online_warning: Some(notice),
+            });
+        }
+    } else {
+        match MangaProviders::from_str(request.provider.trim()) {
+            Ok(p) => p,
+            Err(_) if is_offline_only => MangaProviders::default(),
+            Err(_) => return Err("Unknown catalog source".into()),
+        }
+    };
 
     let (manga_result, mut chapters_result) = if is_offline_only {
         (Err("Offline-only archive".to_string()), Err("Offline-only archive".to_string()))
@@ -234,7 +542,7 @@ pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetail
         match (&manga_result, &chapters_result) {
             (Err(e1), Err(e2)) => Some(format!("{e1}; {e2}")),
             (Ok(_), Err(e)) => Some(e.clone()),
-            (Err(e), Ok(_)) if request.fallback_title.as_deref().map(str::trim).is_some_and(|t| !t.is_empty()) => Some(e.clone()),
+            (Err(e), Ok(_)) if fallback_title.as_deref().map(str::trim).is_some_and(|t| !t.is_empty()) => Some(e.clone()),
             _ => None,
         }
     };
@@ -249,14 +557,7 @@ pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetail
         .as_ref()
         .map(|m| m.title.trim().to_string())
         .filter(|t| !t.is_empty())
-        .or_else(|| {
-            request
-                .fallback_title
-                .as_deref()
-                .map(str::trim)
-                .filter(|t| !t.is_empty())
-                .map(str::to_owned)
-        })
+        .or_else(|| fallback_title.as_deref().map(str::trim).filter(|t| !t.is_empty()).map(str::to_owned))
         .unwrap_or_else(|| manga_id.clone());
 
     let downloads_dir = state.downloads_dir()?;
@@ -302,7 +603,7 @@ pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetail
     if online_chapters.is_empty()
         && manga_meta.is_none()
         && offline_manga.is_none()
-        && request.fallback_title.as_deref().map(str::trim).unwrap_or("").is_empty()
+        && fallback_title.as_deref().map(str::trim).unwrap_or("").is_empty()
         && let Some(err) = online_warning
     {
         return Err(err);
@@ -331,14 +632,7 @@ pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetail
         .as_ref()
         .map(|m| m.cover_img_url.trim().to_string())
         .filter(|s| !s.is_empty())
-        .or_else(|| {
-            request
-                .fallback_cover_url
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-                .map(str::to_owned)
-        })
+        .or_else(|| fallback_cover_url.as_deref().map(str::trim).filter(|s| !s.is_empty()).map(str::to_owned))
         .or(db_cover);
 
     let description = manga_meta
@@ -346,8 +640,7 @@ pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetail
         .map(|m| m.description.trim().to_string())
         .filter(|s| !s.is_empty())
         .or_else(|| {
-            request
-                .fallback_description
+            fallback_description
                 .as_deref()
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
@@ -370,6 +663,19 @@ pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetail
         available_languages.insert(0, active_code.to_string());
     }
 
+    let resolved_genres: Vec<String> = manga_meta
+        .as_ref()
+        .map(|m| {
+            m.genres
+                .iter()
+                .map(|g| g.title.clone())
+                .filter(|s| !s.trim().is_empty())
+                .collect::<Vec<_>>()
+        })
+        .filter(|g| !g.is_empty())
+        .or_else(|| anilist_meta.as_ref().map(|m| m.genres.clone()).filter(|g| !g.is_empty()))
+        .unwrap_or_default();
+
     Ok(SeriesDetailResponse {
         id: manga_id,
         provider: provider.to_string(),
@@ -390,11 +696,9 @@ pub async fn get_series_detail(state: State<'_, AppState>, request: SeriesDetail
         status: manga_meta
             .as_ref()
             .map(|m| status_id(m.status).to_string())
+            .or_else(|| anilist_meta.as_ref().map(|m| m.status.clone()))
             .unwrap_or_else(|| "unknown".to_string()),
-        genres: manga_meta
-            .as_ref()
-            .map(|m| m.genres.iter().map(|g| g.title.clone()).filter(|s| !s.trim().is_empty()).collect())
-            .unwrap_or_default(),
+        genres: resolved_genres,
         available_languages,
         active_language: active_code.to_string(),
         order: match order {
@@ -1180,6 +1484,30 @@ mod tests {
         assert!(!fallback);
         assert_eq!(ranked[0].id, "2");
         assert_eq!(matched, vec!["seinen".to_string(), "mystery".to_string()]);
+    }
+
+    #[test]
+    fn normalize_title_and_build_anilist_candidates_deduplicates() {
+        assert_eq!(normalize_title_for_match("Neon Genesis Evangelion!"), "neon genesis evangelion");
+        assert_eq!(normalize_title_for_match("  Kaiju No. 8  "), "kaiju no 8");
+
+        let summary = AniListMediaSummary {
+            id: 30698,
+            title: "Neon Genesis Evangelion".into(),
+            romaji: Some("Shin Seiki Evangelion".into()),
+            english: Some("Neon Genesis Evangelion".into()),
+            synonyms: vec!["Eva: The Manga".into(), "Neon Genesis Evangelion".into()],
+            cover_url: String::new(),
+            description: None,
+            status: "completed".into(),
+            genres: vec![],
+        };
+
+        let candidates = build_anilist_search_candidates(Some(&summary), Some("Neon Genesis Evangelion"));
+        assert!(!candidates.is_empty());
+        assert!(candidates.len() <= 4);
+        assert_eq!(candidates[0], "Neon Genesis Evangelion");
+        assert!(candidates.contains(&"Shin Seiki Evangelion".to_string()));
     }
 
     #[tokio::test]

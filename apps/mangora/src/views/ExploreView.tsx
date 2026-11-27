@@ -18,6 +18,8 @@ interface ExploreViewProps {
   isSaving: boolean;
   focusSearch: boolean;
   favoriteKeys: Set<string>;
+  selectedTags: string[];
+  onSelectedTagsChange: (tags: string[]) => void;
   onToggleFavorite: (payload: ToggleFavoritePayload) => Promise<void>;
   onOpenSeries: (series: SeriesSelection) => void;
   onOpenReader: (request: OpenReaderChapterRequest) => void;
@@ -30,6 +32,8 @@ export function ExploreView({
   isSaving,
   focusSearch,
   favoriteKeys,
+  selectedTags,
+  onSelectedTagsChange,
   onToggleFavorite,
   onOpenSeries,
   onOpenReader,
@@ -98,6 +102,8 @@ export function ExploreView({
           focusSearch={focusSearch}
           isMutating={isSaving}
           favoriteKeys={favoriteKeys}
+          selectedTags={selectedTags}
+          onSelectedTagsChange={onSelectedTagsChange}
           onToggleFavorite={onToggleFavorite}
           onOpenSeries={onOpenSeries}
           onChooseSource={providers.length > 1 ? () => {

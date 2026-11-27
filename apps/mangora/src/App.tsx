@@ -5,7 +5,7 @@ import { OnboardingWizard } from "./components/OnboardingWizard";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { useMangoraAppearance } from "./features/hito5";
-import { getTranslations } from "./lib/i18n";
+import { getTranslations, normalizeTagInput } from "./lib/i18n";
 import { useScreenWakeLock } from "./lib/mobilePlatform";
 import {
   WEB_BUILD_STAMP,
@@ -65,7 +65,7 @@ import { SettingsView } from "./views/SettingsView";
 import { SupportView } from "./views/SupportView";
 
 type WebRoute =
-  | { kind: "section"; section: NavSection; focusSearch?: boolean }
+  | { kind: "section"; section: NavSection; focusSearch?: boolean; tags?: string[] }
   | { kind: "series"; series: SeriesSelection }
   | { kind: "reader"; request: OpenReaderChapterRequest };
 
@@ -77,12 +77,21 @@ function normalizeWebMangaId(raw: string): string {
 function parseWebHash(rawHash: string): WebRoute {
   const clean = rawHash.replace(/^#/, "");
   if (!clean) return { kind: "section", section: "home" };
-  if (clean === "explorar") return { kind: "section", section: "explore" };
-  if (clean === "buscar") return { kind: "section", section: "explore", focusSearch: true };
-  if (clean === "descargas") return { kind: "section", section: "downloads" };
-  if (clean === "ajustes") return { kind: "section", section: "settings" };
-  if (clean === "apoyar") return { kind: "section", section: "support" };
-  if (clean === "leer/sample-1") {
+  const [hashPath, hashQuery] = clean.split("?", 2);
+  if (hashPath === "explorar") {
+    const params = new URLSearchParams(hashQuery ?? "");
+    const rawTags = params.get("tags") ?? "";
+    const tags = rawTags
+      .split(",")
+      .map((item) => normalizeTagInput(decodeURIComponent(item)))
+      .filter(Boolean);
+    return { kind: "section", section: "explore", tags: tags.length > 0 ? tags : undefined };
+  }
+  if (hashPath === "buscar") return { kind: "section", section: "explore", focusSearch: true };
+  if (hashPath === "descargas") return { kind: "section", section: "downloads" };
+  if (hashPath === "ajustes") return { kind: "section", section: "settings" };
+  if (hashPath === "apoyar") return { kind: "section", section: "support" };
+  if (hashPath === "leer/sample-1") {
     return {
       kind: "reader",
       request: {
@@ -159,6 +168,7 @@ function parseWebHash(rawHash: string): WebRoute {
 
 function buildWebHash(params: {
   activeSection: NavSection;
+  exploreTags: string[];
   selectedSeries: SeriesSelection | null;
   readerTarget: OpenReaderChapterRequest | null;
 }): string {
@@ -171,8 +181,12 @@ function buildWebHash(params: {
     return `#serie/${encodeURIComponent(s.provider)}/${encodeURIComponent(s.mangaId)}`;
   }
   switch (params.activeSection) {
-    case "explore":
+    case "explore": {
+      if (params.exploreTags.length > 0) {
+        return `#explorar?tags=${params.exploreTags.map((t) => encodeURIComponent(t)).join(",")}`;
+      }
       return "#explorar";
+    }
     case "downloads":
       return "#descargas";
     case "settings":
@@ -189,6 +203,7 @@ export function App() {
   const [libraryOverview, setLibraryOverview] = useState<LibraryOverview | null>(null);
   const [libraryLoading, setLibraryLoading] = useState(false);
   const [activeSection, setActiveSection] = useState<NavSection>("home");
+  const [exploreTags, setExploreTags] = useState<string[]>([]);
   const [selectedSeries, setSelectedSeries] = useState<SeriesSelection | null>(null);
   const [readerTarget, setReaderTarget] = useState<OpenReaderChapterRequest | null>(null);
   const [downloadQueue, setDownloadQueue] = useState<DownloadQueueSnapshot | null>(null);
@@ -490,6 +505,7 @@ export function App() {
           setReaderTarget(null);
           setSelectedSeries(null);
           setActiveSection(parsed.section);
+          setExploreTags(parsed.tags ?? []);
           setNavigationTarget(parsed.focusSearch ? "search" : null);
         }
       };
@@ -557,7 +573,7 @@ export function App() {
 
   useEffect(() => {
     if (isTauriRuntime() || !appState) return;
-    const targetHash = buildWebHash({ activeSection, selectedSeries, readerTarget });
+    const targetHash = buildWebHash({ activeSection, exploreTags, selectedSeries, readerTarget });
     const currentHash = window.location.hash || "#";
     if (suppressNextWebPushRef.current) {
       suppressNextWebPushRef.current = false;
@@ -570,7 +586,7 @@ export function App() {
         // Ignore history restrictions
       }
     }
-  }, [appState, activeSection, selectedSeries, readerTarget]);
+  }, [appState, activeSection, exploreTags, selectedSeries, readerTarget]);
 
   useEffect(() => {
     const prev = prevReaderTargetRef.current;
@@ -645,6 +661,21 @@ export function App() {
     }
     setSelectedSeries(series);
     mainRef.current?.scrollTo({ top: 0 });
+  };
+
+  const openExploreByTag = (rawTag: string) => {
+    const normalized = normalizeTagInput(rawTag);
+    if (!normalized) return;
+    setErrorMessage(null);
+    if (activeSection === "home" && !selectedSeries) {
+      pushBackGuard();
+    }
+    setReaderTarget(null);
+    setSelectedSeries(null);
+    setNavigationTarget(null);
+    setExploreTags([normalized]);
+    setActiveSection("explore");
+    mainRef.current?.scrollTo({ top: 0, behavior: "smooth" });
   };
 
   const openReader = (req: OpenReaderChapterRequest) => {
@@ -876,6 +907,7 @@ export function App() {
                 isFavoriteInLibrary={favoriteKeys.has(
                   libraryKey(selectedSeries.mangaId, selectedSeries.provider),
                 )}
+                favoriteKeys={favoriteKeys}
                 activeDownloadChapterIds={activeDownloadChapterIds}
                 downloadCompletedTick={downloadCompletedTick}
                 onBack={() => setSelectedSeries(null)}
@@ -883,6 +915,7 @@ export function App() {
                 onToggleChapterRead={handleToggleChapterRead}
                 onOpenReader={openReader}
                 onEnqueueDownload={handleEnqueueDownload}
+                onSelectTag={openExploreByTag}
                 onNotify={showToast}
                 onOpenExternal={async (url) => {
                   try {
@@ -907,6 +940,7 @@ export function App() {
                     onOpenSeries={openSeries}
                     onSearch={() => {
                       setSelectedSeries(null);
+                      setExploreTags([]);
                       setNavigationTarget("search");
                       navigate("explore");
                     }}
@@ -922,6 +956,8 @@ export function App() {
                     isSaving={isSaving}
                     focusSearch={navigationTarget === "search"}
                     favoriteKeys={favoriteKeys}
+                    selectedTags={exploreTags}
+                    onSelectedTagsChange={setExploreTags}
                     onToggleFavorite={handleToggleFavorite}
                     onOpenSeries={openSeries}
                     onOpenReader={openReader}

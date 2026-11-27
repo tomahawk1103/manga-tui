@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+import { CATEGORY_TAG_OPTIONS } from "../lib/i18n";
 import type { CatalogPage } from "../lib/tauri";
 import type {
   AniListCommunityInfo,
@@ -159,7 +160,10 @@ export async function detectWorkerCapabilities(): Promise<WorkerCapabilities> {
 export function getCachedWebProviders(allProviders: ProviderOption[]): ProviderOption[] {
   if (!capabilitiesCache) {
     void detectWorkerCapabilities();
-    const initialIds = import.meta.env.MODE === "mangaoni" ? new Set(["mangaoni", "mangadex"]) : new Set(["mangaoni"]);
+    const initialIds =
+      import.meta.env.MODE === "mangaoni"
+        ? new Set(["mangaoni", "mangadex", "weebcentral"])
+        : new Set(["mangaoni"]);
     return allProviders.filter((p) => initialIds.has(p.id));
   }
   const supported = new Set(capabilitiesCache.providers);
@@ -192,24 +196,47 @@ interface AniListSearchMeta {
 
 const anilistSearchMetaCache = new Map<string, AniListSearchMeta>();
 
+const KNOWN_CATEGORY_TAG_IDS = new Set(CATEGORY_TAG_OPTIONS.map((tag) => tag.id));
+
 const ANILIST_GENRE_MAP: Record<string, string> = {
   action: "Action",
+  accion: "Action",
+  "acción": "Action",
   adventure: "Adventure",
+  aventura: "Adventure",
+  aventuras: "Adventure",
   comedy: "Comedy",
+  comedia: "Comedy",
   drama: "Drama",
   ecchi: "Ecchi",
   fantasy: "Fantasy",
+  fantasia: "Fantasy",
+  "fantasía": "Fantasy",
   horror: "Horror",
+  terror: "Horror",
+  "mahou shoujo": "Mahou Shoujo",
+  mahou_shoujo: "Mahou Shoujo",
   mecha: "Mecha",
+  music: "Music",
   mystery: "Mystery",
+  misterio: "Mystery",
   psychological: "Psychological",
+  psicologico: "Psychological",
+  "psicológico": "Psychological",
   romance: "Romance",
+  romantica: "Romance",
+  "romántica": "Romance",
   scifi: "Sci-Fi",
   "sci-fi": "Sci-Fi",
+  "ciencia ficcion": "Sci-Fi",
+  "ciencia ficción": "Sci-Fi",
   slice_of_life: "Slice of Life",
   "slice of life": "Slice of Life",
   sports: "Sports",
+  deportes: "Sports",
   supernatural: "Supernatural",
+  sobrenatural: "Supernatural",
+  thriller: "Thriller",
 };
 
 const ANILIST_TAG_MAP: Record<string, string> = {
@@ -222,7 +249,10 @@ const ANILIST_TAG_MAP: Record<string, string> = {
   isekai: "Isekai",
   martial_arts: "Martial Arts",
   "martial arts": "Martial Arts",
+  "artes marciales": "Martial Arts",
   historical: "Historical",
+  historico: "Historical",
+  "histórico": "Historical",
   harem: "Female Harem",
 };
 
@@ -374,18 +404,26 @@ async function aniListTagSearch(
   const trimmed = query.trim();
   const genres: string[] = [];
   const tagNames: string[] = [];
+  const pushUnique = (target: string[], value: string) => {
+    if (!target.some((existing) => existing.toLowerCase() === value.toLowerCase())) {
+      target.push(value);
+    }
+  };
   for (const raw of tags) {
-    const norm = raw.trim().toLowerCase();
+    const cleaned = raw.trim();
+    const norm = cleaned.toLowerCase();
     if (!norm) continue;
     const mappedGenre = ANILIST_GENRE_MAP[norm];
-    if (mappedGenre && !genres.includes(mappedGenre)) {
-      genres.push(mappedGenre);
+    if (mappedGenre) {
+      pushUnique(genres, mappedGenre);
       continue;
     }
     const mappedTag = ANILIST_TAG_MAP[norm];
-    if (mappedTag && !tagNames.includes(mappedTag)) {
-      tagNames.push(mappedTag);
+    if (mappedTag) {
+      pushUnique(tagNames, mappedTag);
+      continue;
     }
+    pushUnique(tagNames, cleaned);
   }
 
   const variables: Record<string, unknown> = {
@@ -560,6 +598,7 @@ function pickNextUnread(chapters: SeriesChapterItem[]): SeriesChapterItem | null
 function providerBadge(provider: string): string {
   if (provider === "mangadex") return "MangaDex 🌐";
   if (provider === "mangaoni") return "MangaOni 🇪🇸";
+  if (provider === "weebcentral") return "WeebCentral 🇬🇧";
   if (provider === "gdrive") return "Google Drive ☁";
   return provider;
 }
@@ -577,6 +616,11 @@ export async function webSearchCatalog(
 
   const caps = await detectWorkerCapabilities();
   const normProvider = provider.trim().toLowerCase() || "mangaoni";
+  const hasCustomAniListTag = cleanedTags.some((tag) => !KNOWN_CATEGORY_TAG_IDS.has(tag.toLowerCase()));
+
+  if (hasCustomAniListTag) {
+    return aniListTagSearch(trimmed, page, cleanedTags, uiLanguage);
+  }
 
   if (caps.v1Supported && (caps.providers.includes(normProvider) || cleanedTags.length > 0)) {
     try {

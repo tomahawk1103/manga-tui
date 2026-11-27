@@ -1586,7 +1586,7 @@ fn build_mangadex_filters_for_tags(
     has_query: bool,
     tags: &[String],
     tag_uuid_map: &HashMap<String, String>,
-) -> Filters {
+) -> (Filters, bool) {
     let mut filters = Filters::default();
     filters.set_sort_by(if has_query { SortBy::BestMatch } else { SortBy::MostFollows });
 
@@ -1606,6 +1606,7 @@ fn build_mangadex_filters_for_tags(
     let mut demographics: Vec<MagazineDemographic> = Vec::new();
     let mut include_ecchi = false;
     let mut tag_items: Vec<TagData> = Vec::new();
+    let mut all_tags_matched = true;
 
     for raw in tags {
         let lower = raw.trim().to_ascii_lowercase();
@@ -1638,10 +1639,12 @@ fn build_mangadex_filters_for_tags(
             },
             _ => {
                 let canonical = canonical_tag_name(&lower);
-                if let Some(uuid) = tag_uuid_map.get(&canonical)
-                    && !tag_items.iter().any(|item| item.id == *uuid)
-                {
-                    tag_items.push(TagData::new(uuid.clone(), TagSelection::Included, canonical));
+                if let Some(uuid) = tag_uuid_map.get(&canonical) {
+                    if !tag_items.iter().any(|item| item.id == *uuid) {
+                        tag_items.push(TagData::new(uuid.clone(), TagSelection::Included, canonical));
+                    }
+                } else {
+                    all_tags_matched = false;
                 }
             },
         }
@@ -1655,7 +1658,7 @@ fn build_mangadex_filters_for_tags(
         filters.set_content_rating(vec![ContentRating::Safe, ContentRating::Suggestive]);
     }
 
-    filters
+    (filters, all_tags_matched)
 }
 
 async fn fetch_mangadex_tag_map() -> &'static HashMap<String, String> {
@@ -1690,10 +1693,35 @@ pub async fn search_mangas_with_tags_for_provider(
     }
 
     let tag_map = fetch_mangadex_tag_map().await;
-    let filters = build_mangadex_filters_for_tags(provider, search_term.is_some(), &cleaned_tags, tag_map);
+    let (filters, _) = build_mangadex_filters_for_tags(provider, search_term.is_some(), &cleaned_tags, tag_map);
     let res = POOL.mangadex.search_mangas(search_term, filters, pagination).await;
     let mapped = record_result(MangaProviders::Mangadex, res)?;
     Ok((mapped, MangaProviders::Mangadex))
+}
+
+/// Searches using MangaDex tags only when every requested tag maps to a known MangaDex
+/// demographic, content rating, or tag UUID; returns `Ok(None)` if any tag is unmapped.
+pub async fn search_mangas_with_exact_tags_for_provider(
+    provider: MangaProviders,
+    search_term: Option<SearchTerm>,
+    tags: &[String],
+    pagination: Pagination,
+) -> Result<Option<(GetMangasResponse, MangaProviders)>, Box<dyn Error>> {
+    let cleaned_tags: Vec<String> = tags.iter().map(|t| t.trim().to_string()).filter(|t| !t.is_empty()).collect();
+    if cleaned_tags.is_empty() {
+        let res = search_mangas_for_provider(provider, search_term, pagination).await?;
+        return Ok(Some((res, provider)));
+    }
+
+    let tag_map = fetch_mangadex_tag_map().await;
+    let (filters, all_tags_matched) = build_mangadex_filters_for_tags(provider, search_term.is_some(), &cleaned_tags, tag_map);
+    if !all_tags_matched {
+        return Ok(None);
+    }
+
+    let res = POOL.mangadex.search_mangas(search_term, filters, pagination).await;
+    let mapped = record_result(MangaProviders::Mangadex, res)?;
+    Ok(Some((mapped, MangaProviders::Mangadex)))
 }
 
 #[cfg(test)]
@@ -1964,7 +1992,8 @@ mod tests {
             "slice_of_life".to_string(),
             "scifi".to_string(),
         ];
-        let filters = build_mangadex_filters_for_tags(MangaProviders::Mangaoni, false, &tags, &uuid_map);
+        let (filters, all_matched) = build_mangadex_filters_for_tags(MangaProviders::Mangaoni, false, &tags, &uuid_map);
+        assert!(all_matched);
         assert_eq!(filters.sort_by, SortBy::MostFollows);
         assert_eq!(filters.languages, vec![Languages::Spanish, Languages::SpanishLa]);
         assert_eq!(filters.magazine_demographic, vec![MagazineDemographic::Shounen, MagazineDemographic::Seinen,]);
@@ -1973,5 +2002,16 @@ mod tests {
         assert_eq!(filters.tags[0].id, "uuid-action");
         assert_eq!(filters.tags[1].id, "uuid-sol");
         assert_eq!(filters.tags[2].id, "uuid-scifi");
+
+        let mut exact_map = uuid_map;
+        exact_map.insert("military".to_string(), "uuid-military".to_string());
+        let (_, matched_military) =
+            build_mangadex_filters_for_tags(MangaProviders::Mangadex, false, &["shonen".into(), "military".into()], &exact_map);
+        assert!(matched_military);
+
+        for unmapped in ["Kaiju", "Philosophy", "Coming of Age"] {
+            let (_, matched) = build_mangadex_filters_for_tags(MangaProviders::Mangadex, false, &[unmapped.into()], &exact_map);
+            assert!(!matched, "expected '{unmapped}' to report unmapped on MangaDex");
+        }
     }
 }

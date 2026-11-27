@@ -17,22 +17,24 @@ import {
   Sparkles,
   Square,
   Star,
+  Tag,
   WifiOff,
 } from "lucide-react";
 import { defaultHito5Bridge } from "../features/hito5";
 import { getTranslations } from "../lib/i18n";
 import { getAniListCommunity, getSeriesDetail, isTauriRuntime, resolveCoverImageUrl } from "../lib/tauri";
-import type {
-  AniListCommunityInfo,
-  EnqueueChaptersRequest,
-  OpenReaderChapterRequest,
-  ReaderChapterNeighbor,
-  SeriesChapterItem,
-  SeriesDetailResponse,
-  SeriesSelection,
-  ToggleChapterReadPayload,
-  ToggleFavoritePayload,
-  UiLanguage,
+import {
+  type AniListCommunityInfo,
+  type EnqueueChaptersRequest,
+  type OpenReaderChapterRequest,
+  type ReaderChapterNeighbor,
+  type SeriesChapterItem,
+  type SeriesDetailResponse,
+  type SeriesSelection,
+  type ToggleChapterReadPayload,
+  type ToggleFavoritePayload,
+  type UiLanguage,
+  libraryKey,
 } from "../types/mangora";
 
 const LANGUAGE_LABELS: Record<string, string> = {
@@ -52,6 +54,7 @@ export interface SeriesDetailViewProps {
   language: UiLanguage;
   isSaving: boolean;
   isFavoriteInLibrary?: boolean;
+  favoriteKeys?: Set<string>;
   activeDownloadChapterIds?: Set<string>;
   downloadCompletedTick?: number;
   onBack: () => void;
@@ -59,6 +62,7 @@ export interface SeriesDetailViewProps {
   onToggleChapterRead: (payload: ToggleChapterReadPayload) => Promise<boolean | void>;
   onOpenReader: (request: OpenReaderChapterRequest) => void;
   onEnqueueDownload: (payload: EnqueueChaptersRequest) => Promise<void>;
+  onSelectTag?: (tag: string) => void;
   onNotify: (message: string) => void;
   onOpenExternal: (url: string) => Promise<void>;
 }
@@ -123,6 +127,7 @@ export function SeriesDetailView({
   language,
   isSaving,
   isFavoriteInLibrary,
+  favoriteKeys,
   activeDownloadChapterIds,
   downloadCompletedTick = 0,
   onBack,
@@ -130,6 +135,7 @@ export function SeriesDetailView({
   onToggleChapterRead,
   onOpenReader,
   onEnqueueDownload,
+  onSelectTag,
   onNotify,
   onOpenExternal,
 }: SeriesDetailViewProps) {
@@ -271,7 +277,12 @@ export function SeriesDetailView({
   const displayTitle = detail?.title || selection.title;
   const displayCover = detail?.coverUrl ?? selection.coverUrl ?? null;
   const displayDescription = detail?.description ?? selection.description ?? null;
-  const isFavorite = isFavoriteInLibrary ?? detail?.isFavorite ?? false;
+  const resolvedSeriesId = detail?.id ?? selection.mangaId;
+  const resolvedSeriesProvider = detail?.provider ?? selection.provider;
+  const isUnresolvedAniList = resolvedSeriesProvider.toLowerCase() === "anilist";
+  const isFavorite = favoriteKeys
+    ? favoriteKeys.has(libraryKey(resolvedSeriesId, resolvedSeriesProvider))
+    : (isFavoriteInLibrary ?? detail?.isFavorite ?? false);
 
   useEffect(() => {
     setCoverFailed(false);
@@ -416,7 +427,7 @@ export function SeriesDetailView({
           </span>
           <button
             type="button"
-            disabled={isSaving}
+            disabled={isSaving || isUnresolvedAniList}
             aria-pressed={isFavorite}
             onClick={() => void handleToggleFavoriteClick()}
             className={`${
@@ -496,14 +507,26 @@ export function SeriesDetailView({
 
               {detail && detail.genres.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
-                  {detail.genres.slice(0, 8).map((genre) => (
-                    <span
-                      key={genre}
-                      className="border border-[var(--ink)] bg-[var(--surface)] px-2 py-0.5 font-mono-editorial text-[11px] font-bold text-[var(--ink)]"
-                    >
-                      {genre}
-                    </span>
-                  ))}
+                  {detail.genres.slice(0, 8).map((genre) =>
+                    onSelectTag ? (
+                      <button
+                        key={genre}
+                        type="button"
+                        onClick={() => onSelectTag(genre)}
+                        title={s.exploreTagTooltip(genre)}
+                        className="cursor-pointer touch-manipulation border border-[var(--ink)] bg-[var(--surface)] px-2 py-0.5 font-mono-editorial text-[11px] font-bold text-[var(--ink)] transition-colors hover:bg-[var(--ink)] hover:text-[var(--paper)]"
+                      >
+                        {genre}
+                      </button>
+                    ) : (
+                      <span
+                        key={genre}
+                        className="border border-[var(--ink)] bg-[var(--surface)] px-2 py-0.5 font-mono-editorial text-[11px] font-bold text-[var(--ink)]"
+                      >
+                        {genre}
+                      </span>
+                    ),
+                  )}
                 </div>
               ) : null}
 
@@ -1004,16 +1027,39 @@ export function SeriesDetailView({
 
               {community.tags.length > 0 ? (
                 <div className="space-y-2">
-                  <p className="font-mono-editorial text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
-                    {s.communityTagsLabel}
-                  </p>
-                  <div className="flex flex-wrap gap-1.5">
-                    {community.tags.slice(0, 12).map((tag) => (
-                      <span key={tag.name} className="editorial-chip">
-                        {tag.name}
-                        {tag.rank !== null ? ` · ${tag.rank}%` : ""}
+                  <div className="flex flex-wrap items-baseline justify-between gap-2">
+                    <p className="font-mono-editorial text-xs font-bold uppercase tracking-[0.12em] text-[var(--muted)]">
+                      {s.communityTagsLabel}
+                    </p>
+                    {onSelectTag ? (
+                      <span className="font-mono-editorial text-[11px] text-[var(--muted)]">
+                        {s.communityTagsHint}
                       </span>
-                    ))}
+                    ) : null}
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {community.tags.slice(0, 12).map((tag) =>
+                      onSelectTag ? (
+                        <button
+                          key={tag.name}
+                          type="button"
+                          onClick={() => onSelectTag(tag.name)}
+                          title={s.exploreTagTooltip(tag.name)}
+                          className="editorial-chip text-xs hover:bg-[var(--ink)] hover:text-[var(--paper)] active:translate-x-[1px] active:translate-y-[1px]"
+                        >
+                          <Tag className="h-3 w-3 shrink-0 opacity-75" aria-hidden="true" />
+                          <span>
+                            {tag.name}
+                            {tag.rank !== null ? ` · ${tag.rank}%` : ""}
+                          </span>
+                        </button>
+                      ) : (
+                        <span key={tag.name} className="editorial-chip text-xs">
+                          {tag.name}
+                          {tag.rank !== null ? ` · ${tag.rank}%` : ""}
+                        </span>
+                      ),
+                    )}
                   </div>
                 </div>
               ) : null}

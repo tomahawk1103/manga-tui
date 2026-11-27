@@ -115,6 +115,20 @@ export const CATEGORY_TAG_OPTIONS: CategoryTagOption[] = [
   { id: "mecha", labelEs: "Mecha", labelEn: "Mecha", aliases: ["robots"], primary: false },
 ];
 
+export function normalizeTagInput(rawTag: string): string {
+  const trimmed = rawTag.trim();
+  if (!trimmed) return "";
+  const lower = trimmed.toLowerCase();
+  const matched = CATEGORY_TAG_OPTIONS.find(
+    (option) =>
+      option.id === lower ||
+      option.labelEs.toLowerCase() === lower ||
+      option.labelEn.toLowerCase() === lower ||
+      option.aliases.some((alias) => alias.toLowerCase() === lower),
+  );
+  return matched ? matched.id : trimmed;
+}
+
 export interface TourCardCopy {
   glyph: string;
   section: NavSection;
@@ -262,7 +276,7 @@ export interface Translations {
     showLessTags: string;
     activeTagsSummary: (count: number) => string;
     tagsSourceNote: string;
-    tagsAniListSourceNote: string;
+    tagsAniListSourceNote: (providerName: string) => string;
     webSourcesTitle: string;
     webSourcesDesc: string;
     webDownloadAppBtn: string;
@@ -319,6 +333,8 @@ export interface Translations {
     communityPopularityLabel: string;
     communityFavoritesLabel: string;
     communityTagsLabel: string;
+    communityTagsHint: string;
+    exploreTagTooltip: (tag: string) => string;
     communityReviewsTitle: string;
     communityNoReviews: string;
     communityOpenAniList: string;
@@ -757,8 +773,8 @@ const ES: Translations = {
     showLessTags: "Ver menos",
     activeTagsSummary: (count) => (count === 1 ? "1 categoría activa" : `${count} categorías activas`),
     tagsSourceNote: "Búsqueda por categorías consultada vía MangaDex en tu idioma.",
-    tagsAniListSourceNote:
-      "Búsqueda por categorías consultada vía AniList (al abrir una serie se busca automáticamente en MangaOni).",
+    tagsAniListSourceNote: (providerName) =>
+      `Resultados por etiqueta consultados vía AniList (al abrir una serie se busca automáticamente en ${providerName}).`,
     webSourcesTitle: "Más fuentes y descargas offline en la app nativa",
     webSourcesDesc:
       "Mangora Web usa el proxy público con MangaOni y MangaDex. Si quieres los 7 proveedores directos sin límites y descargas CBZ/EPUB/PDF/RAW, usa Mangora para Windows o Android.",
@@ -824,6 +840,8 @@ const ES: Translations = {
     communityPopularityLabel: "Lectores AniList",
     communityFavoritesLabel: "Favoritos AniList",
     communityTagsLabel: "Etiquetas destacadas",
+    communityTagsHint: "Pulsa cualquier etiqueta para explorar otros mangas similares",
+    exploreTagTooltip: (tag) => `Explorar otros mangas con la etiqueta «${tag}»`,
     communityReviewsTitle: "Reseñas públicas de lectores",
     communityNoReviews: "Todavía no hay reseñas públicas registradas en AniList para esta serie.",
     communityOpenAniList: "Ver en AniList ↗",
@@ -1309,8 +1327,8 @@ const EN: Translations = {
     showLessTags: "Show less",
     activeTagsSummary: (count) => (count === 1 ? "1 active category" : `${count} active categories`),
     tagsSourceNote: "Category search powered by MangaDex in your selected language.",
-    tagsAniListSourceNote:
-      "Category search powered by AniList (opening a series automatically resolves chapters on MangaOni).",
+    tagsAniListSourceNote: (providerName) =>
+      `Tag results powered by AniList (opening a series automatically resolves chapters on ${providerName}).`,
     webSourcesTitle: "More sources & offline downloads in the native app",
     webSourcesDesc:
       "Mangora Web uses the public proxy for MangaOni and MangaDex. For all 7 direct Rust sources without proxy limits and CBZ/EPUB/PDF/RAW offline downloads, get Mangora for Windows or Android.",
@@ -1376,6 +1394,8 @@ const EN: Translations = {
     communityPopularityLabel: "AniList readers",
     communityFavoritesLabel: "AniList favorites",
     communityTagsLabel: "Top tags",
+    communityTagsHint: "Click any tag to browse similar manga",
+    exploreTagTooltip: (tag) => `Browse other manga tagged “${tag}”`,
     communityReviewsTitle: "Public reader reviews",
     communityNoReviews: "No public AniList reviews yet for this series.",
     communityOpenAniList: "Open on AniList ↗",

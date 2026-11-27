@@ -30,10 +30,14 @@ interface CatalogSearchProps {
   focusSearch: boolean;
   isMutating?: boolean;
   favoriteKeys?: Set<string>;
+  selectedTags?: string[];
+  onSelectedTagsChange?: (tags: string[]) => void;
   onToggleFavorite?: (payload: ToggleFavoritePayload) => Promise<void>;
   onOpenSeries: (series: SeriesSelection) => void;
   onChooseSource?: () => void;
 }
+
+const KNOWN_CATEGORY_TAG_IDS = new Set(CATEGORY_TAG_OPTIONS.map((tag) => tag.id));
 
 export function CatalogSearch({
   provider,
@@ -41,6 +45,8 @@ export function CatalogSearch({
   focusSearch,
   isMutating = false,
   favoriteKeys,
+  selectedTags: controlledTags,
+  onSelectedTagsChange,
   onToggleFavorite,
   onOpenSeries,
   onChooseSource,
@@ -50,15 +56,45 @@ export function CatalogSearch({
   const { config: appearance, updateAppearance } = useMangoraAppearance();
   const searchInput = useRef<HTMLInputElement>(null);
   const [input, setInput] = useState("");
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
+  const [internalSelectedTags, setInternalSelectedTags] = useState<string[]>(() => controlledTags ?? []);
+  const selectedTags = controlledTags ?? internalSelectedTags;
+  const updateSelectedTags = (next: string[]) => {
+    if (onSelectedTagsChange) {
+      onSelectedTagsChange(next);
+    } else {
+      setInternalSelectedTags(next);
+    }
+  };
   const [tagFilter, setTagFilter] = useState("");
   const [showAllTags, setShowAllTags] = useState(false);
-  const [request, setRequest] = useState<SearchRequest | null>(null);
+  const [request, setRequest] = useState<SearchRequest | null>(() =>
+    controlledTags && controlledTags.length > 0
+      ? { provider: provider.id, query: "", tags: controlledTags, page: 1 }
+      : null,
+  );
   const [result, setResult] = useState<CatalogPage | null>(null);
   const [failed, setFailed] = useState(false);
   const [genre, setGenre] = useState("");
   const [lang, setLang] = useState("");
   const page = request?.provider === provider.id ? request.page : 1;
+  const lastSyncedTagsSig = useRef(selectedTags.join("\u0000"));
+  const inputRef = useRef(input);
+  inputRef.current = input;
+
+  useEffect(() => {
+    if (controlledTags === undefined) return;
+    const sig = controlledTags.join("\u0000");
+    if (sig === lastSyncedTagsSig.current) return;
+    lastSyncedTagsSig.current = sig;
+    const trimmed = inputRef.current.trim();
+    if (trimmed || controlledTags.length > 0) {
+      setRequest({ provider: provider.id, query: trimmed, tags: controlledTags, page: 1 });
+    } else {
+      setRequest(null);
+      setResult(null);
+      setFailed(false);
+    }
+  }, [controlledTags, provider.id]);
 
   useEffect(() => {
     if (focusSearch) searchInput.current?.focus();
@@ -98,11 +134,17 @@ export function CatalogSearch({
     [],
   );
 
+  const customSelectedTags = useMemo(
+    () => selectedTags.filter((tagId) => !KNOWN_CATEGORY_TAG_IDS.has(tagId)),
+    [selectedTags],
+  );
+
   const toggleTag = (tagId: string) => {
     const nextTags = selectedTags.includes(tagId)
       ? selectedTags.filter((id) => id !== tagId)
       : [...selectedTags, tagId];
-    setSelectedTags(nextTags);
+    lastSyncedTagsSig.current = nextTags.join("\u0000");
+    updateSelectedTags(nextTags);
     const trimmed = input.trim();
     if (trimmed || nextTags.length > 0) {
       setRequest({ provider: provider.id, query: trimmed, tags: nextTags, page: 1 });
@@ -114,7 +156,8 @@ export function CatalogSearch({
   };
 
   const clearTags = () => {
-    setSelectedTags([]);
+    lastSyncedTagsSig.current = "";
+    updateSelectedTags([]);
     const trimmed = input.trim();
     if (trimmed) {
       setRequest({ provider: provider.id, query: trimmed, tags: [], page: 1 });
@@ -190,6 +233,19 @@ export function CatalogSearch({
         />
 
         <div className="flex flex-wrap gap-2">
+          {customSelectedTags.map((tag) => (
+            <button
+              key={`custom:${tag}`}
+              type="button"
+              aria-pressed={true}
+              data-selected="true"
+              onClick={() => toggleTag(tag)}
+              className="editorial-chip text-xs"
+            >
+              <span>{tag}</span>
+              <X className="h-3 w-3" aria-hidden="true" />
+            </button>
+          ))}
           {filteredCategoryTags.map((tag) => {
             const active = selectedTags.includes(tag.id);
             return (
@@ -228,7 +284,7 @@ export function CatalogSearch({
         )}
       </div>
       {usingAniListTagSource ? (
-        <p className="font-mono-editorial text-xs text-[var(--muted)]">{t.tagsAniListSourceNote}</p>
+        <p className="font-mono-editorial text-xs text-[var(--muted)]">{t.tagsAniListSourceNote(provider.name)}</p>
       ) : usingTagFallbackSource ? (
         <p className="font-mono-editorial text-xs text-[var(--muted)]">{t.tagsSourceNote}</p>
       ) : null}
@@ -306,7 +362,7 @@ export function CatalogSearch({
                     <ArrowRight size={14} aria-hidden="true" />
                   </button>
 
-                  {onToggleFavorite && (
+                  {onToggleFavorite && resolvedProvider !== "anilist" && (
                     <button
                       type="button"
                       disabled={isMutating}
