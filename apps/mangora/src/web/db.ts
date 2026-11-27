@@ -550,7 +550,7 @@ function defaultWebPrefs(availableProviders: ProviderOption[]): StoredAppPrefs {
     themeMode: "paper",
     activeProvider: recommended,
     favoriteGenres: [],
-    onboardingCompleted: true,
+    onboardingCompleted: false,
     downloadFormat: "cbz",
     supportBannerDismissed: false,
     readerPrefs: {
@@ -590,7 +590,7 @@ export function ensureMigrated(): Promise<void> {
             themeMode: parsed.themeMode === "ink" ? "ink" : "paper",
             activeProvider: parsed.activeProvider ?? "mangaoni",
             favoriteGenres: Array.isArray(parsed.favoriteGenres) ? parsed.favoriteGenres : [],
-            onboardingCompleted: true,
+            onboardingCompleted: parsed.onboardingCompleted ?? true,
             downloadFormat: parsed.downloadFormat ?? "cbz",
             supportBannerDismissed: Boolean(parsed.supportBannerDismissed),
             readerPrefs: parsed.readerPrefs ?? defaultWebPrefs([]).readerPrefs,
@@ -796,6 +796,7 @@ function buildInitialAppStateFromData(params: {
   const sortedByRead = [...mangas]
     .filter((m) => m.lastRead)
     .sort((a, b) => (b.lastRead ?? "").localeCompare(a.lastRead ?? ""));
+  const hasExistingData = libraryMangas > 0 || readChapters.length > 0 || favoritesCount > 0;
 
   return {
     appVersion: "0.1.1",
@@ -814,7 +815,7 @@ function buildInitialAppStateFromData(params: {
     recommendedProvider,
     availableProviders,
     favoriteGenres: Array.isArray(stored.favoriteGenres) ? stored.favoriteGenres : [],
-    onboardingCompleted: stored.onboardingCompleted ?? true,
+    onboardingCompleted: stored.onboardingCompleted ?? hasExistingData,
     downloadFormat: stored.downloadFormat ?? "cbz",
     supportBannerDismissed: Boolean(stored.supportBannerDismissed),
     readerPrefs: {
@@ -822,7 +823,7 @@ function buildInitialAppStateFromData(params: {
       ...(stored.readerPrefs ?? {}),
     },
     library: {
-      hasExistingData: libraryMangas > 0 || readChapters.length > 0 || favoritesCount > 0,
+      hasExistingData,
       libraryMangas,
       chaptersRead: readChapters.length,
       totalPagesRead: Math.max(sessionPages, bookmarkedPages),

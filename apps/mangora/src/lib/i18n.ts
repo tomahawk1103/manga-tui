@@ -155,9 +155,9 @@ export interface Translations {
     step1Title: string;
     step1Subtitle: string;
     esCardTitle: string;
-    esCardDesc: string;
+    esCardDesc: (providerName: string) => string;
     enCardTitle: string;
-    enCardDesc: string;
+    enCardDesc: (providerName: string) => string;
     step2Title: string;
     step2Subtitle: string;
     genresLabel: string;
@@ -169,7 +169,9 @@ export interface Translations {
     recommendedTag: string;
     step3DetectedTitle: string;
     step3DetectedSubtitle: string;
+    webStep3DetectedSubtitle: string;
     step3DetectedBadge: string;
+    webStep3DetectedBadge: string;
     step3ShowTourAlso: string;
     step3HideTourAlso: string;
     step3TourTitle: string;
@@ -185,6 +187,7 @@ export interface Translations {
     statsOffline: string;
     lastReadPrefix: string;
     tourCards: TourCardCopy[];
+    webTourCards: TourCardCopy[];
   };
   home: {
     eyebrow: string;
@@ -619,9 +622,11 @@ const ES: Translations = {
     step1Subtitle:
       "Mangora ajustará todos los menús y te recomendará el mejor servidor de manga para empezar sin configuraciones complicadas.",
     esCardTitle: "Español",
-    esCardDesc: "Interfaz en español y prioridad a servidores hispanos (InManga recomendado).",
+    esCardDesc: (providerName) =>
+      `Interfaz en español y prioridad a servidores hispanos (${providerName} recomendado).`,
     enCardTitle: "English",
-    enCardDesc: "English interface with high-availability English catalog (WeebCentral recommended).",
+    enCardDesc: (providerName) =>
+      `English interface with high-availability English catalog (${providerName} recommended).`,
     step2Title: "Tus gustos y servidor",
     step2Subtitle:
       "Marca los géneros que más sueles leer para personalizar tus recomendaciones y confirma el servidor inicial.",
@@ -636,7 +641,10 @@ const ES: Translations = {
     step3DetectedTitle: "Biblioteca detectada y lista",
     step3DetectedSubtitle:
       "Hemos encontrado datos previos de manga-tui en este equipo. Tu historial, favoritos y descargas ya están sincronizados con Mangora.",
+    webStep3DetectedSubtitle:
+      "Hemos encontrado datos previos guardados en este navegador. Tu historial, favoritos y preferencias ya están listos en Mangora Web.",
     step3DetectedBadge: "Compatibilidad total SQLite + mangaDownloads",
+    webStep3DetectedBadge: "Biblioteca local del navegador (IndexedDB)",
     step3ShowTourAlso: "Ver también el mini-tour de secciones",
     step3HideTourAlso: "Ocultar mini-tour",
     step3TourTitle: "Tu escritorio de manga en 4 zonas",
@@ -680,6 +688,36 @@ const ES: Translations = {
         title: "Ajustes",
         description:
           "Cambia entre Modo Papel y Modo Tinta nocturno, idioma, servidor por defecto o repite este tour cuando quieras.",
+      },
+    ],
+    webTourCards: [
+      {
+        glyph: "[?]",
+        section: "explore",
+        title: "Explorar",
+        description:
+          "Busca series por título o géneros y cambia entre MangaOni (ES), WeebCentral (EN) y MangaDex en un clic.",
+      },
+      {
+        glyph: "[■]",
+        section: "home",
+        title: "Biblioteca",
+        description:
+          "Guarda tus favoritos e historial localmente en el navegador (IndexedDB) y sincroniza con Google Drive o library_sync.json.",
+      },
+      {
+        glyph: "[↓]",
+        section: "downloads",
+        title: "Descargas y Nube",
+        description:
+          "Lee tus capítulos CBZ guardados en Google Drive directamente en la web o descarga la app nativa en Windows y Android.",
+      },
+      {
+        glyph: "[⚙]",
+        section: "settings",
+        title: "Ajustes",
+        description:
+          "Alterna Modo Papel y Modo Tinta, cambia idioma o servidor por defecto, gestiona tu respaldo o repite este tour.",
       },
     ],
   },
@@ -1184,9 +1222,11 @@ const EN: Translations = {
     step1Subtitle:
       "Mangora updates all menus immediately and picks the best manga source for your language with zero terminal setup.",
     esCardTitle: "Español",
-    esCardDesc: "Spanish interface prioritizing Spanish manga sources (InManga recommended).",
+    esCardDesc: (providerName) =>
+      `Spanish interface prioritizing Spanish manga sources (${providerName} recommended).`,
     enCardTitle: "English",
-    enCardDesc: "English interface with high-availability English catalog (WeebCentral recommended).",
+    enCardDesc: (providerName) =>
+      `English interface with high-availability English catalog (${providerName} recommended).`,
     step2Title: "Your tastes & source",
     step2Subtitle:
       "Pick the genres you enjoy most to personalize recommendations and confirm your starting source.",
@@ -1201,7 +1241,10 @@ const EN: Translations = {
     step3DetectedTitle: "Library detected and ready",
     step3DetectedSubtitle:
       "We found existing manga-tui data on this machine. Your reading history, favorites, and downloads are already connected.",
+    webStep3DetectedSubtitle:
+      "We found existing data stored in this browser. Your reading history, favorites, and preferences are ready in Mangora Web.",
     step3DetectedBadge: "Full SQLite + mangaDownloads compatibility",
+    webStep3DetectedBadge: "Local browser library (IndexedDB)",
     step3ShowTourAlso: "Also show the quick section tour",
     step3HideTourAlso: "Hide quick tour",
     step3TourTitle: "Your manga desk in 4 clear areas",
@@ -1245,6 +1288,36 @@ const EN: Translations = {
         title: "Settings",
         description:
           "Toggle Paper and Ink modes, switch language or default source, or replay this tour anytime.",
+      },
+    ],
+    webTourCards: [
+      {
+        glyph: "[?]",
+        section: "explore",
+        title: "Explore",
+        description:
+          "Search titles by name or genres and switch between MangaOni (ES), WeebCentral (EN), and MangaDex in one click.",
+      },
+      {
+        glyph: "[■]",
+        section: "home",
+        title: "Library",
+        description:
+          "Keep favorites and reading history locally in your browser (IndexedDB) and sync via Google Drive or library_sync.json.",
+      },
+      {
+        glyph: "[↓]",
+        section: "downloads",
+        title: "Downloads & Cloud",
+        description:
+          "Read CBZ chapters backed up to Google Drive directly on the web or get the native app for Windows and Android.",
+      },
+      {
+        glyph: "[⚙]",
+        section: "settings",
+        title: "Settings",
+        description:
+          "Switch Paper and Ink themes, change language or default source, manage backups, or replay this tour anytime.",
       },
     ],
   },

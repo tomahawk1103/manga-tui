@@ -125,8 +125,8 @@ const FALLBACK_PROVIDERS: ProviderOption[] = [
     name: "MangaOni",
     badge: "MangaOni 🇪🇸",
     languageGroup: "es",
-    descriptionEs: "Alternativa en español con buen catálogo de series populares.",
-    descriptionEn: "Spanish alternative with a solid selection of popular series.",
+    descriptionEs: "Recomendado en español. Catálogo amplio y carga rápida.",
+    descriptionEn: "Recommended for Spanish readers. Wide catalog and fast loading.",
   },
   {
     id: "leercapitulo",

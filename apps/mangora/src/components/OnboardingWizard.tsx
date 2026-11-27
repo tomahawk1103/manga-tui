@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
 import { ArrowLeft, ArrowRight, Check, Moon, Sparkles, Sun, X } from "lucide-react";
-import type { InitialAppState, NavSection, ThemeMode, UiLanguage } from "../types/mangora";
+import type { InitialAppState, NavSection, ProviderOption, ThemeMode, UiLanguage } from "../types/mangora";
 import { GENRE_OPTIONS, getTranslations } from "../lib/i18n";
+import { isTauriRuntime } from "../lib/tauri";
 
 interface OnboardingWizardProps {
   appState: InitialAppState;
@@ -18,8 +19,15 @@ interface OnboardingWizardProps {
   onJumpToSection?: (section: NavSection) => void;
 }
 
-function recommendedForLang(lang: UiLanguage): string {
-  return lang === "es" ? "inmanga" : "weebcentral";
+function recommendedForLang(lang: UiLanguage, availableProviders: ProviderOption[]): string {
+  if (lang === "es") {
+    if (availableProviders.some((p) => p.id === "inmanga")) return "inmanga";
+    if (availableProviders.some((p) => p.id === "mangaoni")) return "mangaoni";
+    return availableProviders[0]?.id ?? "mangaoni";
+  }
+  if (availableProviders.some((p) => p.id === "weebcentral")) return "weebcentral";
+  if (availableProviders.some((p) => p.id === "mangadex")) return "mangadex";
+  return availableProviders[0]?.id ?? "weebcentral";
 }
 
 export function OnboardingWizard({
@@ -35,18 +43,34 @@ export function OnboardingWizard({
   const [selectedTheme, setSelectedTheme] = useState<ThemeMode>(appState.themeMode);
   const [selectedGenres, setSelectedGenres] = useState<string[]>(appState.favoriteGenres);
   const [selectedProvider, setSelectedProvider] = useState<string>(
-    isReplay ? appState.activeProvider : recommendedForLang(appState.uiLanguage),
+    isReplay
+      ? appState.activeProvider
+      : recommendedForLang(appState.uiLanguage, appState.availableProviders),
   );
   const [providerPickerOpen, setProviderPickerOpen] = useState(false);
   const [showTourAlongsideDetection, setShowTourAlongsideDetection] = useState(false);
 
+  const isWeb = !isTauriRuntime();
   const t = getTranslations(selectedLang);
-  const recommendedId = recommendedForLang(selectedLang);
+  const recommendedId = recommendedForLang(selectedLang, appState.availableProviders);
+  const esRecommendedId = recommendedForLang("es", appState.availableProviders);
+  const enRecommendedId = recommendedForLang("en", appState.availableProviders);
+  const esRecommendedName =
+    appState.availableProviders.find((p) => p.id === esRecommendedId)?.name ?? "MangaOni";
+  const enRecommendedName =
+    appState.availableProviders.find((p) => p.id === enRecommendedId)?.name ?? "WeebCentral";
   const activeProviderObj = appState.availableProviders.find((p) => p.id === selectedProvider);
+  const tourCards = isWeb ? t.onboarding.webTourCards : t.onboarding.tourCards;
+  const step3DetectedBadge = isWeb
+    ? t.onboarding.webStep3DetectedBadge
+    : t.onboarding.step3DetectedBadge;
+  const step3DetectedSubtitle = isWeb
+    ? t.onboarding.webStep3DetectedSubtitle
+    : t.onboarding.step3DetectedSubtitle;
 
   const handleSelectLanguage = (lang: UiLanguage) => {
     setSelectedLang(lang);
-    setSelectedProvider(recommendedForLang(lang));
+    setSelectedProvider(recommendedForLang(lang, appState.availableProviders));
   };
 
   const toggleGenre = (genreId: string) => {
@@ -200,7 +224,7 @@ export function OnboardingWizard({
                           selectedLang === "es" ? "text-[var(--paper)]" : "text-[var(--muted)]"
                         }`}
                       >
-                        {t.onboarding.esCardDesc}
+                        {t.onboarding.esCardDesc(esRecommendedName)}
                       </p>
                     </button>
 
@@ -230,7 +254,7 @@ export function OnboardingWizard({
                           selectedLang === "en" ? "text-[var(--paper)]" : "text-[var(--muted)]"
                         }`}
                       >
-                        {t.onboarding.enCardDesc}
+                        {t.onboarding.enCardDesc(enRecommendedName)}
                       </p>
                     </button>
                   </div>
@@ -350,13 +374,13 @@ export function OnboardingWizard({
                     <div>
                       <div className="mb-3 inline-flex items-center gap-2 border border-[var(--ink)] bg-[var(--ink)] px-3 py-1 font-mono-editorial text-xs font-bold text-[var(--paper)]">
                         <Sparkles className="h-3.5 w-3.5 text-[#ff8a76]" aria-hidden="true" />
-                        <span>{t.onboarding.step3DetectedBadge}</span>
+                        <span>{step3DetectedBadge}</span>
                       </div>
                       <h1 className="font-display mb-3 text-3xl md:text-4xl">
                         {t.onboarding.step3DetectedTitle}
                       </h1>
                       <p className="mb-6 max-w-2xl text-base text-[var(--muted)]">
-                        {t.onboarding.step3DetectedSubtitle}
+                        {step3DetectedSubtitle}
                       </p>
 
                       <div className="mb-5 grid grid-cols-2 gap-3 sm:grid-cols-4">
@@ -407,7 +431,7 @@ export function OnboardingWizard({
 
                       {showTourAlongsideDetection && (
                         <div className="grid gap-3 border-t-2 border-[var(--ink)] pt-4 sm:grid-cols-2">
-                          {t.onboarding.tourCards.map((card) => (
+                          {tourCards.map((card) => (
                             <div key={card.section} className="editorial-box-thin p-4">
                               <div className="font-mono-editorial mb-1 text-base font-bold text-[var(--red-text)]">
                                 {card.glyph}
@@ -429,7 +453,7 @@ export function OnboardingWizard({
                       </p>
 
                       <div className="grid gap-4 sm:grid-cols-2">
-                        {t.onboarding.tourCards.map((card) => (
+                        {tourCards.map((card) => (
                           <article key={card.section} className="editorial-card-muted p-4">
                             <span className="font-mono-editorial mb-2 block text-xl font-bold text-[var(--red-text)]">
                               {card.glyph}

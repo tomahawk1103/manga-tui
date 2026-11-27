@@ -819,15 +819,18 @@ export function App() {
         isSaving={isSaving}
         errorMessage={errorMessage}
         onComplete={async ({ uiLanguage, favoriteGenres, provider, themeMode }) => {
-          await runMutation(async () => {
-            const next = await saveOnboardingPreferences({
-              uiLanguage, favoriteGenres, provider, themeMode, onboardingCompleted: true,
-            });
-            setSelectedSeries(null);
-            setReplayOnboarding(false);
-            setActiveSection("home");
-            return next;
-          });
+          await Promise.all([
+            runMutation(async () => {
+              const next = await saveOnboardingPreferences({
+                uiLanguage, favoriteGenres, provider, themeMode, onboardingCompleted: true,
+              });
+              setSelectedSeries(null);
+              setReplayOnboarding(false);
+              setActiveSection("home");
+              return next;
+            }),
+            updateAppearance({ palette: themeMode === "ink" ? "night_ink" : "classic_paper" }),
+          ]);
         }}
         onCancelReplay={() => setReplayOnboarding(false)}
       />
