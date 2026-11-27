@@ -788,7 +788,7 @@ const ES: Translations = {
       `Resultados por etiqueta consultados vía AniList (al abrir una serie se busca automáticamente en ${providerName}).`,
     webSourcesTitle: "Más fuentes y descargas offline en la app nativa",
     webSourcesDesc:
-      "Mangora Web usa el proxy público con MangaOni y MangaDex. Si quieres los 7 proveedores directos sin límites y descargas CBZ/EPUB/PDF/RAW, usa Mangora para Windows o Android.",
+      "Mangora Web usa el proxy público con MangaOni, MangaDex y WeebCentral. Si quieres los 7 proveedores directos sin límites y descargas CBZ/EPUB/PDF/RAW, usa Mangora para Windows o Android.",
     webDownloadAppBtn: "Descargar Mangora (Windows / Android) ↗",
   },
   series: {
@@ -1353,7 +1353,7 @@ const EN: Translations = {
       `Tag results powered by AniList (opening a series automatically resolves chapters on ${providerName}).`,
     webSourcesTitle: "More sources & offline downloads in the native app",
     webSourcesDesc:
-      "Mangora Web uses the public proxy for MangaOni and MangaDex. For all 7 direct Rust sources without proxy limits and CBZ/EPUB/PDF/RAW offline downloads, get Mangora for Windows or Android.",
+      "Mangora Web uses the public proxy for MangaOni, MangaDex, and WeebCentral. For all 7 direct Rust sources without proxy limits and CBZ/EPUB/PDF/RAW offline downloads, get Mangora for Windows or Android.",
     webDownloadAppBtn: "Get Mangora App (Windows / Android) ↗",
   },
   series: {

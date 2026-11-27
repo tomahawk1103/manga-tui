@@ -160,7 +160,7 @@ interface MemoryStore {
   nextSessionId: number;
 }
 
-export const WEB_BUILD_STAMP = "2026.11.27-r9";
+export const WEB_BUILD_STAMP = "2026.11.27-r10";
 
 const memoryStore: MemoryStore = {
   kv: new Map(),
@@ -541,8 +541,10 @@ function detectIsMobile(): boolean {
 
 function defaultWebPrefs(availableProviders: ProviderOption[]): StoredAppPrefs {
   const lang = detectDefaultLanguage();
+  const hasWeebcentral = availableProviders.some((p) => p.id === "weebcentral");
   const hasMangadex = availableProviders.some((p) => p.id === "mangadex");
-  const recommended = lang === "en" && hasMangadex ? "mangadex" : "mangaoni";
+  const recommended =
+    lang === "en" ? (hasWeebcentral ? "weebcentral" : hasMangadex ? "mangadex" : "mangaoni") : "mangaoni";
   return {
     uiLanguage: lang,
     themeMode: "paper",
@@ -773,8 +775,10 @@ function buildInitialAppStateFromData(params: {
   const { availableProviders, stored, mangas, chapters, sessions, storageModeLabel } = params;
   const base = defaultWebPrefs(availableProviders);
   const uiLanguage: UiLanguage = stored.uiLanguage === "en" ? "en" : stored.uiLanguage === "es" ? "es" : base.uiLanguage;
+  const hasWeebcentral = availableProviders.some((p) => p.id === "weebcentral");
   const hasMangadex = availableProviders.some((p) => p.id === "mangadex");
-  const recommendedProvider = uiLanguage === "en" && hasMangadex ? "mangadex" : "mangaoni";
+  const recommendedProvider =
+    uiLanguage === "en" ? (hasWeebcentral ? "weebcentral" : hasMangadex ? "mangadex" : "mangaoni") : "mangaoni";
   const activeProvider = validateProvider(
     stored.activeProvider ?? base.activeProvider,
     availableProviders,

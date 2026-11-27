@@ -21,10 +21,10 @@ npx wrangler login
 npx wrangler deploy
 ```
 
-Tras desplegar, configura la URL permanente en `apps/mangora/.env.production` (o variable de entorno en build):
+Tras desplegar, `DEFAULT_PUBLIC_API` en `apps/mangora/src/web/catalog.ts` ya apunta por defecto a la URL desplegada (`https://mangora-public-api.tomahawk1103.workers.dev/`). Si despliegas en otro subdominio, configura `apps/mangora/.env.production` (o variable de entorno en build):
 
 ```env
-VITE_MANGORA_API_URL=https://mangora-public-api.<tu-subdominio>.workers.dev/
+VITE_MANGORA_API_URL=https://mangora-public-api.tomahawk1103.workers.dev/
 ```
 
 Y recompila la web pública hacia `docs/mangora-web/`:

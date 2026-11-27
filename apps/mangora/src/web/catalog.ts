@@ -81,7 +81,7 @@ interface WorkerCapabilities {
   providers: string[];
 }
 
-const DEFAULT_PUBLIC_API = "https://mangora-lector-publico.chirpybroth8.chatgpt.site/";
+const DEFAULT_PUBLIC_API = "https://mangora-public-api.tomahawk1103.workers.dev/";
 const CHAPTERS_PER_PAGE = 50;
 const MAX_WEB_SESSIONS = 12;
 
@@ -160,10 +160,11 @@ export async function detectWorkerCapabilities(): Promise<WorkerCapabilities> {
 export function getCachedWebProviders(allProviders: ProviderOption[]): ProviderOption[] {
   if (!capabilitiesCache) {
     void detectWorkerCapabilities();
-    const initialIds =
-      import.meta.env.MODE === "mangaoni"
-        ? new Set(["mangaoni", "mangadex", "weebcentral"])
-        : new Set(["mangaoni"]);
+    const isLegacyOnlyOverride =
+      Boolean(import.meta.env.VITE_MANGAONI_API_URL) && !import.meta.env.VITE_MANGORA_API_URL;
+    const initialIds = isLegacyOnlyOverride
+      ? new Set(["mangaoni"])
+      : new Set(["mangaoni", "mangadex", "weebcentral"]);
     return allProviders.filter((p) => initialIds.has(p.id));
   }
   const supported = new Set(capabilitiesCache.providers);
