@@ -324,6 +324,17 @@ export interface Translations {
     selectAllPageBtn: string;
     downloadSelectedBtn: (count: number) => string;
     enqueuedToast: (count: number) => string;
+    sectionTabChapters: string;
+    sectionTabCommunity: string;
+    viewModeLabel: string;
+    viewCompactBtn: string;
+    viewListBtn: string;
+    chapterFilterPlaceholder: string;
+    clearChapterFilterBtn: string;
+    emptyFilteredChapters: string;
+    pageOfTotal: (page: number, total: number) => string;
+    jumpToPageLabel: string;
+    chapterRangeBadge: (first: string, last: string) => string;
     communityEyebrow: string;
     communityTitle: string;
     communityLoading: string;
@@ -831,6 +842,17 @@ const ES: Translations = {
     downloadSelectedBtn: (count) => `Descargar (${count})`,
     enqueuedToast: (count) =>
       count === 1 ? "1 capítulo añadido a la cola de descargas" : `${count} capítulos añadidos a la cola de descargas`,
+    sectionTabChapters: "Capítulos",
+    sectionTabCommunity: "Opinión y reseñas",
+    viewModeLabel: "Vista de capítulos",
+    viewCompactBtn: "Compacta",
+    viewListBtn: "Lista",
+    chapterFilterPlaceholder: "Filtrar cap. o título en esta página…",
+    clearChapterFilterBtn: "Limpiar filtro",
+    emptyFilteredChapters: "Ningún capítulo de esta página coincide con tu búsqueda.",
+    pageOfTotal: (page, total) => `Pág. ${page} de ${total}`,
+    jumpToPageLabel: "Ir a página de capítulos",
+    chapterRangeBadge: (first, last) => `Cap. ${first} – ${last}`,
     communityEyebrow: "Comunidad · AniList",
     communityTitle: "Opinión y reseñas",
     communityLoading: "Consultando ficha pública de AniList…",
@@ -1385,6 +1407,17 @@ const EN: Translations = {
     downloadSelectedBtn: (count) => `Download (${count})`,
     enqueuedToast: (count) =>
       count === 1 ? "1 chapter added to the download queue" : `${count} chapters added to the download queue`,
+    sectionTabChapters: "Chapters",
+    sectionTabCommunity: "Community & reviews",
+    viewModeLabel: "Chapter view",
+    viewCompactBtn: "Compact",
+    viewListBtn: "List",
+    chapterFilterPlaceholder: "Filter ch. or title on this page…",
+    clearChapterFilterBtn: "Clear filter",
+    emptyFilteredChapters: "No chapters on this page match your filter.",
+    pageOfTotal: (page, total) => `Page ${page} of ${total}`,
+    jumpToPageLabel: "Jump to chapter page",
+    chapterRangeBadge: (first, last) => `Ch. ${first} – ${last}`,
     communityEyebrow: "Community · AniList",
     communityTitle: "Community & reviews",
     communityLoading: "Fetching public AniList data…",

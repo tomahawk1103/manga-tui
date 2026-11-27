@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle,
   ArrowLeft,
@@ -13,12 +13,16 @@ import {
   HardDrive,
   Heart,
   Languages,
+  LayoutGrid,
+  List,
   RefreshCw,
+  Search,
   Sparkles,
   Square,
   Star,
   Tag,
   WifiOff,
+  X,
 } from "lucide-react";
 import { defaultHito5Bridge } from "../features/hito5";
 import { getTranslations } from "../lib/i18n";
@@ -36,6 +40,9 @@ import {
   type UiLanguage,
   libraryKey,
 } from "../types/mangora";
+
+const CHAPTERS_PER_PAGE = 50;
+const CHAPTER_VIEW_STORAGE_KEY = "mangora.series.chapterViewMode";
 
 const LANGUAGE_LABELS: Record<string, string> = {
   es: "Español (ES)",
@@ -155,6 +162,25 @@ export function SeriesDetailView({
   const [selectedChapterIds, setSelectedChapterIds] = useState<Set<string>>(() => new Set());
   const [enqueuingDownloads, setEnqueuingDownloads] = useState(false);
   const [coverFailed, setCoverFailed] = useState(false);
+  const [activeSectionTab, setActiveSectionTab] = useState<"chapters" | "community">("chapters");
+  const [chapterViewMode, setChapterViewMode] = useState<"compact" | "list">(() => {
+    try {
+      return window.localStorage.getItem(CHAPTER_VIEW_STORAGE_KEY) === "list" ? "list" : "compact";
+    } catch {
+      return "compact";
+    }
+  });
+  const [chapterFilter, setChapterFilter] = useState("");
+  const chaptersSectionRef = useRef<HTMLElement | null>(null);
+
+  const updateChapterViewMode = useCallback((next: "compact" | "list") => {
+    setChapterViewMode(next);
+    try {
+      window.localStorage.setItem(CHAPTER_VIEW_STORAGE_KEY, next);
+    } catch {
+      // Ignore storage failures in restricted WebViews
+    }
+  }, []);
 
   const [community, setCommunity] = useState<AniListCommunityInfo | null>(null);
   const [communityLoading, setCommunityLoading] = useState(true);
@@ -169,7 +195,13 @@ export function SeriesDetailView({
     setOfflineOnly(false);
     setSelectionMode(false);
     setSelectedChapterIds(new Set());
+    setActiveSectionTab("chapters");
+    setChapterFilter("");
   }, [selection.mangaId, selection.provider]);
+
+  useEffect(() => {
+    setChapterFilter("");
+  }, [page, selectedChapterLang, chapterOrder]);
 
   const loadSeries = useCallback(async () => {
     setIsLoading(true);
@@ -293,6 +325,18 @@ export function SeriesDetailView({
     return offlineOnly ? list.filter((chapter) => chapter.isDownloaded) : list;
   }, [detail?.chapters, offlineOnly]);
 
+  const filteredChapters = useMemo(() => {
+    const q = chapterFilter.trim().toLowerCase();
+    if (!q) return visibleChapters;
+    return visibleChapters.filter((chapter) => {
+      const num = chapter.chapterNumber.toLowerCase();
+      const title = chapter.title.toLowerCase();
+      const vol = (chapter.volumeNumber ?? "").toLowerCase();
+      const scanlator = (chapter.scanlator ?? "").toLowerCase();
+      return num.includes(q) || title.includes(q) || vol.includes(q) || scanlator.includes(q);
+    });
+  }, [visibleChapters, chapterFilter]);
+
   const handleToggleFavoriteClick = async () => {
     await onToggleFavorite({
       mangaId: detail?.id ?? selection.mangaId,
@@ -393,11 +437,11 @@ export function SeriesDetailView({
   const downloadableVisibleChapters = useMemo(
     () =>
       tauriRuntime
-        ? visibleChapters.filter(
+        ? filteredChapters.filter(
             (ch) => ch.isAvailableOnline && !ch.isDownloaded && !activeDownloadChapterIds?.has(ch.id),
           )
         : [],
-    [tauriRuntime, visibleChapters, activeDownloadChapterIds],
+    [tauriRuntime, filteredChapters, activeDownloadChapterIds],
   );
 
   const selectedDownloadChapters = useMemo(
@@ -640,301 +684,595 @@ export function SeriesDetailView({
         </div>
       ) : null}
 
+      {/* Section Switcher Tabs */}
+      <div className="flex flex-wrap gap-2" role="tablist" aria-label={displayTitle}>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSectionTab === "chapters"}
+          aria-controls="series-panel-chapters"
+          onClick={() => setActiveSectionTab("chapters")}
+          className={`inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-2 border-2 border-[var(--ink)] px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] ${
+            activeSectionTab === "chapters"
+              ? "bg-[var(--ink)] text-[var(--paper)] shadow-[3px_3px_0_var(--red)]"
+              : "bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--paper)]"
+          }`}
+        >
+          <BookOpen className="h-4 w-4" aria-hidden="true" />
+          <span>{s.sectionTabChapters}</span>
+          {detail ? (
+            <span className="font-mono-editorial text-[11px] opacity-80">
+              ({detail.totalChapters})
+            </span>
+          ) : null}
+        </button>
+
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeSectionTab === "community"}
+          aria-controls="series-panel-community"
+          onClick={() => setActiveSectionTab("community")}
+          className={`inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-2 border-2 border-[var(--ink)] px-4 py-2 text-xs font-bold uppercase tracking-[0.08em] ${
+            activeSectionTab === "community"
+              ? "bg-[var(--ink)] text-[var(--paper)] shadow-[3px_3px_0_var(--red)]"
+              : "bg-[var(--surface)] text-[var(--ink)] hover:bg-[var(--paper)]"
+          }`}
+        >
+          <Sparkles className="h-4 w-4" aria-hidden="true" />
+          <span>{s.sectionTabCommunity}</span>
+          {community?.found && (community.averageScore ?? community.meanScore) !== null ? (
+            <span className="font-mono-editorial text-[11px] opacity-90">
+              ★ {community.averageScore ?? community.meanScore}
+            </span>
+          ) : null}
+        </button>
+      </div>
+
       {/* Chapter List */}
-      {detail ? (
-        <section className="editorial-card p-5 sm:p-6">
-          <div className="flex flex-col gap-3 border-b-2 border-[var(--ink)] pb-4 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="font-display text-xl text-[var(--ink)]">
-                {s.chaptersTitle}
-              </h2>
-              <p className="font-mono-editorial text-xs text-[var(--muted)]">
-                {s.chaptersCount(detail.totalChapters)} ·{" "}
-                {s.readCountLabel(detail.readChapterCount)}
-              </p>
-            </div>
+      {activeSectionTab === "chapters" && detail
+        ? (() => {
+            const hasPagination = page > 1 || detail.hasNextPage;
+            const computedPages =
+              detail.totalChapters > 0 ? Math.ceil(detail.totalChapters / CHAPTERS_PER_PAGE) : 1;
+            const totalPages = detail.isOfflineFallback
+              ? 1
+              : detail.hasNextPage
+                ? Math.max(page + 1, computedPages)
+                : Math.max(page, computedPages);
+            const rangeLabel =
+              detail.chapters.length > 1
+                ? s.chapterRangeBadge(
+                    detail.chapters[0].chapterNumber,
+                    detail.chapters[detail.chapters.length - 1].chapterNumber,
+                  )
+                : null;
 
-            <div className="flex flex-wrap items-center gap-2">
-              {availableLanguages.length > 1 ? (
-                <label className="inline-flex min-h-[44px] items-center gap-2 border-2 border-[var(--ink)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--ink)]">
-                  <Languages className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
-                  <span className="sr-only">{s.languageLabel}</span>
-                  <select
-                    value={activeLanguage}
-                    onChange={(e) => {
-                      setSelectedChapterLang(e.target.value);
-                      setPage(1);
-                    }}
-                    className="bg-transparent text-xs font-bold text-[var(--ink)] focus:outline-none"
-                  >
-                    {availableLanguages.map((langCode) => (
-                      <option key={langCode} value={langCode}>
-                        {formatLanguageName(langCode)}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              ) : null}
+            const changePage = (nextPage: number, scrollToTop = false) => {
+              setPage(nextPage);
+              if (scrollToTop) {
+                chaptersSectionRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+              }
+            };
 
-              <button
-                type="button"
-                onClick={() => {
-                  setChapterOrder((prev) => (prev === "desc" ? "asc" : "desc"));
-                  setPage(1);
-                }}
-                className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-2 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em]"
-              >
-                <ArrowUpDown className="h-4 w-4" aria-hidden="true" />
-                <span>{chapterOrder === "desc" ? s.sortNewest : s.sortOldest}</span>
-              </button>
-
-              {detail.offlineChapterCount > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => setOfflineOnly((prev) => !prev)}
-                  className={`${
-                    offlineOnly ? "editorial-btn-primary" : "editorial-btn-secondary"
-                  } inline-flex min-h-[44px] touch-manipulation items-center gap-2 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em]`}
+            const renderPaginationControls = (position: "top" | "bottom") => {
+              const scrollOnJump = position === "bottom";
+              return (
+                <div
+                  className={`flex flex-wrap items-center justify-between gap-2 ${
+                    position === "top"
+                      ? "mt-3 border-b border-[var(--line)] pb-3"
+                      : "mt-4 border-t-2 border-[var(--ink)] pt-4"
+                  }`}
                 >
-                  <HardDrive className="h-4 w-4" aria-hidden="true" />
-                  <span>{offlineOnly ? s.filterOffline : s.filterAll}</span>
-                </button>
-              ) : null}
-
-              {!detail.isOfflineFallback && downloadableVisibleChapters.length > 0 ? (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setSelectionMode((prev) => !prev);
-                    setSelectedChapterIds(new Set());
-                  }}
-                  className={`${
-                    selectionMode ? "editorial-btn-primary" : "editorial-btn-secondary"
-                  } inline-flex min-h-[44px] touch-manipulation items-center gap-2 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em]`}
-                >
-                  <CheckSquare className="h-4 w-4" aria-hidden="true" />
-                  <span>{selectionMode ? s.cancelSelectBtn : s.selectChaptersBtn}</span>
-                </button>
-              ) : null}
-            </div>
-          </div>
-
-          {selectionMode ? (
-            <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-2 border-[var(--ink)] bg-[var(--surface)] p-3">
-              <button
-                type="button"
-                onClick={() => {
-                  if (selectedDownloadChapters.length === downloadableVisibleChapters.length) {
-                    setSelectedChapterIds(new Set());
-                  } else {
-                    setSelectedChapterIds(new Set(downloadableVisibleChapters.map((c) => c.id)));
-                  }
-                }}
-                className="editorial-btn-secondary min-h-[44px] px-3 py-1.5 text-xs font-bold"
-              >
-                <CheckSquare className="h-4 w-4" aria-hidden="true" />
-                <span>{s.selectAllPageBtn}</span>
-              </button>
-
-              <button
-                type="button"
-                disabled={selectedDownloadChapters.length === 0 || enqueuingDownloads}
-                onClick={() => void enqueueChaptersList(selectedDownloadChapters)}
-                className="editorial-btn-primary min-h-[44px] px-4 py-1.5 text-xs font-bold disabled:opacity-40"
-              >
-                <Download className="h-4 w-4" aria-hidden="true" />
-                <span>{s.downloadSelectedBtn(selectedDownloadChapters.length)}</span>
-              </button>
-            </div>
-          ) : null}
-
-          {isLoading ? (
-            <div className="flex items-center gap-2 py-6 text-xs text-[var(--muted)]">
-              <RefreshCw
-                className="h-4 w-4 animate-spin text-[var(--red)]"
-                aria-hidden="true"
-              />
-              <span>{s.loading}</span>
-            </div>
-          ) : null}
-
-          {!isLoading && visibleChapters.length === 0 ? (
-            <div className="py-8 text-center text-sm text-[var(--muted)]">
-              {offlineOnly ? s.emptyOfflineChapters : s.emptyChapters}
-            </div>
-          ) : (
-            <ul className="divide-y divide-[var(--line)]">
-              {visibleChapters.map((chapter) => {
-                const isBusy = togglingChapterId === chapter.id;
-                const isQueued = activeDownloadChapterIds?.has(chapter.id) ?? false;
-                const canDownload =
-                  tauriRuntime && chapter.isAvailableOnline && !chapter.isDownloaded && !detail.id.startsWith("offline::");
-                const isChecked = selectedChapterIds.has(chapter.id);
-                const headingText = chapter.volumeNumber
-                  ? `Vol. ${chapter.volumeNumber} · ${s.chapterPrefix} ${chapter.chapterNumber}`
-                  : `${s.chapterPrefix} ${chapter.chapterNumber}`;
-
-                return (
-                  <li
-                    key={chapter.id}
-                    className={`flex flex-col gap-3 py-3.5 sm:flex-row sm:items-center sm:justify-between ${
-                      chapter.isRead ? "opacity-75" : ""
-                    }`}
+                  <button
+                    type="button"
+                    disabled={page <= 1 || isLoading}
+                    onClick={() => changePage(Math.max(1, page - 1), scrollOnJump)}
+                    className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em] disabled:opacity-40"
                   >
-                    <div className="flex min-w-0 flex-1 items-start gap-3">
-                      {selectionMode && canDownload && !isQueued ? (
-                        <button
-                          type="button"
-                          aria-pressed={isChecked}
-                          onClick={() =>
-                            setSelectedChapterIds((prev) => {
-                              const next = new Set(prev);
-                              if (next.has(chapter.id)) next.delete(chapter.id);
-                              else next.add(chapter.id);
-                              return next;
-                            })
-                          }
-                          className="mt-0.5 inline-flex min-h-[44px] min-w-[44px] shrink-0 cursor-pointer items-center justify-center border-2 border-[var(--ink)] bg-[var(--paper)] text-[var(--ink)]"
+                    <ChevronLeft className="h-4 w-4" aria-hidden="true" />
+                    <span>{t.explore.previous}</span>
+                  </button>
+
+                  <div className="flex flex-wrap items-center justify-center gap-2">
+                    {rangeLabel ? (
+                      <span className="font-mono-editorial text-xs text-[var(--muted)]">
+                        {rangeLabel}
+                      </span>
+                    ) : null}
+
+                    {totalPages > 1 && totalPages <= 250 ? (
+                      <select
+                        aria-label={s.jumpToPageLabel}
+                        value={page}
+                        disabled={isLoading}
+                        onChange={(e) => changePage(Number(e.target.value), scrollOnJump)}
+                        className="min-h-[40px] cursor-pointer border-2 border-[var(--ink)] bg-[var(--surface)] px-2.5 py-1 font-mono-editorial text-xs font-bold text-[var(--ink)] focus:outline-none"
+                      >
+                        {Array.from({ length: totalPages }, (_, idx) => idx + 1).map((p) => (
+                          <option key={p} value={p}>
+                            {s.pageOfTotal(p, totalPages)}
+                          </option>
+                        ))}
+                      </select>
+                    ) : (
+                      <span className="font-mono-editorial text-xs font-bold text-[var(--ink)]">
+                        #{page}
+                      </span>
+                    )}
+                  </div>
+
+                  <button
+                    type="button"
+                    disabled={!detail.hasNextPage || isLoading}
+                    onClick={() => changePage(page + 1, scrollOnJump)}
+                    className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em] disabled:opacity-40"
+                  >
+                    <span>{t.explore.next}</span>
+                    <ChevronRight className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </div>
+              );
+            };
+
+            return (
+              <section
+                ref={chaptersSectionRef}
+                id="series-panel-chapters"
+                role="tabpanel"
+                className="editorial-card p-5 sm:p-6"
+              >
+                <div className="flex flex-col gap-3 border-b-2 border-[var(--ink)] pb-4 sm:flex-row sm:items-center sm:justify-between">
+                  <div>
+                    <h2 className="font-display text-xl text-[var(--ink)]">
+                      {s.chaptersTitle}
+                    </h2>
+                    <p className="font-mono-editorial text-xs text-[var(--muted)]">
+                      {s.chaptersCount(detail.totalChapters)} ·{" "}
+                      {s.readCountLabel(detail.readChapterCount)}
+                    </p>
+                  </div>
+
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div
+                      role="group"
+                      aria-label={s.viewModeLabel}
+                      className="inline-flex border-2 border-[var(--ink)] shadow-[3px_3px_0_var(--shadow-color)]"
+                    >
+                      <button
+                        type="button"
+                        aria-pressed={chapterViewMode === "compact"}
+                        onClick={() => updateChapterViewMode("compact")}
+                        className={`inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] ${
+                          chapterViewMode === "compact"
+                            ? "bg-[var(--ink)] text-[var(--paper)]"
+                            : "bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--surface)]"
+                        }`}
+                      >
+                        <LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>{s.viewCompactBtn}</span>
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={chapterViewMode === "list"}
+                        onClick={() => updateChapterViewMode("list")}
+                        className={`inline-flex min-h-[44px] cursor-pointer touch-manipulation items-center gap-1.5 border-l-2 border-[var(--ink)] px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] ${
+                          chapterViewMode === "list"
+                            ? "bg-[var(--ink)] text-[var(--paper)]"
+                            : "bg-[var(--paper)] text-[var(--ink)] hover:bg-[var(--surface)]"
+                        }`}
+                      >
+                        <List className="h-3.5 w-3.5" aria-hidden="true" />
+                        <span>{s.viewListBtn}</span>
+                      </button>
+                    </div>
+
+                    {availableLanguages.length > 1 ? (
+                      <label className="inline-flex min-h-[44px] items-center gap-2 border-2 border-[var(--ink)] bg-[var(--surface)] px-3 py-1.5 text-xs font-semibold text-[var(--ink)]">
+                        <Languages className="h-4 w-4 text-[var(--muted)]" aria-hidden="true" />
+                        <span className="sr-only">{s.languageLabel}</span>
+                        <select
+                          value={activeLanguage}
+                          onChange={(e) => {
+                            setSelectedChapterLang(e.target.value);
+                            setPage(1);
+                          }}
+                          className="bg-transparent text-xs font-bold text-[var(--ink)] focus:outline-none"
                         >
-                          {isChecked ? (
-                            <CheckSquare className="h-4 w-4 text-[var(--red-text)]" aria-hidden="true" />
-                          ) : (
-                            <Square className="h-4 w-4" aria-hidden="true" />
-                          )}
-                        </button>
-                      ) : null}
+                          {availableLanguages.map((langCode) => (
+                            <option key={langCode} value={langCode}>
+                              {formatLanguageName(langCode)}
+                            </option>
+                          ))}
+                        </select>
+                      </label>
+                    ) : null}
 
-                      <div className="min-w-0 flex-1 space-y-1">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="font-display text-base text-[var(--ink)]">
-                            {headingText}
-                          </span>
-                          {chapter.title ? (
-                            <span className="truncate text-sm text-[var(--ink)]">
-                              — {chapter.title}
-                            </span>
-                          ) : null}
-                        </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setChapterOrder((prev) => (prev === "desc" ? "asc" : "desc"));
+                        setPage(1);
+                      }}
+                      className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-2 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em]"
+                    >
+                      <ArrowUpDown className="h-4 w-4" aria-hidden="true" />
+                      <span>{chapterOrder === "desc" ? s.sortNewest : s.sortOldest}</span>
+                    </button>
 
-                        <div className="flex flex-wrap items-center gap-2 font-mono-editorial text-[11px]">
-                          <span
-                            className={`inline-flex items-center gap-1 border px-2 py-0.5 font-bold uppercase tracking-[0.08em] ${
-                              chapter.isRead
-                                ? "border-[var(--ink)] bg-[var(--surface)] text-[var(--ink)]"
-                                : "border-[var(--red)] bg-[var(--red)] text-white"
-                            }`}
+                    {detail.offlineChapterCount > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => setOfflineOnly((prev) => !prev)}
+                        className={`${
+                          offlineOnly ? "editorial-btn-primary" : "editorial-btn-secondary"
+                        } inline-flex min-h-[44px] touch-manipulation items-center gap-2 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em]`}
+                      >
+                        <HardDrive className="h-4 w-4" aria-hidden="true" />
+                        <span>{offlineOnly ? s.filterOffline : s.filterAll}</span>
+                      </button>
+                    ) : null}
+
+                    {!detail.isOfflineFallback && downloadableVisibleChapters.length > 0 ? (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setSelectionMode((prev) => !prev);
+                          setSelectedChapterIds(new Set());
+                        }}
+                        className={`${
+                          selectionMode ? "editorial-btn-primary" : "editorial-btn-secondary"
+                        } inline-flex min-h-[44px] touch-manipulation items-center gap-2 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em]`}
+                      >
+                        <CheckSquare className="h-4 w-4" aria-hidden="true" />
+                        <span>{selectionMode ? s.cancelSelectBtn : s.selectChaptersBtn}</span>
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+
+                {visibleChapters.length > 6 || chapterFilter.trim().length > 0 ? (
+                  <div className="mt-3 flex items-center gap-2 border-2 border-[var(--ink)] bg-[var(--paper)] px-3 py-1.5">
+                    <Search className="h-4 w-4 shrink-0 text-[var(--muted)]" aria-hidden="true" />
+                    <input
+                      type="search"
+                      value={chapterFilter}
+                      onChange={(e) => setChapterFilter(e.target.value)}
+                      placeholder={s.chapterFilterPlaceholder}
+                      aria-label={s.chapterFilterPlaceholder}
+                      className="min-w-0 flex-1 bg-transparent font-mono-editorial text-xs text-[var(--ink)] placeholder:text-[var(--muted)] focus:outline-none"
+                    />
+                    {chapterFilter ? (
+                      <button
+                        type="button"
+                        onClick={() => setChapterFilter("")}
+                        aria-label={s.clearChapterFilterBtn}
+                        className="inline-flex min-h-[32px] min-w-[32px] cursor-pointer items-center justify-center text-[var(--muted)] hover:text-[var(--ink)]"
+                      >
+                        <X className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    ) : null}
+                  </div>
+                ) : null}
+
+                {selectionMode ? (
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2 border-2 border-[var(--ink)] bg-[var(--surface)] p-3">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (selectedDownloadChapters.length === downloadableVisibleChapters.length) {
+                          setSelectedChapterIds(new Set());
+                        } else {
+                          setSelectedChapterIds(new Set(downloadableVisibleChapters.map((c) => c.id)));
+                        }
+                      }}
+                      className="editorial-btn-secondary min-h-[44px] px-3 py-1.5 text-xs font-bold"
+                    >
+                      <CheckSquare className="h-4 w-4" aria-hidden="true" />
+                      <span>{s.selectAllPageBtn}</span>
+                    </button>
+
+                    <button
+                      type="button"
+                      disabled={selectedDownloadChapters.length === 0 || enqueuingDownloads}
+                      onClick={() => void enqueueChaptersList(selectedDownloadChapters)}
+                      className="editorial-btn-primary min-h-[44px] px-4 py-1.5 text-xs font-bold disabled:opacity-40"
+                    >
+                      <Download className="h-4 w-4" aria-hidden="true" />
+                      <span>{s.downloadSelectedBtn(selectedDownloadChapters.length)}</span>
+                    </button>
+                  </div>
+                ) : null}
+
+                {hasPagination ? renderPaginationControls("top") : null}
+
+                {isLoading ? (
+                  <div className="flex items-center gap-2 py-6 text-xs text-[var(--muted)]">
+                    <RefreshCw
+                      className="h-4 w-4 animate-spin text-[var(--red)]"
+                      aria-hidden="true"
+                    />
+                    <span>{s.loading}</span>
+                  </div>
+                ) : null}
+
+                {!isLoading && filteredChapters.length === 0 ? (
+                  <div className="py-8 text-center text-sm text-[var(--muted)]">
+                    {chapterFilter.trim()
+                      ? s.emptyFilteredChapters
+                      : offlineOnly
+                        ? s.emptyOfflineChapters
+                        : s.emptyChapters}
+                  </div>
+                ) : chapterViewMode === "compact" ? (
+                  <ul className="mt-3 grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4">
+                    {filteredChapters.map((chapter) => {
+                      const isBusy = togglingChapterId === chapter.id;
+                      const isQueued = activeDownloadChapterIds?.has(chapter.id) ?? false;
+                      const canDownload =
+                        tauriRuntime &&
+                        chapter.isAvailableOnline &&
+                        !chapter.isDownloaded &&
+                        !detail.id.startsWith("offline::");
+                      const isChecked = selectedChapterIds.has(chapter.id);
+                      const headingText = chapter.volumeNumber
+                        ? `Vol. ${chapter.volumeNumber} · ${s.chapterPrefix} ${chapter.chapterNumber}`
+                        : `${s.chapterPrefix} ${chapter.chapterNumber}`;
+                      const compactHeading = chapter.volumeNumber
+                        ? `V.${chapter.volumeNumber} · ${s.chapterPrefix} ${chapter.chapterNumber}`
+                        : `${s.chapterPrefix} ${chapter.chapterNumber}`;
+                      const tileTooltip = `${headingText}${chapter.title ? ` — ${chapter.title}` : ""}`;
+
+                      const toggleSelect = () => {
+                        if (!canDownload || isQueued) return;
+                        setSelectedChapterIds((prev) => {
+                          const next = new Set(prev);
+                          if (next.has(chapter.id)) next.delete(chapter.id);
+                          else next.add(chapter.id);
+                          return next;
+                        });
+                      };
+
+                      return (
+                        <li
+                          key={chapter.id}
+                          className={`flex items-stretch border-2 border-[var(--ink)] transition-colors ${
+                            isChecked
+                              ? "bg-[var(--surface)] shadow-[2px_2px_0_var(--red)]"
+                              : chapter.isRead
+                                ? "bg-[var(--surface)] opacity-75"
+                                : "bg-[var(--paper)] shadow-[2px_2px_0_var(--shadow-color)]"
+                          }`}
+                        >
+                          <button
+                            type="button"
+                            title={tileTooltip}
+                            onClick={() => {
+                              if (selectionMode) {
+                                toggleSelect();
+                              } else {
+                                handleOpenReaderClick(chapter);
+                              }
+                            }}
+                            className="flex min-h-[48px] min-w-0 flex-1 cursor-pointer touch-manipulation flex-col justify-center gap-0.5 px-2.5 py-1.5 text-left hover:bg-[var(--surface)]"
                           >
-                            {chapter.isRead ? (
-                              <Check className="h-3 w-3" aria-hidden="true" />
-                            ) : null}
-                            {chapter.isRead ? s.statusRead : s.statusUnread}
-                          </span>
-
-                          {chapter.isDownloaded ? (
-                            <span className="inline-flex items-center gap-1 border border-[var(--ink)] bg-[var(--ink)] px-2 py-0.5 font-bold uppercase tracking-[0.06em] text-[var(--paper)]">
-                              <HardDrive className="h-3 w-3" aria-hidden="true" />
-                              {s.statusOffline}
-                              {chapter.offlineFormat ? ` · ${chapter.offlineFormat}` : ""}
+                            <div className="flex min-w-0 items-center gap-1.5">
+                              {!chapter.isRead ? (
+                                <span
+                                  className="h-2 w-2 shrink-0 rounded-full bg-[var(--red)]"
+                                  aria-hidden="true"
+                                />
+                              ) : null}
+                              <span className="font-display truncate text-sm text-[var(--ink)]">
+                                {compactHeading}
+                              </span>
+                              {chapter.isDownloaded ? (
+                                <HardDrive
+                                  className="h-3 w-3 shrink-0 text-[var(--ink)]"
+                                  aria-hidden="true"
+                                />
+                              ) : null}
+                              {chapter.isBookmarked && chapter.bookmarkedPage !== null ? (
+                                <span className="shrink-0 font-mono-editorial text-[10px] font-bold text-[var(--red-text)]">
+                                  p.{chapter.bookmarkedPage + 1}
+                                </span>
+                              ) : null}
+                            </div>
+                            <span className="block truncate font-mono-editorial text-[11px] text-[var(--muted)]">
+                              {chapter.title || (chapter.isDownloaded ? s.statusOffline : s.statusOnline)}
                             </span>
-                          ) : chapter.isAvailableOnline ? (
-                            <span className="border border-[var(--line)] px-2 py-0.5 font-medium text-[var(--muted)]">
-                              {s.statusOnline}
-                            </span>
-                          ) : null}
+                          </button>
 
-                          {chapter.isBookmarked && chapter.bookmarkedPage !== null ? (
-                            <span className="border border-[var(--red)] px-2 py-0.5 font-bold text-[var(--red-text)]">
-                              p.{chapter.bookmarkedPage + 1}
-                            </span>
-                          ) : null}
+                          {selectionMode ? (
+                            canDownload && !isQueued ? (
+                              <button
+                                type="button"
+                                aria-pressed={isChecked}
+                                aria-label={tileTooltip}
+                                onClick={toggleSelect}
+                                className="flex min-h-[48px] min-w-[38px] shrink-0 cursor-pointer touch-manipulation items-center justify-center border-l border-[var(--line)]"
+                              >
+                                {isChecked ? (
+                                  <CheckSquare className="h-4 w-4 text-[var(--red-text)]" aria-hidden="true" />
+                                ) : (
+                                  <Square className="h-4 w-4 text-[var(--ink)]" aria-hidden="true" />
+                                )}
+                              </button>
+                            ) : null
+                          ) : (
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              aria-label={chapter.isRead ? s.markUnreadBtn : s.markReadBtn}
+                              title={chapter.isRead ? s.markUnreadBtn : s.markReadBtn}
+                              onClick={() => void handleToggleChapterClick(chapter)}
+                              className={`flex min-h-[48px] min-w-[38px] shrink-0 cursor-pointer touch-manipulation items-center justify-center border-l border-[var(--line)] transition-colors disabled:opacity-50 ${
+                                chapter.isRead
+                                  ? "bg-[var(--ink)] text-[var(--paper)]"
+                                  : "bg-transparent text-[var(--muted)] hover:bg-[var(--ink)] hover:text-[var(--paper)]"
+                              }`}
+                            >
+                              <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                            </button>
+                          )}
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  <ul className="mt-2 max-h-[62vh] divide-y divide-[var(--line)] overflow-y-auto pr-1">
+                    {filteredChapters.map((chapter) => {
+                      const isBusy = togglingChapterId === chapter.id;
+                      const isQueued = activeDownloadChapterIds?.has(chapter.id) ?? false;
+                      const canDownload =
+                        tauriRuntime &&
+                        chapter.isAvailableOnline &&
+                        !chapter.isDownloaded &&
+                        !detail.id.startsWith("offline::");
+                      const isChecked = selectedChapterIds.has(chapter.id);
+                      const headingText = chapter.volumeNumber
+                        ? `Vol. ${chapter.volumeNumber} · ${s.chapterPrefix} ${chapter.chapterNumber}`
+                        : `${s.chapterPrefix} ${chapter.chapterNumber}`;
 
-                          {chapter.scanlator ? (
-                            <span className="truncate text-[var(--muted)]">
-                              {chapter.scanlator}
-                            </span>
-                          ) : null}
-
-                          {chapter.publicationDate ? (
-                            <span className="text-[var(--muted)]">
-                              {chapter.publicationDate}
-                            </span>
-                          ) : null}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
-                      <button
-                        type="button"
-                        disabled={isBusy}
-                        onClick={() => void handleToggleChapterClick(chapter)}
-                        className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] disabled:opacity-50"
-                      >
-                        <Check className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span>
-                          {chapter.isRead ? s.markUnreadBtn : s.markReadBtn}
-                        </span>
-                      </button>
-
-                      {canDownload ? (
-                        <button
-                          type="button"
-                          disabled={isQueued || enqueuingDownloads}
-                          onClick={() => void enqueueChaptersList([chapter])}
-                          className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] disabled:opacity-50"
+                      return (
+                        <li
+                          key={chapter.id}
+                          className={`flex flex-col gap-3 py-3.5 sm:flex-row sm:items-center sm:justify-between ${
+                            chapter.isRead ? "opacity-75" : ""
+                          }`}
                         >
-                          <Download className="h-3.5 w-3.5" aria-hidden="true" />
-                          <span>{isQueued ? s.downloadingBtn : s.downloadBtn}</span>
-                        </button>
-                      ) : null}
+                          <div className="flex min-w-0 flex-1 items-start gap-3">
+                            {selectionMode && canDownload && !isQueued ? (
+                              <button
+                                type="button"
+                                aria-pressed={isChecked}
+                                onClick={() =>
+                                  setSelectedChapterIds((prev) => {
+                                    const next = new Set(prev);
+                                    if (next.has(chapter.id)) next.delete(chapter.id);
+                                    else next.add(chapter.id);
+                                    return next;
+                                  })
+                                }
+                                className="mt-0.5 inline-flex min-h-[44px] min-w-[44px] shrink-0 cursor-pointer items-center justify-center border-2 border-[var(--ink)] bg-[var(--paper)] text-[var(--ink)]"
+                              >
+                                {isChecked ? (
+                                  <CheckSquare className="h-4 w-4 text-[var(--red-text)]" aria-hidden="true" />
+                                ) : (
+                                  <Square className="h-4 w-4" aria-hidden="true" />
+                                )}
+                              </button>
+                            ) : null}
 
-                      <button
-                        type="button"
-                        onClick={() => handleOpenReaderClick(chapter)}
-                        className="editorial-btn-primary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.08em]"
-                      >
-                        <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
-                        <span>{s.openReaderBtn}</span>
-                      </button>
-                    </div>
-                  </li>
-                );
-              })}
-            </ul>
-          )}
+                            <div className="min-w-0 flex-1 space-y-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="font-display text-base text-[var(--ink)]">
+                                  {headingText}
+                                </span>
+                                {chapter.title ? (
+                                  <span className="truncate text-sm text-[var(--ink)]">
+                                    — {chapter.title}
+                                  </span>
+                                ) : null}
+                              </div>
 
-          {(page > 1 || detail.hasNextPage) && (
-            <div className="mt-4 flex items-center justify-between border-t-2 border-[var(--ink)] pt-4">
-              <button
-                type="button"
-                disabled={page <= 1 || isLoading}
-                onClick={() => setPage((prev) => Math.max(1, prev - 1))}
-                className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em] disabled:opacity-40"
-              >
-                <ChevronLeft className="h-4 w-4" aria-hidden="true" />
-                <span>{t.explore.previous}</span>
-              </button>
+                              <div className="flex flex-wrap items-center gap-2 font-mono-editorial text-[11px]">
+                                <span
+                                  className={`inline-flex items-center gap-1 border px-2 py-0.5 font-bold uppercase tracking-[0.08em] ${
+                                    chapter.isRead
+                                      ? "border-[var(--ink)] bg-[var(--surface)] text-[var(--ink)]"
+                                      : "border-[var(--red)] bg-[var(--red)] text-white"
+                                  }`}
+                                >
+                                  {chapter.isRead ? (
+                                    <Check className="h-3 w-3" aria-hidden="true" />
+                                  ) : null}
+                                  {chapter.isRead ? s.statusRead : s.statusUnread}
+                                </span>
 
-              <span className="font-mono-editorial text-xs font-bold text-[var(--ink)]">
-                #{page}
-              </span>
+                                {chapter.isDownloaded ? (
+                                  <span className="inline-flex items-center gap-1 border border-[var(--ink)] bg-[var(--ink)] px-2 py-0.5 font-bold uppercase tracking-[0.06em] text-[var(--paper)]">
+                                    <HardDrive className="h-3 w-3" aria-hidden="true" />
+                                    {s.statusOffline}
+                                    {chapter.offlineFormat ? ` · ${chapter.offlineFormat}` : ""}
+                                  </span>
+                                ) : chapter.isAvailableOnline ? (
+                                  <span className="border border-[var(--line)] px-2 py-0.5 font-medium text-[var(--muted)]">
+                                    {s.statusOnline}
+                                  </span>
+                                ) : null}
 
-              <button
-                type="button"
-                disabled={!detail.hasNextPage || isLoading}
-                onClick={() => setPage((prev) => prev + 1)}
-                className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.1em] disabled:opacity-40"
-              >
-                <span>{t.explore.next}</span>
-                <ChevronRight className="h-4 w-4" aria-hidden="true" />
-              </button>
-            </div>
-          )}
-        </section>
-      ) : null}
+                                {chapter.isBookmarked && chapter.bookmarkedPage !== null ? (
+                                  <span className="border border-[var(--red)] px-2 py-0.5 font-bold text-[var(--red-text)]">
+                                    p.{chapter.bookmarkedPage + 1}
+                                  </span>
+                                ) : null}
+
+                                {chapter.scanlator ? (
+                                  <span className="truncate text-[var(--muted)]">
+                                    {chapter.scanlator}
+                                  </span>
+                                ) : null}
+
+                                {chapter.publicationDate ? (
+                                  <span className="text-[var(--muted)]">
+                                    {chapter.publicationDate}
+                                  </span>
+                                ) : null}
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-2 sm:shrink-0">
+                            <button
+                              type="button"
+                              disabled={isBusy}
+                              onClick={() => void handleToggleChapterClick(chapter)}
+                              className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] disabled:opacity-50"
+                            >
+                              <Check className="h-3.5 w-3.5" aria-hidden="true" />
+                              <span>
+                                {chapter.isRead ? s.markUnreadBtn : s.markReadBtn}
+                              </span>
+                            </button>
+
+                            {canDownload ? (
+                              <button
+                                type="button"
+                                disabled={isQueued || enqueuingDownloads}
+                                onClick={() => void enqueueChaptersList([chapter])}
+                                className="editorial-btn-secondary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase tracking-[0.08em] disabled:opacity-50"
+                              >
+                                <Download className="h-3.5 w-3.5" aria-hidden="true" />
+                                <span>{isQueued ? s.downloadingBtn : s.downloadBtn}</span>
+                              </button>
+                            ) : null}
+
+                            <button
+                              type="button"
+                              onClick={() => handleOpenReaderClick(chapter)}
+                              className="editorial-btn-primary inline-flex min-h-[44px] touch-manipulation items-center gap-1.5 px-3.5 py-2 text-xs font-bold uppercase tracking-[0.08em]"
+                            >
+                              <BookOpen className="h-3.5 w-3.5" aria-hidden="true" />
+                              <span>{s.openReaderBtn}</span>
+                            </button>
+                          </div>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                )}
+
+                {hasPagination ? renderPaginationControls("bottom") : null}
+              </section>
+            );
+          })()
+        : null}
 
       {/* AniList Community */}
-      <section className="editorial-card p-5 sm:p-6">
+      {activeSectionTab === "community" ? (
+        <section id="series-panel-community" role="tabpanel" className="editorial-card p-5 sm:p-6">
         <div className="flex flex-col gap-3 border-b-2 border-[var(--ink)] pb-4 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <p className="font-mono-editorial text-[11px] font-bold uppercase tracking-[0.16em] text-[var(--red-text)]">
@@ -1113,7 +1451,8 @@ export function SeriesDetailView({
             </div>
           )}
         </div>
-      </section>
+        </section>
+      ) : null}
     </div>
   );
 }
